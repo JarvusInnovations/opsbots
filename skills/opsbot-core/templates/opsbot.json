@@ -1,0 +1,42 @@
+{
+  "//": "The bot's settings: the only place any loop value is set. Copy to the repo root as opsbot.json, fill in, commit, then run `scripts/opsbot-core settings validate`. A \"//\" key is a comment and is allowed at any level. Values below are examples.",
+  "name": "examplebot",
+  "mark": "🤖",
+  "timezone": "America/New_York",
+  "rule_card": "protocols/rule-card.md",
+  "gate_word": "GOAHEAD",
+  "loop": {
+    "//": "prompt is sent verbatim by the nudge; include any cold-cache suffix your setup uses. autocompact is the one place the compaction window is set.",
+    "prompt": "/loop examplebot cycle. Follow the opsbot-core skill: start with `cycle begin`.",
+    "autocompact": "300k"
+  },
+  "cadence": {
+    "//": "Seconds. None may exceed cap; cap stays under the one-hour cache. Hours are in timezone; days are ISO weekdays (1 = Monday).",
+    "hot": 180,
+    "warm": 600,
+    "quiet_working": 600,
+    "quiet": 1800,
+    "night": 2700,
+    "cap": 2700,
+    "working_hours": { "days": [1, 2, 3, 4, 5], "start": "09:00", "end": "17:00" },
+    "night_hours": { "start": "22:00", "end": "07:00" }
+  },
+  "lock_max_minutes": 60,
+  "liveness": {
+    "//": "watchdog_minutes: no cycle for this long is an outage. nudge_minutes: quiet this long earns a nudge. interval_minutes: how often both timers fire.",
+    "watchdog_minutes": 60,
+    "nudge_minutes": 50,
+    "nudge_cooldown_minutes": 50,
+    "wake_cooldown_minutes": 10,
+    "interval_minutes": 10
+  },
+  "runtime": {
+    "adapter": "herdr",
+    "agent": "examplebot"
+  },
+  "streams": {
+    "//": "Per-stream values the heartbeat scripts in opsbot.d/heartbeat.d/ read through $OPSBOT_CONFIG. The core does not look inside.",
+    "chat": { "lookback_minutes": 30 }
+  },
+  "repo_sync": "never-pull"
+}

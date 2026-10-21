@@ -1,0 +1,12 @@
+# Runs probe @MONITOR@ every @SPAN@, from the script's name
+# (opsbot.d/monitor.d/<name>@<interval>).
+[Unit]
+Description=@NAME@ probe @MONITOR@, every @SPAN@
+
+[Timer]
+OnBootSec=@SPAN@
+OnUnitActiveSec=@SPAN@
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

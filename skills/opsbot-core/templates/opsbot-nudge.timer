@@ -1,0 +1,11 @@
+# Runs the nudge every liveness.interval_minutes (@INTERVAL@), offset half an
+# interval (@OFFSET@ minutes) from the watchdog.
+[Unit]
+Description=@NAME@ nudge, every @INTERVAL@ minutes
+
+[Timer]
+OnCalendar=*:@OFFSET@/@INTERVAL@
+Persistent=true
+
+[Install]
+WantedBy=timers.target

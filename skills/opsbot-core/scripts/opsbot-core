@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Shim so the bundled CLI can be invoked as `scripts/opsbot-core <command>`.
+# Never run this with node: it is bash. The bundle beside it is the CLI.
+exec node "$(dirname "$0")/opsbot-core.mjs" "$@"

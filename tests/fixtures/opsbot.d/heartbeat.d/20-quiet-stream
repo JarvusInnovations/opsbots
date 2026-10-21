@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# A second stream that never has anything new.
+exit 0
