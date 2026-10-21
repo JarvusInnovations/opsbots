@@ -50,7 +50,7 @@ Out of scope: installing it into either running bot (next plan).
 
 ## Validation
 
-- [ ] `npx skills add JarvusInnovations/opsbots --skill opsbot-core` into an empty repo yields a runnable `scripts/opsbot-core` with no install step
+- [x] `npx skills add JarvusInnovations/opsbots --skill opsbot-core` into an empty repo yields a runnable `scripts/opsbot-core` with no install step (verified from GitHub after merge, 2026-10-21)
 - [x] `opsbot-core` with no args prints the home view; `--version` answers under the fast-path floor
 - [x] `settings validate` rejects an unknown key and a cadence over the cap
 - [x] `hooks list` shows scripts from `opsbot.d/*` in lexical order and skips non-executables
