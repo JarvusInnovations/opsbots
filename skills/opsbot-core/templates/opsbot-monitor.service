@@ -1,0 +1,20 @@
+# Always-on watcher opsbot.d/monitor.d/@SCRIPT_NAME@ for @NAME@. It wakes the
+# loop with `$OPSBOT_CORE nudge --now`. Rendered by `infra install`.
+[Unit]
+Description=@NAME@ monitor @MONITOR@
+
+[Service]
+Type=simple
+WorkingDirectory=@ROOT@
+Environment=PATH=@PATH@
+Environment=OPSBOT_ROOT=@ROOT@
+Environment=OPSBOT_CONFIG=@ROOT@/opsbot.json
+Environment=OPSBOT_NAME=@NAME@
+Environment=OPSBOT_HOOK=monitor
+Environment=OPSBOT_CORE=@CORE@
+ExecStart=@SCRIPT@
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

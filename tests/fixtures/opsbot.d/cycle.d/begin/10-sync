@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Fake housekeeping before the check; fails when $FIXTURE_BEGIN_EXIT is set.
+if [ -n "${FIXTURE_BEGIN_EXIT:-}" ]; then
+    echo "the fake sync failed" >&2
+    exit "${FIXTURE_BEGIN_EXIT}"
+fi
+exit 0

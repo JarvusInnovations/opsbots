@@ -1,0 +1,11 @@
+# Puts loop.prompt back into the @NAME@ agent when the loop has gone quiet.
+# No model involved. Rendered by `infra install` from opsbot.json.
+[Unit]
+Description=@NAME@ nudge: restart the loop if no cycle has run
+
+[Service]
+Type=oneshot
+WorkingDirectory=@ROOT@
+Environment=PATH=@PATH@
+Environment=OPSBOT_ROOT=@ROOT@
+ExecStart=@CORE@ nudge

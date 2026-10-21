@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# A fake close-out section: what is due, appended to the closing line.
+echo "due: 1 promise to look at"

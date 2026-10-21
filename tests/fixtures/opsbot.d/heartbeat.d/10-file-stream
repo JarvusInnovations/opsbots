@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# A file-backed fake stream: prints the NDJSON items in $FIXTURE_STREAM (if
+# any), then fails with $FIXTURE_STREAM_EXIT when that is set. Records the env
+# it saw in $FIXTURE_ENV_OUT when set.
+set -u
+if [ -n "${FIXTURE_ENV_OUT:-}" ]; then
+    env | grep '^OPSBOT_' | sort >"${FIXTURE_ENV_OUT}"
+fi
+if [ -n "${FIXTURE_STREAM:-}" ] && [ -f "${FIXTURE_STREAM}" ]; then
+    cat "${FIXTURE_STREAM}"
+fi
+if [ -n "${FIXTURE_STREAM_EXIT:-}" ]; then
+    echo "the fake stream could not be read" >&2
+    exit "${FIXTURE_STREAM_EXIT}"
+fi
+exit 0
