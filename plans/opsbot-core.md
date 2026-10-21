@@ -13,8 +13,9 @@ specs:
 Port the support-desk bot's cycle scripts (`check`, `cycle-begin`, `cycle-end`,
 `next-delay`, `cold-start`, `outage`, `lib.sh`, `bin/watchdog`, `bin/nudge`,
 `infra/*`) into `skills/opsbot-core/` as one bundled AXI CLI per the `axi-skills`
-recipe, generalized: streams become adapters called by contract, cadence and
-thresholds come from `opsbot.json`, the runtime is an adapter, and the campaign bot's
+recipe, generalized: streams, monitors, cycle hooks, pack sections and escalation
+become scripts discovered in `opsbot.d/<point>.d/` (lexical order, one environment
+contract), cadence and thresholds come from `opsbot.json`, the runtime is an adapter, and the campaign bot's
 reground gate replaces inline hook output. Fix the drift the synthesis found (one
 autocompact value; one timer interval). No channel adapters, no send guard, no gate
 judge, no sheets in this plan.
@@ -38,8 +39,9 @@ Out of scope: installing it into either running bot (next plan).
    abandonment, watermark pinning, exit codes, seen-key format, pack order and budget,
    nudge preconditions). Keep the cycle log line shape byte-compatible with the
    support-desk bot's so its history reads under the new tool.
-4. Two adapters shipped only as fixtures for tests (a file-backed fake stream, a fake
-   runtime), so the check and nudge are testable without a channel skill.
+4. Fixtures only: a file-backed fake `heartbeat.d/` stream, a fake `wake.d/` section, a
+   fake `escalate.d/` sink and a fake runtime, so check, cold-start, watchdog and nudge
+   are testable without a channel skill. `hooks list` shows discovery order.
 5. Tests (`bun test`): exit codes, watermark refusals, lock takeover rules, cadence
    table, pack budget, gate deny/allow, settings validation.
 6. `SKILL.md`: protocol prose (adapted from the architecture spec) + generated reference.
@@ -50,6 +52,7 @@ Out of scope: installing it into either running bot (next plan).
 - [ ] `npx skills add JarvusInnovations/opsbots --skill opsbot-core` into an empty repo yields a runnable `scripts/opsbot-core` with no install step
 - [ ] `opsbot-core` with no args prints the home view; `--version` answers under the fast-path floor
 - [ ] `settings validate` rejects an unknown key and a cadence over the cap
+- [ ] `hooks list` shows scripts from `opsbot.d/*` in lexical order and skips non-executables
 - [ ] `check` with a fixture stream returns 0 / 10 / 20 / 2 in the four cases and never writes "nothing new" when any input failed
 - [ ] `cycle end` refuses a future watermark, a backwards move, and no-check-since-lock
 - [ ] `cycle begin` refuses on a live lock and takes over an abandoned one with an outage recorded
