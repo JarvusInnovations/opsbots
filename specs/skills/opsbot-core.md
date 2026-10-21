@@ -39,7 +39,7 @@ The bot's own files the skill reads and writes:
 | `gate_word` | optional; capital letters only; the check flags its presence as a whole word, never judges it |
 | `loop.prompt` | the exact loop prompt, including any cold-cache suffix the operator uses |
 | `loop.autocompact` | the window; the launch command reads it from here |
-| `cadence` | `{hot, warm, quiet_working, quiet, night, cap}` in seconds, plus `working_hours` (`days` as ISO weekday numbers 1–7, `start`, `end` as `HH:MM`) and `night` (`start`, `end`) in the bot's timezone; every key optional, defaulting to the architecture's table (working hours Monday–Friday 09:00–17:00, night 22:00–07:00) |
+| `cadence` | `{hot, warm, quiet_working, quiet, night, cap}` in seconds, plus `working_hours` (`days` as ISO weekday numbers 1–7, `start`, `end` as `HH:MM`) and `night_hours` (`start`, `end`, a span that may cross midnight) in the bot's timezone; every key optional, defaulting to the architecture's table (working hours Monday–Friday 09:00–17:00, night 22:00–07:00) |
 | `lock_max_minutes` | after which a lock is abandoned |
 | `liveness` | `{watchdog_minutes, nudge_minutes, nudge_cooldown_minutes, wake_cooldown_minutes, interval_minutes}`: the stop limit (60), the quiet limit before a nudge (50), the nudge's cooldown (50), the cooldown of `nudge --now` (10), and how often the watchdog and nudge timers fire (10; the nudge runs half an interval after the watchdog) |
 | `runtime` | `{adapter: "herdr", agent: "<name>"}`; the adapter supplies `idle` and `prompt` |
@@ -95,7 +95,9 @@ watermark), `OPSBOT_SEEN` the path of the seen-key file, `OPSBOT_WATERMARK` the
 watermark itself (empty with none). A heartbeat script that exits non-zero has its
 first stderr line reported as the reason; the items it printed before failing are
 still reported. The core drops an item whose key is already seen, so a script may
-over-report its window.
+over-report its window. A `monitor.d/` unit also gets `OPSBOT_CORE`, the absolute path of the core's
+shim, so it can run `$OPSBOT_CORE nudge --now`; its `OPSBOT_CONFIG` is the working-tree
+file, since a unit outlives any one commit.
 
 | Directory | When | Contract |
 | --- | --- | --- |
