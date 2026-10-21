@@ -1,9 +1,10 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/skills/opsbot-core.md
   - specs/architecture.md
+pr: 2
 ---
 
 # opsbot-core: extract the loop into the first kit skill
@@ -119,6 +120,13 @@ Out of scope: installing it into either running bot (next plan).
 
 ## Follow-ups
 
+- Tracked as (review, 2026-10-21): persist the digest. `check` records items as seen at
+  report time, so a session that dies between the digest and `cycle end` loses the items
+  for good; the source bot has the same hole. Write the digest to `logs/intake/last-digest`
+  so the cold-start pack can point at it. Belongs in opsbot-core's next version.
+- Tracked as (review, 2026-10-21): the lock's `pid` comes from `CLAUDE_PID`, which is not
+  always set; with an empty pid an abandoned hold is only reclaimed after `lock_max_minutes`.
+  Fall back to `process.ppid`.
 - Tracked as: the plan that installs opsbot-core into the running bots (not yet written) —
   verify the herdr adapter and real systemd units there, ship a `cycle.d/begin/` repo-sync
   script that honours `repo_sync`, and run `npx skills add JarvusInnovations/opsbots
