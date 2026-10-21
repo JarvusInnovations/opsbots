@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "specops": {
+      "source": "JarvusInnovations/specops",
+      "sourceType": "github",
+      "skillPath": "skills/specops/SKILL.md",
+      "computedHash": "82a79c5b4b75d51f33bbd77c50a46074112d27eb136a126dfe222da0f1709dad"
+    }
+  }
+}

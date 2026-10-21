@@ -1,0 +1,70 @@
+# One record per thing that went wrong, on one bot, on one day. Numbered I-001, I-002.
+# kind:
+#   outage   the bot stopped and nobody noticed for a while
+#   silence  the bot saw a message and did not acknowledge it
+#   misfire  it did the wrong thing, or the right thing to the wrong place
+#   leak     something reached a surface or person it should not have
+#   harness  the platform or classifier blocked legitimate work
+#   cost     it spent more than it should have
+# lesson names the LS record this instance of; an incident with no lesson has an
+# open_question saying why not.
+
+[gitsheet]
+root = 'fleet/incidents'
+path = '${{ id }}'
+
+[gitsheet.format]
+type = 'markdown'
+body = 'body'
+title = 'title'
+
+[gitsheet.fields.sources]
+sort = true
+
+[gitsheet.schema]
+additionalProperties = false
+type = 'object'
+required = ['id', 'title', 'bot', 'occurred', 'kind', 'body']
+anyOf = [{ required = ['lesson'] }, { required = ['open_question'] }]
+
+[gitsheet.schema.properties.id]
+type = 'string'
+pattern = '^I-[0-9]{3}$'
+
+[gitsheet.schema.properties.title]
+type = 'string'
+minLength = 1
+maxLength = 140
+
+[gitsheet.schema.properties.bot]
+type = 'string'
+pattern = '^[a-z][a-z0-9-]{1,40}$'
+description = 'bots id.'
+
+[gitsheet.schema.properties.occurred]
+type = 'string'
+format = 'date'
+
+[gitsheet.schema.properties.kind]
+type = 'string'
+enum = ['outage', 'silence', 'misfire', 'leak', 'harness', 'cost']
+
+[gitsheet.schema.properties.cost]
+type = 'string'
+description = 'What it cost and whom, in a phrase.'
+
+[gitsheet.schema.properties.lesson]
+type = 'string'
+pattern = '^LS-[0-9]{3}$'
+
+[gitsheet.schema.properties.sources]
+type = 'array'
+items = { type = 'string' }
+description = 'Pointers, not copies: the bot-repo records, logs and messages that show it.'
+
+[gitsheet.schema.properties.open_question]
+type = 'string'
+
+[gitsheet.schema.properties.body]
+type = 'string'
+pattern = '^# '

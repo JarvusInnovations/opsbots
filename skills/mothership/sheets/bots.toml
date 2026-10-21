@@ -1,0 +1,107 @@
+# One record per ops bot this mothership tracks: planned, building, live, paused or
+# retired. Status is a folder, so `fleet/bots/live/` is the list of what is running.
+#
+# principal is who the bot serves (an organization, a campaign, a person); operator is
+# who runs it. account_shape says whose accounts it speaks and thinks from:
+#   own        its own number, logins and host user
+#   principal  the principal's accounts, logged in by the principal
+#   operator   the operator's accounts, marked so it is never mistaken for them
+#   api        an API key under commercial terms, billed to the customer
+# kit lists the kit skills it carries with versions ("opsbot-core@1.2.0"); [] for a
+# hand-built bot. The body is free narrative: what it does, what is unusual about it.
+
+[gitsheet]
+root = 'fleet/bots'
+path = '${{ status }}/${{ id }}'
+
+[gitsheet.format]
+type = 'markdown'
+body = 'body'
+title = 'name'
+
+[gitsheet.fields.surfaces]
+sort = true
+[gitsheet.fields.kit]
+sort = true
+
+[gitsheet.schema]
+additionalProperties = false
+type = 'object'
+required = ['id', 'name', 'mark', 'status', 'principal', 'operator', 'account_shape', 'surfaces', 'kit', 'body']
+
+[gitsheet.schema.properties.id]
+type = 'string'
+pattern = '^[a-z][a-z0-9-]{1,40}$'
+
+[gitsheet.schema.properties.name]
+type = 'string'
+minLength = 1
+maxLength = 80
+
+[gitsheet.schema.properties.mark]
+type = 'string'
+minLength = 1
+maxLength = 8
+description = 'The emoji prefix on every message it sends.'
+
+[gitsheet.schema.properties.status]
+type = 'string'
+enum = ['planned', 'building', 'live', 'paused', 'retired']
+
+[gitsheet.schema.properties.principal]
+type = 'string'
+minLength = 1
+description = 'Who it serves.'
+
+[gitsheet.schema.properties.operator]
+type = 'string'
+minLength = 1
+description = 'Who runs it.'
+
+[gitsheet.schema.properties.repo]
+type = 'string'
+description = 'Where its record and rules live: a git URL or a local path.'
+
+[gitsheet.schema.properties.host]
+type = 'string'
+pattern = '^[a-z][a-z0-9-]{1,40}$'
+description = 'hosts id.'
+
+[gitsheet.schema.properties.host_user]
+type = 'string'
+description = 'The OS user it runs as on the host.'
+
+[gitsheet.schema.properties.account_shape]
+type = 'string'
+enum = ['own', 'principal', 'operator', 'api']
+
+[gitsheet.schema.properties.surfaces]
+type = 'array'
+items = { type = 'string', pattern = '^[a-z][a-z0-9-]*:(post|read|ignore)(:.+)?$' }
+description = 'One per surface, "kind:posture[:name]", e.g. "whatsapp:post:back-office", "discord:read".'
+
+[gitsheet.schema.properties.cadence]
+type = 'string'
+description = 'How it wakes, in a phrase: "self-paced 3/10/30 min, listener", "cron hourly".'
+
+[gitsheet.schema.properties.kit]
+type = 'array'
+items = { type = 'string', pattern = '^[a-z][a-z0-9-]*@[0-9]+\.[0-9]+\.[0-9]+$' }
+description = 'Kit skills installed, with versions.'
+
+[gitsheet.schema.properties.started]
+type = 'string'
+format = 'date'
+
+[gitsheet.schema.properties.retired]
+type = 'string'
+format = 'date'
+
+[gitsheet.schema.properties.open_question]
+type = 'string'
+description = 'What is not yet known. Written instead of a guess.'
+
+[gitsheet.schema.properties.body]
+type = 'string'
+pattern = '^# '
+description = 'Starts with the name as a heading.'

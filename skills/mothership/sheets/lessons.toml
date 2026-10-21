@@ -1,0 +1,63 @@
+# One record per failure pattern seen across bots, written generically enough to go
+# back to the public kit. Numbered LS-001, LS-002. fix_kind says what kind of thing
+# prevents it; encoded_in names the kit skill versions that carry that fix; status is
+# open until something does.
+
+[gitsheet]
+root = 'fleet/lessons'
+path = '${{ id }}'
+
+[gitsheet.format]
+type = 'markdown'
+body = 'body'
+title = 'title'
+
+[gitsheet.fields.bots]
+sort = true
+[gitsheet.fields.encoded_in]
+sort = true
+
+[gitsheet.schema]
+additionalProperties = false
+type = 'object'
+required = ['id', 'title', 'opened', 'status', 'fix_kind', 'bots', 'body']
+
+[gitsheet.schema.properties.id]
+type = 'string'
+pattern = '^LS-[0-9]{3}$'
+
+[gitsheet.schema.properties.title]
+type = 'string'
+minLength = 1
+maxLength = 140
+
+[gitsheet.schema.properties.opened]
+type = 'string'
+format = 'date'
+
+[gitsheet.schema.properties.status]
+type = 'string'
+enum = ['open', 'encoded', 'retired']
+
+[gitsheet.schema.properties.fix_kind]
+type = 'string'
+enum = ['guard', 'rule', 'skill', 'protocol', 'architecture']
+description = 'guard = a program refuses it; rule = a line on the card; skill = a kit change; protocol = an operator practice; architecture = the shape of the bot.'
+
+[gitsheet.schema.properties.bots]
+type = 'array'
+items = { type = 'string', pattern = '^[a-z][a-z0-9-]{1,40}$' }
+description = 'bots ids where it was seen.'
+
+[gitsheet.schema.properties.encoded_in]
+type = 'array'
+items = { type = 'string', pattern = '^[a-z][a-z0-9-]*@[0-9]+\.[0-9]+\.[0-9]+$' }
+description = 'Kit skill versions that carry the fix.'
+
+[gitsheet.schema.properties.open_question]
+type = 'string'
+
+[gitsheet.schema.properties.body]
+type = 'string'
+pattern = '^# '
+description = 'The pattern, what it costs, the fix, written without instance names.'

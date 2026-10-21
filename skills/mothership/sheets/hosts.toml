@@ -1,0 +1,41 @@
+# One record per machine or environment bots run on. Lists the OS users bots run as
+# and the bridges and listeners that live there, so "what is on this box" is one read.
+
+[gitsheet]
+root = 'fleet/hosts'
+path = '${{ id }}'
+
+[gitsheet.fields.users]
+sort = true
+[gitsheet.fields.services]
+sort = true
+
+[gitsheet.schema]
+additionalProperties = false
+type = 'object'
+required = ['id', 'kind', 'description']
+
+[gitsheet.schema.properties.id]
+type = 'string'
+pattern = '^[a-z][a-z0-9-]{1,40}$'
+
+[gitsheet.schema.properties.kind]
+type = 'string'
+enum = ['vm', 'workstation', 'cloud', 'managed']
+
+[gitsheet.schema.properties.description]
+type = 'string'
+minLength = 1
+
+[gitsheet.schema.properties.users]
+type = 'array'
+items = { type = 'string' }
+description = 'OS users that bots run as.'
+
+[gitsheet.schema.properties.services]
+type = 'array'
+items = { type = 'string' }
+description = 'Long-running services that belong to bots: "whatsapp bridge :8090 (chris)", "discord listener (dinobot)".'
+
+[gitsheet.schema.properties.open_question]
+type = 'string'
