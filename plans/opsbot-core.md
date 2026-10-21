@@ -59,7 +59,7 @@ Out of scope: installing it into either running bot (next plan).
 - [x] `next-delay` reproduces the support-desk bot's table for its hours and the kit defaults otherwise
 - [x] `cold-start --write` + `gate check` deny until the pack is read whole, allow after
 - [x] `infra install` renders units whose intervals come from `opsbot.json` and `infra status` shows them
-- [ ] `bun run check` (both `--check` builds) and tests pass in CI
+- [x] `bun run check` (both `--check` builds) and tests pass in CI
 - [x] No instance names anywhere in the skill
 
 ## Risks / unknowns
