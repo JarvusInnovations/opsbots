@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# A dotfile: discovery skips it even though it is executable.
+echo '{"key":"hidden:1"}'

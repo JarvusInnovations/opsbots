@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# A fake pack section: $FIXTURE_WAKE_LINES lines of what is owed (default 3).
+n="${FIXTURE_WAKE_LINES:-3}"
+for i in $(seq 1 "${n}"); do
+    echo "owed item ${i}: a request whose next move is the bot's, padded to look like a real line"
+done

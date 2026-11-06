@@ -1,0 +1,11 @@
+# Runs the watchdog every liveness.interval_minutes (@INTERVAL@).
+# Persistent: a run missed while the machine was off happens at boot.
+[Unit]
+Description=@NAME@ watchdog, every @INTERVAL@ minutes
+
+[Timer]
+OnCalendar=*:00/@INTERVAL@
+Persistent=true
+
+[Install]
+WantedBy=timers.target

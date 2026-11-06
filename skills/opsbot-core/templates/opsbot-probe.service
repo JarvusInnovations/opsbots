@@ -1,0 +1,15 @@
+# Timed probe opsbot.d/monitor.d/@SCRIPT_NAME@ for @NAME@. It wakes the loop
+# with `$OPSBOT_CORE nudge --now`. Rendered by `infra install`.
+[Unit]
+Description=@NAME@ probe @MONITOR@
+
+[Service]
+Type=oneshot
+WorkingDirectory=@ROOT@
+Environment=PATH=@PATH@
+Environment=OPSBOT_ROOT=@ROOT@
+Environment=OPSBOT_CONFIG=@ROOT@/opsbot.json
+Environment=OPSBOT_NAME=@NAME@
+Environment=OPSBOT_HOOK=monitor
+Environment=OPSBOT_CORE=@CORE@
+ExecStart=@SCRIPT@

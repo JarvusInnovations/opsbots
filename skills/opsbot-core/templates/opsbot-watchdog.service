@@ -1,0 +1,12 @@
+# Tells the operator when @NAME@'s loop has logged no cycle for
+# liveness.watchdog_minutes. No model involved. Rendered by `infra install`
+# from opsbot.json; `infra status` says when this file is stale.
+[Unit]
+Description=@NAME@ watchdog: tell the operator if no cycle has logged
+
+[Service]
+Type=oneshot
+WorkingDirectory=@ROOT@
+Environment=PATH=@PATH@
+Environment=OPSBOT_ROOT=@ROOT@
+ExecStart=@CORE@ watchdog

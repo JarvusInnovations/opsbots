@@ -1,0 +1,30 @@
+# CI drift gate: fails if a committed bundle or a SKILL.md generated region is
+# stale relative to src/ (source changed without a rebuild), plus type-check
+# and tests.
+
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # the bundle version comes from `git describe`; full history keeps it
+          # stable (the version-normalize in build-cli.ts is the safety net)
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .tool-versions
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
+      - run: bun install --frozen-lockfile
+      - run: bun run type-check
+      - run: bun run check
+      - run: bun test

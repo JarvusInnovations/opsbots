@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# A fake escalation channel: appends the message (stdin) to $FIXTURE_SINK,
+# then exits with $FIXTURE_ESCALATE_EXIT (default 0).
+{ cat; echo "---"; } >>"${FIXTURE_SINK:-/dev/null}"
+exit "${FIXTURE_ESCALATE_EXIT:-0}"

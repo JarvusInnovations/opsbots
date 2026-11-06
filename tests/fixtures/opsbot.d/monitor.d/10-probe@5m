@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# A fake timed probe: rendered as a timer every 5 minutes.
+exit 0

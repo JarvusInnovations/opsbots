@@ -1,0 +1,2 @@
+# The committed CLI bundles are generated (scripts/build-cli.ts); collapse them in diffs.
+skills/*/scripts/*.mjs linguist-generated=true

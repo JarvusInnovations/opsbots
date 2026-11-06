@@ -1,0 +1,21 @@
+{
+  "name": "opsbots",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "bun scripts/build-cli.ts && bun scripts/build-skill.ts",
+    "build:cli": "bun scripts/build-cli.ts",
+    "build:skill": "bun scripts/build-skill.ts",
+    "check": "bun scripts/build-cli.ts --check && bun scripts/build-skill.ts --check",
+    "test": "bun test",
+    "type-check": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@toon-format/toon": "4.4.0",
+    "@types/bun": "1.4.3",
+    "@types/node": "26.6.5",
+    "axi-sdk-js": "0.1.13",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}
