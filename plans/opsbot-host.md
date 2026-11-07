@@ -46,8 +46,15 @@ gws-axi, slack-axi, gh): the operator's, by hand, because those are the bot's cr
   `$(npm prefix -g)/lib/node_modules/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js`,
   without which the bridge exits 1 before ready; headed sessions need a named
   `CHROME_DEVTOOLS_AXI_SESSION` plus `CHROME_DEVTOOLS_AXI_HEADED=1` and `DISPLAY`.
-- Environment for systemd-launched sessions goes in `~/.config/environment.d/*.conf`, for
-  shells in `.bashrc`; both, or herdr and the terminal disagree.
+- Environment: the one place that reliably reaches the loop is the repo's `.claude/settings.json`
+  `env` block, because Claude Code sets it on every session however the session was launched.
+  `~/.config/environment.d/*.conf` covers systemd units and `.bashrc` covers shells, but the
+  second bot's live session had neither (its `.bashrc` exports sat below the interactive guard),
+  so a browser call would have reached the default bridge on 9224, which on a shared host is
+  another user's browser. `host browser install` writes all three; `host status` checks the
+  settings env first.
+- An exported `CHROME_DEVTOOLS_AXI_PORT` forces every session onto one bridge, so a headed named
+  session needs its own port (`CHROME_DEVTOOLS_AXI_PORT=<base+1>`); the smoke tests use both.
 
 ## Validation
 
@@ -62,3 +69,5 @@ gws-axi, slack-axi, gh): the operator's, by hand, because those are the bot's cr
 - 2026-11-07: planned on the operator's question whether the desktop and browser setup
   should be a skill. It should, and it is the "starter" skill the architecture already
   lists. Not started.
+- 2026-11-07 (later): the second bot's browser verified headless on its own port and headed on
+  the virtual desktop; the env findings above came from that check.
