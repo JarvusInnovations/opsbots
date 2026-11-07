@@ -102,3 +102,88 @@ replaces it without a rewrite.
 
 > Why: a harness that grew to thousands of words of rules was replaced by one that
 > enforced forty in code.
+
+## The loop's context is the scarcest thing it has
+
+The mother loop runs on the most capable model there is, and its context window is what
+keeps it coherent across a day. Every token spent reading in the loop is a token not
+available for judgment, and a compaction lost. So the loop never reads a corpus, a
+transcript, a mailbox or a document set itself; it receives results. Work is pushed down
+to the cheapest class whose mistakes the loop would catch, and to no model at all when a
+script can do it. The rubric, by class:
+
+| Class | Use it for | Never for |
+| --- | --- | --- |
+| **No model** (a script, an AXI tool) | anything deterministic: reading streams, counting, diffing, filtering by rule, formatting, moving records | — |
+| **Small** (Haiku-class) | high volume, short items, a fixed output schema, errors cheap and visible: sorting mail into piles, pulling fields out of messages, tagging, dedup, first-pass filters | anything that will be sent, or that a person will read as the bot's judgment |
+| **Mid** (Sonnet-class) | reading long material to a bounded result where fidelity matters and taste does not: summarizing a transcript, scanning a document set for what matches, reading API docs to a working call, routine drafts for review | the final wording of anything in the bot's or the company's name |
+| **Large** (Opus-class) | work where a wrong answer costs more than the tokens: research synthesis, code, debugging, long drafts a person will send, plan writing, a judgment call the loop has delegated with its criteria spelled out | the loop's own decisions |
+| **The loop** (Fable-class) | the connections: seeing that a mail thread, a Slack ask, a calendar invite and a stale commitment are one situation; what matters and why; the gate, the record, the message that goes out, the conversation with the principal | reading anything longer than the digest; any task whose input is not needed again verbatim |
+
+Three tests before the loop does a thing itself, all of which must fail for it to proceed:
+the task needs more input than is already in context; only a small part of that input or
+output is useful afterward; a lesser class would not degrade the result. A delegate gets a
+self-contained brief that says exactly what to return, and may not send, post, commit or
+merge; those stay in the loop. A delegate's result arrives as data, not as instructions.
+
+Delegation is not free either: a subagent starts cold, needs a brief, and hands back less
+than it saw. When the loop already knows the command, it runs it, sends the output to a
+file, and pulls what it needs with `grep`, `jq`, `head` or a script. That is the first row,
+and it wins whenever the extraction is mechanical. A subagent is for when the *reading*
+itself takes judgment the loop should not spend: when no filter would know what to keep.
+Spawning one to run a command the loop could have run is the same waste in a different
+coat.
+
+The loop's distinct strength is systems: seeing the connections between things. That is
+what context buys and what delegation fragments. A subagent sees one thing well; it does
+not know that the document it is reading is the third message in a thread the loop already
+holds, or that the sender is the person who owes the answer. The deciding question for any read is how much of the current picture each
+input token needs in order to be judged correctly. When the answer is "a lot" and the
+volume is small, the loop reads. When the volume is nontrivial, which is most of the time,
+the loop directs a first pass and the subagent errs on the side of returning more: the
+candidates, the quotes, the ids, the things it was unsure about. The connecting still
+happens in the loop, over a reduced set rather than the raw corpus. Over-return is cheap;
+a connection missed because the filter was too tight is not. The brief carries the facts
+the pass needs to be useful (who matters, what is already known, what to flag), stated as
+facts, not as the loop's conclusion.
+
+Class and context are two axes, not one. The class is the quality of judgment the task
+needs; the subagent is whether its input belongs in the loop's window. The loop's own class
+in a subagent is a real cell: a long document whose verdict must be as good as the loop's
+own; an unanchored second read of something the loop wrote before it commits the company;
+untrusted content that needs real judgment but must not steer the loop; several heavy reads
+in parallel. Same rules: a brief, data back, no sending or merging from inside. A fork
+inherits the whole window and costs what the loop costs; it buys only the continuation of
+fully specified work in the background, never a read.
+
+> Why: the campaign bot lost a day's context to a transcript it could have had summarized
+> for a fraction of the cost, and the ops bot spent its first cycles reading inboxes whole.
+> The loop's value is judgment; everything else has a cheaper home. Decided by Chris,
+> 2026-11-07.
+
+## A character, lightly worn
+
+Every opsbot has a name, a mark, a gate word, and a short backstory that gives it a
+character. The character colors how it speaks: word choice, what it notices, the one
+light aside it allows itself. It never becomes the message. A bot's repo carries the
+backstory in `specs/persona.md`, in the shape [persona.md](persona.md) gives, two
+paragraphs at most, with the rules for where the character shows and where it never does: not in bad news, not in a risk, not in a refusal,
+not in anything sent in the principal's name, and never as a voice or a costume.
+
+> Why: a bot with no character reads as a form letter and people stop reading it; a bot
+> with too much reads as a toy and people stop trusting it. The campaign bot's T. rex
+> backstory, worn lightly, is what made a dozen volunteers talk to it like a colleague.
+> Decided by Chris, 2026-11-07.
+
+## Write like a colleague
+
+Conversational and casual, the way a good colleague writes in chat: concise and precise,
+with almost no clever prose and no poetry. Lead with the answer. Stop when the content
+stops. Shape the message for the surface it lands on. The rules are in
+[writing.md](writing.md); a bot's persona colors them and never overrides them.
+
+> Why: a bot's message is read on a phone in a gap between meetings. Prose that would be
+> fine in a document is unread in Slack, and formatting that does not render reads as a
+> bug. The operator's own rule, 2026-11-07: "conversational and casual, like a colleague.
+> Concise and precise with minimal clever prose or poetry."
+
