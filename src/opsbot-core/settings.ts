@@ -48,6 +48,9 @@ export interface Settings {
   runtime: { adapter: "herdr"; agent: string };
   streams: Record<string, Record<string, unknown>>;
   repo_sync: "pull-on-clean" | "never-pull";
+  /** Files a stream's monitor appends one line per event to; the session arms a bounded
+   * Monitor on each between cycles (the live wake), and the listener's nudge is the backstop. */
+  wake: { files: string[] };
 }
 
 /** The kit's defaults (specs/architecture.md, Next wake; specs/skills/opsbot-core.md). */
@@ -142,6 +145,7 @@ export function validateSettings(raw: unknown): string[] {
     "runtime",
     "streams",
     "repo_sync",
+    "wake",
   ]);
   str(raw, "name", "", true, NAME_RE, "must be lowercase letters, digits and dashes, starting with a letter");
   str(raw, "mark", "", true);
@@ -223,6 +227,16 @@ export function validateSettings(raw: unknown): string[] {
       if (!isObj(streams[k])) problems.push(`streams.${k} must be an object`);
     }
   }
+  const wake = obj(raw, "wake", "", false);
+  if (wake) {
+    allow(wake, "wake.", ["files"]);
+    const files = wake.files;
+    if (files !== undefined) {
+      if (!Array.isArray(files) || files.some((f) => typeof f !== "string" || !f.trim())) {
+        problems.push("wake.files must be an array of file paths (strings)");
+      }
+    }
+  }
   return problems;
 }
 
@@ -276,6 +290,7 @@ export function withDefaults(raw: Json): Settings {
     runtime: { adapter: "herdr", agent: rt.agent as string },
     streams,
     repo_sync: pick(raw.repo_sync, "pull-on-clean"),
+    wake: { files: Array.isArray((raw.wake as Json | undefined)?.files) ? ((raw.wake as Json).files as string[]) : [] },
   };
 }
 

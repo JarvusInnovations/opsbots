@@ -137,15 +137,15 @@ its CLAUDE.md. A bot's own `specs/persona.md` colors the style and never overrid
 
 ### The cycle
 
-- `scripts/opsbot-core cycle begin` — Refuse while another writer holds the checkout (exit 30, `wait · … · next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`).
+- `scripts/opsbot-core cycle begin` — Refuse while another writer holds the checkout (exit 30, `wait · … · next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it.
 - `scripts/opsbot-core check [--no-commit]` — Run every `opsbot.d/heartbeat.d/` script, record seen keys, log, commit. Exit 0 nothing new · 10 new (digest) · 20 degraded (failed inputs named) · 2 cannot run.
-- `scripts/opsbot-core cycle end --records N [--degraded] [--summary TEXT]` — Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>`.
+- `scripts/opsbot-core cycle end --records N [--degraded] [--summary TEXT]` — Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake.
 - `scripts/opsbot-core next-delay` — Seconds until the next cycle and why, from the cycle log and the cadence table.
 
 ### Cold start
 
 - `scripts/opsbot-core start [--continue] [--dry-run] [-- <extra claude args>]` — Launch the bot's Claude Code session with the flags opsbot.json implies: permission mode (default auto), model, autocompact window, autocompact forced on, and `loop.prompt` as the first message. `--continue` resumes the last session in this checkout. A bot's `bin/start` shim calls this.
-- `scripts/opsbot-core cold-start [--write]` — Print the reground pack: the rule card, each `wake.d/` section, the last 48 hours of the cycle log, the untrusted-memory line. `--write` also writes the pack file and sets the pending flag.
+- `scripts/opsbot-core cold-start [--write]` — Print the reground pack: the rule card, the kit's sections (house style, delegation, what the session log says, the live wake to arm), each `wake.d/` section, the last 48 hours of the cycle log, the untrusted-memory line. `--write` also writes the pack file, sets the pending flag and records the session log's path for `cycle` and `nudge`.
 - `scripts/opsbot-core gate check` — PreToolUse body: exit 0 when nothing is pending or this call reads the pack whole; otherwise deny (exit 2).
 
 ### State
@@ -157,7 +157,7 @@ its CLAUDE.md. A bot's own `specs/persona.md` colors the style and never overrid
 ### Liveness (run by system timers)
 
 - `scripts/opsbot-core watchdog [--dry-run]` — When no cycle has logged within `watchdog_minutes`, tell the operator once per outage through `escalate.d/` and record it.
-- `scripts/opsbot-core nudge [--now [--reason TEXT]] [--dry-run]` — Re-issue `loop.prompt` to the named agent when the loop is quiet, unlocked, past cooldown and idle. `--now` (for monitors) skips the quiet test.
+- `scripts/opsbot-core nudge [--now [--reason TEXT]] [--dry-run]` — Re-issue `loop.prompt` to the named agent when the loop is quiet, unlocked, past cooldown and idle. `--now` (for listeners) skips the quiet test. A `working` agent whose own session log shows its turn ended (background work only) is prompted anyway, with a note.
 - `scripts/opsbot-core infra install|uninstall|status [--dry-run]` — Render the watchdog and nudge timers and one unit per `monitor.d/` script from `opsbot.json`; `status` names stale units.
 
 ### Setup

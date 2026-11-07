@@ -40,12 +40,25 @@ import {
   writeWatermark,
 } from "../state.js";
 import { runCheck } from "./check.js";
+import { sessionPointer } from "./coldstart.js";
+import { readEvents } from "../transcript.js";
+import { wakeFiles, wakeLines } from "../wake.js";
 import { existsSync, rmSync } from "node:fs";
 
 export const CYCLE_USAGE = "cycle begin | cycle end --records N [--degraded] [--summary TEXT]";
 
 function next(root: string, s: Settings): string {
   return delayLine(nextDelay(s, readCycleLog(root), nowMs()));
+}
+
+/** The live-wake lines for a cycle's output: state from the session log when the pointer is set,
+ * the deadline bounded by the loop's next wake when `boundByNext`. Empty when no wake files. */
+function wakeReport(root: string, s: Settings, boundByNext: boolean): string[] {
+  if (wakeFiles(s).length === 0) return [];
+  const ptr = sessionPointer(root);
+  const evs = ptr ? readEvents(ptr.transcript_path) : [];
+  const until = boundByNext ? nextDelay(s, readCycleLog(root), nowMs()).seconds * 1000 : null;
+  return wakeLines(s, evs.length ? evs : null, nowMs(), until);
 }
 
 export function cycleCommand(args: string[]): Record<string, unknown> {
@@ -146,15 +159,21 @@ function cycleBegin(): Record<string, unknown> {
     const why = pushCommits(root);
     releaseLock(root);
     setExit(0);
-    return { cycle: `${r.line}${why ? ` · not pushed: ${why}` : ""} · next ${next(root, settings)}` };
+    const out: Record<string, unknown> = { cycle: `${r.line}${why ? ` · not pushed: ${why}` : ""} · next ${next(root, settings)}` };
+    const wake = wakeReport(root, settings, true);
+    if (wake.length) out.wake = wake;
+    return out;
   }
   setExit(r.code);
-  return {
+  const held: Record<string, unknown> = {
     ...r.output,
     help: [
       `Work the items; then \`${cliInvocation()} cycle end --records <n>${r.code === 20 ? " --degraded" : ""}\` (the checkout stays held until then)`,
     ],
   };
+  const wake = wakeReport(root, settings, false);
+  if (wake.length) held.wake = wake;
+  return held;
 }
 
 function cycleEnd(args: string[]): Record<string, unknown> {
@@ -255,5 +274,7 @@ function cycleEnd(args: string[]): Record<string, unknown> {
   };
   if (notes.length) out.notes = notes;
   out.next = next(root, settings);
+  const wake = wakeReport(root, settings, true);
+  if (wake.length) out.wake = wake;
   return out;
 }

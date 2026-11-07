@@ -24,7 +24,7 @@ export const COMMAND_GROUPS: CommandGroup[] = [
       {
         usage: "cycle begin",
         summary:
-          "Refuse while another writer holds the checkout (exit 30, `wait · … · next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`).",
+          "Refuse while another writer holds the checkout (exit 30, `wait · … · next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it.",
       },
       {
         usage: "check [--no-commit]",
@@ -34,7 +34,7 @@ export const COMMAND_GROUPS: CommandGroup[] = [
       {
         usage: "cycle end --records N [--degraded] [--summary TEXT]",
         summary:
-          "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>`.",
+          "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake.",
       },
       { usage: "next-delay", summary: "Seconds until the next cycle and why, from the cycle log and the cadence table." },
     ],
@@ -50,7 +50,7 @@ export const COMMAND_GROUPS: CommandGroup[] = [
       {
         usage: "cold-start [--write]",
         summary:
-          "Print the reground pack: the rule card, each `wake.d/` section, the last 48 hours of the cycle log, the untrusted-memory line. `--write` also writes the pack file and sets the pending flag.",
+          "Print the reground pack: the rule card, the kit's sections (house style, delegation, what the session log says, the live wake to arm), each `wake.d/` section, the last 48 hours of the cycle log, the untrusted-memory line. `--write` also writes the pack file, sets the pending flag and records the session log's path for `cycle` and `nudge`.",
       },
       {
         usage: "gate check",
@@ -75,7 +75,7 @@ export const COMMAND_GROUPS: CommandGroup[] = [
       { usage: "watchdog [--dry-run]", summary: "When no cycle has logged within `watchdog_minutes`, tell the operator once per outage through `escalate.d/` and record it." },
       {
         usage: "nudge [--now [--reason TEXT]] [--dry-run]",
-        summary: "Re-issue `loop.prompt` to the named agent when the loop is quiet, unlocked, past cooldown and idle. `--now` (for monitors) skips the quiet test.",
+        summary: "Re-issue `loop.prompt` to the named agent when the loop is quiet, unlocked, past cooldown and idle. `--now` (for listeners) skips the quiet test. A `working` agent whose own session log shows its turn ended (background work only) is prompted anyway, with a note.",
       },
       {
         usage: "infra install|uninstall|status [--dry-run]",

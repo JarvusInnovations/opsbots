@@ -46,6 +46,7 @@ The bot's own files the skill reads and writes:
 | `runtime` | `{adapter: "herdr", agent: "<name>"}`; the adapter supplies `idle` and `prompt`. The herdr adapter finds the bot's pane by that name first and, when the name is missing (a renamed pane, a restarted herdr), by the one agent whose cwd is the bot's checkout; it prompts the pane, not the name |
 | `streams.<name>` | per-stream values a heartbeat script reads (postures, ids, lookbacks); the script is found by name in `opsbot.d/heartbeat.d/`, not listed here |
 | `repo_sync` | `pull-on-clean` or `never-pull` |
+| `wake.files` | optional; the files a `monitor.d/` listener appends one line per event to. The core prints, in the cold-start pack and at every `cycle begin` and `cycle end`, the state of each (armed until when, or not armed) and the exact bounded `Monitor` call that arms it; see *The live wake* below |
 
 `settings validate` refuses a file with an unknown key, a missing required key, or a
 cadence value over the cap. Required: `name`, `mark`, `loop.prompt`, `runtime.agent`. A
@@ -104,7 +105,7 @@ file, since a unit outlives any one commit.
 | Directory | When | Contract |
 | --- | --- | --- |
 | `heartbeat.d/` | every `check` | a stream adapter: prints NDJSON items `{key, at, conv, kind: "group"\|"dm", from, text, ...}`; `key` is the typed seen key; exit 0 with no lines = nothing new; non-zero = this input failed, reported as degraded by the script's name |
-| `monitor.d/` | always on | a long-running watcher or a timed probe; `infra install` renders it as a user service (`monitor.d/<name>`) or timer (`monitor.d/<name>@<interval>`); it wakes the loop by running `<core> nudge --now` |
+| `monitor.d/` | always on | a long-running watcher or a timed probe; `infra install` renders it as a user service (`monitor.d/<name>`) or timer (`monitor.d/<name>@<interval>`); it appends one line per event to a file named in `wake.files` (the session's monitor wakes on it) and also runs `<core> nudge --now` (the backstop) |
 | `cycle.d/begin/` | after the lock, before `check` | housekeeping that must run first (a repo sync, a cache warm); non-zero aborts the cycle as degraded |
 | `cycle.d/end/` | after records, before the commit | what to show at the close: due promises, fixes not yet told, anything the operator should see this cycle; stdout is appended to the closing line |
 | `wake.d/` | every cold start | one section of the reground pack each (what is owed, open escalations, …); each capped to its share of the byte budget |
@@ -132,6 +133,36 @@ order.
 - The gate denies every tool while the pending flag is set and the pack has not been
   read whole; a read with an offset or limit does not clear it.
 - `nudge` never creates a second loop; it prompts the one named agent.
+- `nudge` trusts the runtime's `idle` and `blocked`, but not its `working` alone: the herdr
+  adapter reads the terminal title, and Claude Code keeps the title's spinner while
+  background work (a subagent, a monitor) runs after the turn has ended. On `working`,
+  `nudge` reads the bot's own session log (the path the runtime names, else the pointer
+  `cold-start` wrote to `.git/opsbot-session`); a `system/turn_duration` entry after the
+  last assistant entry means the turn ended, and the prompt is sent with a note saying so.
+  No log to read, or a turn still open, stays a refusal.
+
+## The live wake
+
+Between cycles a stream's event reaches the model by two paths that do not depend on each
+other, in this order:
+
+1. **In-band, first.** The session arms one bounded `Monitor` per file in `wake.files`: a
+   poller that prints the new lines once and exits, with a deadline no later than the loop's
+   own next wake (`cycle end` prints it bounded that way) and never past the harness's
+   30-minute cap. The harness delivers the notification whether or not background work is
+   running. Because the monitor exits on the first arrival or at its deadline, it cannot
+   become a loop that re-arms itself; the pack's rules are: arm it again at the end of every
+   cycle when it is not armed and when it reports an expiry with nothing delivered, never two
+   on one file, never a longer deadline, never a different command.
+2. **Out-of-band, the backstop.** The listener's `nudge --now`, which survives the session
+   and covers a session that never armed (a fresh start, a compaction that dropped the rule).
+
+Every surface prints the same lines (`wake.ts`): the state of each file read from the
+session log (the last `Monitor` call on that file, its deadline, and whether a later
+notice already ended it), then the exact call to arm. The cold-start pack carries them as
+the last kit section, titled so the session arms before anything else; `cycle begin` and
+`cycle end` carry them as a `wake` field. Without a session log the state is `unknown` and
+the call is printed as the thing to do.
 - The bundle emits resolved paths, never bare command names.
 
 ## Principles

@@ -27,7 +27,9 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs, setExit, usageError } from "../args.js";
 import { skillDir } from "../invocation.js";
-import { sessionLogSection } from "../transcript.js";
+import { readEvents, sessionLogSection } from "../transcript.js";
+import { WAKE_RULES, wakeFiles, wakeLines } from "../wake.js";
+import { gitPath } from "../repo.js";
 import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
 import { findRoot, firstLine, iso, nowIso, nowMs, parseIso, showHead } from "../repo.js";
 import { SETTINGS_FILE, parseSettingsText, trySettings, withDefaults, type Settings } from "../settings.js";
@@ -45,6 +47,20 @@ const MAX_OUTAGES = 5;
 export function cacheDir(name: string): string {
   const base = process.env.XDG_CACHE_HOME || join(homedir(), ".cache");
   return join(base, name);
+}
+
+/** Where this session's log lives, as the SessionStart hook told cold-start; read by cycle and nudge. */
+export interface SessionPointer { transcript_path: string; session_id: string | null; at: string }
+
+export function writeSessionPointer(root: string, p: SessionPointer): void {
+  try { writeFileSync(gitPath(root, "opsbot-session"), `${JSON.stringify(p)}\n`); } catch { /* the pointer is a convenience */ }
+}
+
+export function sessionPointer(root: string): SessionPointer | null {
+  try {
+    const v = JSON.parse(readFileSync(gitPath(root, "opsbot-session"), "utf8"));
+    return v && typeof v.transcript_path === "string" ? (v as SessionPointer) : null;
+  } catch { return null; }
 }
 
 export function packPaths(name: string): { pack: string; pending: string } {
@@ -165,6 +181,11 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
     const body = sessionLogSection(transcript);
     if (body) kit.push(`═══ 1.${kit.length + 1} Before this start\n${capSection(body, SESSION_LOG_CAP)}`);
   }
+  if (wakeFiles(s).length) {
+    const evs = transcript ? readEvents(transcript) : null;
+    const lines = [...wakeLines(s, evs && evs.length ? evs : null, now, null), ...WAKE_RULES];
+    kit.push(`═══ 1.${kit.length + 1} The live wake (arm it before anything else)\n${lines.join("\n")}`);
+  }
 
   const scripts = discover(root, "wake").scripts;
   const summaryNo = 2 + scripts.length;
@@ -198,16 +219,22 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
 export async function coldStartCommand(args: string[]): Promise<string> {
   const { flags } = parseArgs(args, { bool: ["write"], value: ["transcript"] }, "cold-start [--write] [--transcript <jsonl>]");
   let transcript = typeof flags.transcript === "string" ? flags.transcript : undefined;
+  let sessionId: string | null = null;
   if (!transcript) {
     // The SessionStart hook hands us JSON on stdin with transcript_path (and session_id, source).
     try {
       const raw = (await readStdin()).trim();
-      if (raw) { const v = JSON.parse(raw); if (v && typeof v.transcript_path === "string") transcript = v.transcript_path; }
+      if (raw) {
+        const v = JSON.parse(raw);
+        if (v && typeof v.transcript_path === "string") transcript = v.transcript_path;
+        if (v && typeof v.session_id === "string") sessionId = v.session_id;
+      }
     } catch { /* no payload or not JSON: no session-log section */ }
   }
   setExit(0);
   const root = findRoot();
   if (!root) return "cold-start: not inside a git checkout, so there is no pack to read.";
+  if (transcript) writeSessionPointer(root, { transcript_path: transcript, session_id: sessionId, at: nowIso() });
   const text = showHead(root, SETTINGS_FILE);
   let s: Settings | null = null;
   if (text !== null) {
