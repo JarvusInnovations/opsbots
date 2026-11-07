@@ -25,6 +25,8 @@ import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
 import { blockedBy, firstLine, gitPath, humanTime, nowIso, nowMs, parseIso, requireRoot } from "../repo.js";
 import { loadSettings } from "../settings.js";
 import { runtimeFor } from "../runtime.js";
+import { readEvents, turnEnded } from "../transcript.js";
+import { sessionPointer } from "./coldstart.js";
 import { CYCLE_OUTCOMES, judgeLock, lastCycleAt, openOutage, readCycleLog, readLock, recordOutage, recordOutageEnd } from "../state.js";
 
 // --------------------------------------------------------------- watchdog
@@ -157,12 +159,22 @@ export function nudgeCommand(args: string[]): Record<string, unknown> {
     setExit(1);
     return { nudge: found.code === "agent_not_found" ? `cannot · the runtime has no agent named ${agent}` : `cannot · ${rt.name}: ${found.code}: ${found.message}` };
   }
+  let via = "";
   switch (found.status) {
     case "idle":
     case "done":
       break;
-    case "working":
-      return { nudge: `nothing · ${agent} is working (mid-turn)` };
+    case "working": {
+      // The runtime reads the terminal title, and the title keeps its spinner while background
+      // work runs after the turn has ended. The session log knows the difference.
+      const log = found.log ?? sessionPointer(root)?.transcript_path ?? null;
+      const evs = log ? readEvents(log) : [];
+      if (evs.length === 0) return { nudge: `nothing · ${agent} is working (mid-turn; no session log to check)` };
+      const t = turnEnded(evs);
+      if (!t.ended) return { nudge: `nothing · ${agent} is working (mid-turn since ${t.since.slice(11, 16)}Z)` };
+      via = ` · the runtime said working, but the session log shows the turn ended${t.at ? ` at ${t.at.slice(11, 16)}Z` : ""} (background work only)`;
+      break;
+    }
     case "blocked":
       return { nudge: `nothing · ${agent} is blocked at a dialog; a prompt would land in it` };
     default:
@@ -179,5 +191,5 @@ export function nudgeCommand(args: string[]): Record<string, unknown> {
     return { nudge: `cannot · ${rt.name} prompt ${agent}: ${r.code}: ${r.message}` };
   }
   writeFileSync(marker, stamp);
-  return { nudge: wake ? `woke ${agent}${reason ? ` for: ${reason}` : ""}` : `nudged ${agent}: ${line}`, at: nowIso() };
+  return { nudge: `${wake ? `woke ${agent}${reason ? ` for: ${reason}` : ""}` : `nudged ${agent}: ${line}`}${via}`, at: nowIso() };
 }

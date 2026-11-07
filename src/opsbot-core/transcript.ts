@@ -7,7 +7,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 
-export interface Ev { type: string; timestamp: string; content: unknown }
+export interface Ev { type: string; subtype?: string; timestamp: string; content: unknown }
 interface Part { type: string; text?: string; name?: string; id?: string; input?: unknown; tool_use_id?: string; content?: unknown }
 
 export const COMPACTION_MARK = "This session is being continued from a previous conversation";
@@ -20,7 +20,11 @@ export function readEvents(path: string): Ev[] {
     if (!line.trim()) continue;
     try {
       const v = JSON.parse(line);
-      if (v && typeof v === "object" && typeof v.type === "string") out.push({ type: v.type, timestamp: String(v.timestamp ?? ""), content: v.message?.content });
+      if (v && typeof v === "object" && typeof v.type === "string") {
+        const e: Ev = { type: v.type, timestamp: String(v.timestamp ?? ""), content: v.message?.content };
+        if (typeof v.subtype === "string") e.subtype = v.subtype;
+        out.push(e);
+      }
     } catch { /* not an event line */ }
   }
   return out;
@@ -88,6 +92,53 @@ export function assistantStatements(evs: Ev[], n: number, from = 0): { at: strin
     for (const p of parts(e.content)) if (p.type === "text" && p.text && p.text.trim()) out.push({ at: e.timestamp, text: p.text.trim() });
   }
   return out.slice(-n);
+}
+
+/**
+ * Whether the log's last turn has ended. Claude Code writes a `system/turn_duration` entry when a
+ * turn ends; one after the last assistant entry means the model is idle, whatever else is still
+ * running in the background (a subagent, a monitor). No assistant entry at all is idle too.
+ */
+export function turnEnded(evs: Ev[]): { ended: true; at: string | null } | { ended: false; since: string } {
+  let last = -1;
+  for (let i = evs.length - 1; i >= 0; i--) if (evs[i]!.type === "assistant") { last = i; break; }
+  if (last < 0) return { ended: true, at: null };
+  for (let i = evs.length - 1; i > last; i--) {
+    const e = evs[i]!;
+    if (e.type === "system" && e.subtype === "turn_duration") return { ended: true, at: e.timestamp || null };
+  }
+  return { ended: false, since: evs[last]!.timestamp };
+}
+
+/**
+ * The last Monitor the session armed on `file`: when, its deadline, and whether the log already
+ * shows it ending (its event delivered, its expiry, its stop). `ended` is read from later user-side
+ * text that names the monitor's description together with an ending word.
+ */
+export function lastMonitorCall(evs: Ev[], file: string): { at: string; timeoutMs: number; description: string; ended: boolean } | null {
+  for (let i = evs.length - 1; i >= 0; i--) {
+    const e = evs[i]!;
+    if (e.type !== "assistant") continue;
+    for (const p of parts(e.content)) {
+      if (p.type !== "tool_use" || p.name !== "Monitor") continue;
+      const inp = p.input && typeof p.input === "object" ? (p.input as Record<string, unknown>) : {};
+      const cmd = String(inp.command ?? "");
+      if (!cmd.includes(file)) continue;
+      const description = String(inp.description ?? "");
+      const timeoutMs = typeof inp.timeout_ms === "number" ? inp.timeout_ms : 300_000;
+      let ended = false;
+      if (description) {
+        for (let j = i + 1; j < evs.length && !ended; j++) {
+          const u = evs[j]!;
+          if (u.type !== "user") continue;
+          const t = partText(u.content);
+          if (t.includes(description) && /\b(exited|expired|stopped|event|timed out|killed)\b/i.test(t)) ended = true;
+        }
+      }
+      return { at: e.timestamp, timeoutMs, description, ended };
+    }
+  }
+  return null;
 }
 
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s);

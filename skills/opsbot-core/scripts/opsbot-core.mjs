@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "5b2ec7a" : "dev";
+    VERSION = true ? "5b1d364" : "dev";
   }
 });
 
@@ -1895,7 +1895,7 @@ var init_reference = __esm({
         commands: [
           {
             usage: "cycle begin",
-            summary: "Refuse while another writer holds the checkout (exit 30, `wait \xB7 \u2026 \xB7 next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`)."
+            summary: "Refuse while another writer holds the checkout (exit 30, `wait \xB7 \u2026 \xB7 next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it."
           },
           {
             usage: "check [--no-commit]",
@@ -1903,7 +1903,7 @@ var init_reference = __esm({
           },
           {
             usage: "cycle end --records N [--degraded] [--summary TEXT]",
-            summary: "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>`."
+            summary: "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake."
           },
           { usage: "next-delay", summary: "Seconds until the next cycle and why, from the cycle log and the cadence table." }
         ]
@@ -1917,7 +1917,7 @@ var init_reference = __esm({
           },
           {
             usage: "cold-start [--write]",
-            summary: "Print the reground pack: the rule card, each `wake.d/` section, the last 48 hours of the cycle log, the untrusted-memory line. `--write` also writes the pack file and sets the pending flag."
+            summary: "Print the reground pack: the rule card, the kit's sections (house style, delegation, what the session log says, the live wake to arm), each `wake.d/` section, the last 48 hours of the cycle log, the untrusted-memory line. `--write` also writes the pack file, sets the pending flag and records the session log's path for `cycle` and `nudge`."
           },
           {
             usage: "gate check",
@@ -1942,7 +1942,7 @@ var init_reference = __esm({
           { usage: "watchdog [--dry-run]", summary: "When no cycle has logged within `watchdog_minutes`, tell the operator once per outage through `escalate.d/` and record it." },
           {
             usage: "nudge [--now [--reason TEXT]] [--dry-run]",
-            summary: "Re-issue `loop.prompt` to the named agent when the loop is quiet, unlocked, past cooldown and idle. `--now` (for monitors) skips the quiet test."
+            summary: "Re-issue `loop.prompt` to the named agent when the loop is quiet, unlocked, past cooldown and idle. `--now` (for listeners) skips the quiet test. A `working` agent whose own session log shows its turn ended (background work only) is prompted anyway, with a note."
           },
           {
             usage: "infra install|uninstall|status [--dry-run]",
@@ -2237,7 +2237,8 @@ function validateSettings(raw) {
     "liveness",
     "runtime",
     "streams",
-    "repo_sync"
+    "repo_sync",
+    "wake"
   ]);
   str(raw, "name", "", true, NAME_RE, "must be lowercase letters, digits and dashes, starting with a letter");
   str(raw, "mark", "", true);
@@ -2314,6 +2315,16 @@ function validateSettings(raw) {
       if (!isObj(streams[k])) problems.push(`streams.${k} must be an object`);
     }
   }
+  const wake = obj(raw, "wake", "", false);
+  if (wake) {
+    allow(wake, "wake.", ["files"]);
+    const files = wake.files;
+    if (files !== void 0) {
+      if (!Array.isArray(files) || files.some((f) => typeof f !== "string" || !f.trim())) {
+        problems.push("wake.files must be an array of file paths (strings)");
+      }
+    }
+  }
   return problems;
 }
 function withDefaults(raw) {
@@ -2364,7 +2375,8 @@ function withDefaults(raw) {
     liveness,
     runtime: { adapter: "herdr", agent: rt.agent },
     streams,
-    repo_sync: pick(raw.repo_sync, "pull-on-clean")
+    repo_sync: pick(raw.repo_sync, "pull-on-clean"),
+    wake: { files: Array.isArray(raw.wake?.files) ? raw.wake.files : [] }
   };
 }
 function parseSettingsText(text, where) {
@@ -3025,10 +3037,495 @@ var init_check = __esm({
   }
 });
 
+// src/opsbot-core/transcript.ts
+import { existsSync as existsSync8, readFileSync as readFileSync4 } from "node:fs";
+function readEvents(path) {
+  if (!existsSync8(path)) return [];
+  const out = [];
+  for (const line of readFileSync4(path, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const v = JSON.parse(line);
+      if (v && typeof v === "object" && typeof v.type === "string") {
+        const e = { type: v.type, timestamp: String(v.timestamp ?? ""), content: v.message?.content };
+        if (typeof v.subtype === "string") e.subtype = v.subtype;
+        out.push(e);
+      }
+    } catch {
+    }
+  }
+  return out;
+}
+function lastCompaction(evs) {
+  for (let i = evs.length - 1; i >= 0; i--) {
+    const e = evs[i];
+    if (e.type === "user" && typeof e.content === "string" && e.content.startsWith(COMPACTION_MARK)) return i;
+  }
+  return -1;
+}
+function humanMessages(evs, from = 0) {
+  const out = [];
+  for (const e of evs.slice(Math.max(0, from))) {
+    if (e.type !== "user") continue;
+    if (typeof e.content === "string") {
+      const t = e.content.trim();
+      if (!t || t.startsWith(COMPACTION_MARK) || NOISE.some((r) => r.test(t))) continue;
+      out.push({ at: e.timestamp, text: t });
+      continue;
+    }
+    for (const p of parts(e.content)) {
+      if (p.type !== "text" || !p.text) continue;
+      const i = p.text.indexOf(MIDTURN_MARK);
+      if (i >= 0) {
+        const t = p.text.slice(i + MIDTURN_MARK.length).split(/\n\s*This is how Claude Code surfaces/)[0].trim();
+        if (t) out.push({ at: e.timestamp, text: t });
+      }
+    }
+  }
+  return out;
+}
+function toolCalls(evs, n, from = 0) {
+  const results = /* @__PURE__ */ new Map();
+  for (const e of evs.slice(Math.max(0, from))) for (const p of parts(e.content)) if (p.type === "tool_result" && p.tool_use_id) results.set(p.tool_use_id, partText(p.content));
+  const calls = [];
+  for (const e of evs.slice(Math.max(0, from))) {
+    if (e.type !== "assistant") continue;
+    for (const p of parts(e.content)) {
+      if (p.type !== "tool_use") continue;
+      const inp = p.input && typeof p.input === "object" ? p.input : {};
+      const head = String(inp.command ?? inp.file_path ?? inp.prompt ?? inp.message ?? JSON.stringify(inp)).replace(/\s+/g, " ");
+      calls.push({ at: e.timestamp, name: p.name ?? "?", input: head, result: (results.get(p.id ?? "") ?? "(no result recorded)").replace(/\s+/g, " ") });
+    }
+  }
+  return calls.slice(-n);
+}
+function assistantStatements(evs, n, from = 0) {
+  const out = [];
+  for (const e of evs.slice(Math.max(0, from))) {
+    if (e.type !== "assistant") continue;
+    for (const p of parts(e.content)) if (p.type === "text" && p.text && p.text.trim()) out.push({ at: e.timestamp, text: p.text.trim() });
+  }
+  return out.slice(-n);
+}
+function turnEnded(evs) {
+  let last = -1;
+  for (let i = evs.length - 1; i >= 0; i--) if (evs[i].type === "assistant") {
+    last = i;
+    break;
+  }
+  if (last < 0) return { ended: true, at: null };
+  for (let i = evs.length - 1; i > last; i--) {
+    const e = evs[i];
+    if (e.type === "system" && e.subtype === "turn_duration") return { ended: true, at: e.timestamp || null };
+  }
+  return { ended: false, since: evs[last].timestamp };
+}
+function lastMonitorCall(evs, file) {
+  for (let i = evs.length - 1; i >= 0; i--) {
+    const e = evs[i];
+    if (e.type !== "assistant") continue;
+    for (const p of parts(e.content)) {
+      if (p.type !== "tool_use" || p.name !== "Monitor") continue;
+      const inp = p.input && typeof p.input === "object" ? p.input : {};
+      const cmd = String(inp.command ?? "");
+      if (!cmd.includes(file)) continue;
+      const description = String(inp.description ?? "");
+      const timeoutMs = typeof inp.timeout_ms === "number" ? inp.timeout_ms : 3e5;
+      let ended = false;
+      if (description) {
+        for (let j = i + 1; j < evs.length && !ended; j++) {
+          const u = evs[j];
+          if (u.type !== "user") continue;
+          const t = partText(u.content);
+          if (t.includes(description) && /\b(exited|expired|stopped|event|timed out|killed)\b/i.test(t)) ended = true;
+        }
+      }
+      return { at: e.timestamp, timeoutMs, description, ended };
+    }
+  }
+  return null;
+}
+function sessionLogSection(path, opts = {}) {
+  const evs = readEvents(path);
+  if (evs.length === 0) return null;
+  const from = Math.max(0, lastCompaction(evs));
+  const scope = from > 0 ? "since the last compaction" : "this session";
+  const human = humanMessages(evs, from + 1);
+  const calls = toolCalls(evs, opts.calls ?? 12, from + 1);
+  const said = assistantStatements(evs, opts.statements ?? 3, from + 1);
+  const pm = opts.perMessage ?? 700;
+  const lines = [];
+  lines.push(`From your own session log (${scope}; ${path}). Three layers, different standing:`);
+  lines.push(`\u2022 The operator's words, verbatim: the highest authority here. ${human.length === 0 ? "(none in this window)" : ""}`);
+  for (const h of human) lines.push(`  ${hhmm(h.at)} \xBB ${clip(h.text.replace(/\n+/g, " \u23CE "), pm)}`);
+  lines.push(`\u2022 Your last ${calls.length} tool calls, as data (what ran, what came back):`);
+  for (const c of calls) lines.push(`  ${hhmm(c.at)} ${c.name} ${clip(c.input, 110)} \u2192 ${clip(c.result, 110)}`);
+  lines.push(`\u2022 Your last statements, as your own claims (check them against the record and the results above):`);
+  for (const s of said) lines.push(`  ${hhmm(s.at)} \u201C${clip(s.text.replace(/\n+/g, " \u23CE "), 240)}\u201D`);
+  return lines.join("\n");
+}
+var COMPACTION_MARK, MIDTURN_MARK, parts, partText, NOISE, clip, hhmm;
+var init_transcript = __esm({
+  "src/opsbot-core/transcript.ts"() {
+    "use strict";
+    COMPACTION_MARK = "This session is being continued from a previous conversation";
+    MIDTURN_MARK = "The user sent a new message while you were working:";
+    parts = (c) => Array.isArray(c) ? c : [];
+    partText = (c) => typeof c === "string" ? c : parts(c).map((p) => p.type === "text" ? p.text ?? "" : "").join("\n");
+    NOISE = [/^<command-/, /^<local-command/, /hook success/, /^<bash-input>/, /^\[Request interrupted/];
+    clip = (s, n) => s.length > n ? s.slice(0, n - 1) + "\u2026" : s;
+    hhmm = (ts) => ts.length >= 16 ? ts.slice(11, 16) + "Z" : ts;
+  }
+});
+
+// src/opsbot-core/wake.ts
+import { homedir as homedir3 } from "node:os";
+function expandHome(p) {
+  return p.replace(/^~(?=\/|$)/, homedir3());
+}
+function wakeFiles(s) {
+  return s.wake.files.map(expandHome);
+}
+function monitorCommand(file) {
+  const q = JSON.stringify(file);
+  return `f=${q}; c() { [ -f "$f" ] && wc -l < "$f" || echo 0; }; n=$(c); while sleep 2; do m=$(c); if [ "$m" -lt "$n" ]; then n=$m; fi; if [ "$m" -gt "$n" ]; then tail -n $((m-n)) "$f" | cut -c1-300; exit 0; fi; done`;
+}
+function monitorDescription(bot, file) {
+  return `${bot} wake: new lines in ${file}`;
+}
+function monitorCall(bot, file, timeoutMs) {
+  return `Monitor({ command: ${JSON.stringify(monitorCommand(file))}, description: ${JSON.stringify(monitorDescription(bot, file))}, timeout_ms: ${timeoutMs} })`;
+}
+function monitorTimeout(untilNextWakeMs) {
+  const t = untilNextWakeMs === null ? MONITOR_MAX_MS : Math.min(MONITOR_MAX_MS, untilNextWakeMs);
+  return Math.max(MONITOR_MIN_MS, Math.round(t / 1e3) * 1e3);
+}
+function wakeStates(evs, files, now) {
+  return files.map((file) => {
+    const m = lastMonitorCall(evs, file);
+    if (!m) return { file, armed: null };
+    const at = parseIso(m.at);
+    if (at === null || m.ended) return { file, armed: null };
+    const until = at + m.timeoutMs;
+    if (until <= now) return { file, armed: null };
+    return { file, armed: { at: iso(at), until: iso(until) } };
+  });
+}
+function wakeLines(s, evs, now, untilNextWakeMs) {
+  const files = wakeFiles(s);
+  if (files.length === 0) return [];
+  const timeout = monitorTimeout(untilNextWakeMs);
+  const states = evs ? wakeStates(evs, files, now) : files.map((file) => ({ file, armed: null }));
+  const out = [];
+  for (const st of states) {
+    if (st.armed) out.push(`armed on ${st.file} until ${hhmm2(st.armed.until)} (since ${hhmm2(st.armed.at)}); nothing to do`);
+    else out.push(`${evs ? "not armed" : "state unknown (no session log)"} on ${st.file} \xB7 arm now: ${monitorCall(s.name, st.file, timeout)}`);
+  }
+  return out;
+}
+var MONITOR_MAX_MS, MONITOR_MIN_MS, hhmm2, WAKE_RULES;
+var init_wake = __esm({
+  "src/opsbot-core/wake.ts"() {
+    "use strict";
+    init_repo();
+    init_transcript();
+    MONITOR_MAX_MS = 18e5;
+    MONITOR_MIN_MS = 6e4;
+    hhmm2 = (s) => `${s.slice(11, 16)}Z`;
+    WAKE_RULES = [
+      "The monitor is the live wake: its notification means a stream has something new, so run `cycle begin` then.",
+      "It exits on the first arrival or at its deadline. Arm it again at the end of every cycle when it is not armed, and when it reports an expiry with nothing delivered; never two on one file, never a longer deadline, never a different command.",
+      "The listener's nudge is the backstop when no monitor is armed; neither path depends on the other."
+    ];
+  }
+});
+
+// src/opsbot-core/commands/coldstart.ts
+import { existsSync as existsSync9, mkdirSync as mkdirSync3, readdirSync as readdirSync2, readFileSync as readFileSync5, rmSync as rmSync3, statSync as statSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
+import { join as join6, resolve as resolve3 } from "node:path";
+function cacheDir(name) {
+  const base = process.env.XDG_CACHE_HOME || join6(homedir4(), ".cache");
+  return join6(base, name);
+}
+function writeSessionPointer(root, p) {
+  try {
+    writeFileSync3(gitPath(root, "opsbot-session"), `${JSON.stringify(p)}
+`);
+  } catch {
+  }
+}
+function sessionPointer(root) {
+  try {
+    const v = JSON.parse(readFileSync5(gitPath(root, "opsbot-session"), "utf8"));
+    return v && typeof v.transcript_path === "string" ? v : null;
+  } catch {
+    return null;
+  }
+}
+function packPaths(name) {
+  const dir = cacheDir(name);
+  return { pack: join6(dir, "reground.md"), pending: join6(dir, "reground.pending") };
+}
+function bytes(s) {
+  return Buffer.byteLength(s, "utf8");
+}
+function capSection(text, limit) {
+  const lines = text.replace(/\n+$/, "").split("\n");
+  if (bytes(lines.join("\n")) <= limit) return lines.join("\n");
+  const kept = [];
+  let used = 0;
+  const tailRoom = 40;
+  for (const l of lines) {
+    const b = bytes(l) + 1;
+    if (used + b > limit - tailRoom) break;
+    kept.push(l);
+    used += b;
+  }
+  if (kept.length === 0 && lines.length > 0) {
+    kept.push(Buffer.from(lines[0], "utf8").subarray(0, Math.max(0, limit - tailRoom)).toString("utf8").replace(/�$/, ""));
+  }
+  const more = lines.length - kept.length;
+  return `${kept.join("\n")}
+\u2026 ${more} more line${more === 1 ? "" : "s"}`;
+}
+function logSummary(root, now) {
+  const all = readCycleLog(root).filter((l) => {
+    const t = parseIso(l.at);
+    return t !== null && t >= now - DAY2;
+  });
+  const checks = all.filter((l) => CHECK_OUTCOMES.includes(l.outcome));
+  const out = [];
+  if (checks.length === 0) out.push("no cycles in the last 48 hours");
+  else {
+    const count = (o) => checks.filter((c) => c.outcome === o).length;
+    const items = checks.reduce((a, c) => a + Number(c.new ?? 0), 0);
+    out.push(
+      `cycles ${checks.length} \xB7 nothing new ${count("nothing-new")} \xB7 new ${count("new")} \xB7 degraded ${count("degraded")} \xB7 items ${items}`
+    );
+    const times = all.filter((l) => CYCLE_OUTCOMES.includes(l.outcome)).map((l) => parseIso(l.at)).sort((a, b) => a - b);
+    let gap = 0;
+    let from = 0;
+    for (let i = 1; i < times.length; i++) {
+      if (times[i] - times[i - 1] > gap) {
+        gap = times[i] - times[i - 1];
+        from = times[i - 1];
+      }
+    }
+    if (times.length > 1) out.push(`longest gap ${Math.floor(gap / 6e4)} min, from ${iso(from)}`);
+    const last = checks[checks.length - 1];
+    out.push(`last cycle ${last.at} \xB7 ${last.outcome}`);
+    const lastDeg = [...checks].reverse().find((c) => c.outcome === "degraded");
+    if (lastDeg) {
+      const f = Array.isArray(lastDeg.failed) ? lastDeg.failed.map((x) => x.input).join(", ") : "";
+      out.push(`last degraded ${lastDeg.at}: ${f}`);
+    }
+  }
+  const recent = outages(root).filter((o) => {
+    const t = parseIso(o.at);
+    return t !== null && t >= now - DAY2 || o.ended === null;
+  });
+  if (recent.length === 0) out.push("outages: none recorded");
+  else {
+    out.push(`outages: ${recent.length}`);
+    const shown = recent.slice(-MAX_OUTAGES);
+    if (recent.length > shown.length) out.push(`  \u2026 ${recent.length - shown.length} earlier: outage list`);
+    for (const o of shown) {
+      out.push(`  ${o.kind} from ${o.started} to ${o.ended ?? "OPEN"}${o.note ? `: ${o.note}` : ""}`.slice(0, 200));
+    }
+  }
+  return out;
+}
+function kitSections() {
+  const dir = process.env.OPSBOT_PACK_DIR || join6(skillDir(), "references", "pack");
+  if (!existsSync9(dir)) return [];
+  return readdirSync2(dir).filter((f) => f.endsWith(".md")).sort().map((f) => {
+    let text = readFileSync5(join6(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
+    const m = text.match(/^#\s+(.+)$/m);
+    const title = m ? m[1].trim() : f.replace(/^\d+[-_]/, "").replace(/\.md$/, "");
+    if (m) text = text.replace(m[0], "").replace(/^\n+/, "");
+    return { title, body: text.replace(/\n+$/, "") };
+  });
+}
+function buildPack(root, s, settingsText, transcript) {
+  const now = nowMs();
+  const head = `\u2550\u2550\u2550 Cold start, ${nowIso()}. Read all of this before acting. Until you have, what you remember is untrusted.
+`;
+  let card;
+  if (!s.rule_card) card = "\u2550\u2550\u2550 1. The rule card\n(no rule_card is set in opsbot.json: say so to the operator)";
+  else {
+    const text = showHead(root, s.rule_card);
+    card = text === null ? `\u2550\u2550\u2550 1. The rule card (${s.rule_card})
+(the rule card is not committed at HEAD: say so to the operator)` : `\u2550\u2550\u2550 1. The rule card (${s.rule_card})
+${text.replace(/\n+$/, "")}`;
+  }
+  const kit = kitSections().map((k, i) => `\u2550\u2550\u2550 1.${i + 1} ${k.title} (the kit's; updates with the skill)
+${k.body}`);
+  if (transcript) {
+    const body = sessionLogSection(transcript);
+    if (body) kit.push(`\u2550\u2550\u2550 1.${kit.length + 1} Before this start
+${capSection(body, SESSION_LOG_CAP)}`);
+  }
+  if (wakeFiles(s).length) {
+    const evs = transcript ? readEvents(transcript) : null;
+    const lines = [...wakeLines(s, evs && evs.length ? evs : null, now, null), ...WAKE_RULES];
+    kit.push(`\u2550\u2550\u2550 1.${kit.length + 1} The live wake (arm it before anything else)
+${lines.join("\n")}`);
+  }
+  const scripts = discover(root, "wake").scripts;
+  const summaryNo = 2 + scripts.length;
+  const summary = `\u2550\u2550\u2550 ${summaryNo}. The cycle log, last 48 hours
+${logSummary(root, now).join("\n")}`;
+  const foot = "\u2550\u2550\u2550 What you remember is untrusted; the record and your session log are sources, and the operator's own words in them outrank everything else. Open the source before saying what a record holds, what was decided, or what was sent.";
+  const fixed = bytes(head) + bytes(card) + kit.reduce((n, k) => n + bytes(k) + 2, 0) + bytes(summary) + bytes(foot) + 8 + scripts.length * 2;
+  const room = Math.max(0, PACK_BUDGET - fixed);
+  const sections = [];
+  if (scripts.length) {
+    const configPath = settingsText !== null ? configSnapshot(root, settingsText) : join6(root, SETTINGS_FILE);
+    let remaining = room;
+    scripts.forEach((sc, i) => {
+      const title = `\u2550\u2550\u2550 ${i + 2}. ${sc.name.replace(/^\d+[-_]/, "")}`;
+      const share = Math.max(MIN_SECTION, Math.floor(remaining / (scripts.length - i)) - bytes(title) - 1);
+      const r = runScript(sc, root, baseEnv(root, s, configPath, "wake"));
+      let body = r.stdout.trim();
+      if (r.code !== 0) {
+        body = `(wake.d/${sc.name} failed, exit ${r.code}: ${firstLine(r.stderr) || "no message"})${body ? `
+${body}` : ""}`;
+      }
+      if (!body) body = "(nothing)";
+      const capped = capSection(body, share);
+      const section = `${title}
+${capped}`;
+      remaining -= bytes(section) + 2;
+      sections.push(section);
+    });
+  }
+  return [head, card, ...kit, ...sections, summary, foot].join("\n\n").replace(/\n{3,}/g, "\n\n") + "\n";
+}
+async function coldStartCommand(args) {
+  const { flags } = parseArgs(args, { bool: ["write"], value: ["transcript"] }, "cold-start [--write] [--transcript <jsonl>]");
+  let transcript = typeof flags.transcript === "string" ? flags.transcript : void 0;
+  let sessionId = null;
+  if (!transcript) {
+    try {
+      const raw = (await readStdin()).trim();
+      if (raw) {
+        const v = JSON.parse(raw);
+        if (v && typeof v.transcript_path === "string") transcript = v.transcript_path;
+        if (v && typeof v.session_id === "string") sessionId = v.session_id;
+      }
+    } catch {
+    }
+  }
+  setExit(0);
+  const root = findRoot();
+  if (!root) return "cold-start: not inside a git checkout, so there is no pack to read.";
+  if (transcript) writeSessionPointer(root, { transcript_path: transcript, session_id: sessionId, at: nowIso() });
+  const text = showHead(root, SETTINGS_FILE);
+  let s = null;
+  if (text !== null) {
+    const { raw, problems } = parseSettingsText(text, SETTINGS_FILE);
+    if (raw && problems.length === 0) s = withDefaults(raw);
+  }
+  s ??= trySettings(root);
+  if (!s) {
+    return `cold-start: ${SETTINGS_FILE} is missing or invalid at HEAD, so the pack cannot be built. Say so to the operator, and run \`settings validate\`.`;
+  }
+  const pack = buildPack(root, s, text, transcript);
+  if (!flags.write) return pack.replace(/\n$/, "");
+  const { pack: packFile, pending } = packPaths(s.name);
+  mkdirSync3(cacheDir(s.name), { recursive: true });
+  writeFileSync3(packFile, pack);
+  writeFileSync3(pending, `${nowIso()}
+`);
+  return [
+    `\u2550\u2550\u2550 READ THE WHOLE PACK BEFORE ANYTHING ELSE: Read ${packFile} now, whole (no offset or limit).`,
+    "\u2550\u2550\u2550 Every other tool is refused until you do (gate check). This hook output may be cut short; the file is not.",
+    "",
+    pack.replace(/\n$/, "")
+  ].join("\n");
+}
+async function readStdin() {
+  if (process.stdin.isTTY) return "";
+  const chunks = [];
+  for await (const c of process.stdin) chunks.push(c);
+  return Buffer.concat(chunks).toString("utf8");
+}
+async function gateCommand(args) {
+  const [sub, ...rest] = args;
+  if (sub !== "check") {
+    throw usageError(sub ? `unknown gate subcommand ${sub}` : "gate needs a subcommand", "gate check");
+  }
+  parseArgs(rest, {}, "gate check");
+  setExit(0);
+  const root = findRoot();
+  if (!root) return { gate: "open (not inside a git checkout)" };
+  const s = trySettings(root);
+  if (!s) return { gate: "open (no settings)" };
+  const { pack, pending } = packPaths(s.name);
+  if (!existsSync9(pending)) return { gate: "open" };
+  let packSize = 0;
+  try {
+    packSize = statSync3(pack).size;
+  } catch {
+    packSize = 0;
+  }
+  if (packSize === 0) {
+    rmSync3(pending, { force: true });
+    return { gate: "open (no pack to read; flag cleared)" };
+  }
+  let input = {};
+  try {
+    input = JSON.parse(await readStdin() || "{}");
+  } catch {
+    input = {};
+  }
+  const tool = String(input.tool_name ?? "");
+  const ti = input.tool_input ?? {};
+  const path = typeof ti.file_path === "string" ? ti.file_path : "";
+  const partial = ti.offset !== void 0 || ti.limit !== void 0 || ti.pages !== void 0;
+  if (tool === "Read" && path && resolve3(path) === resolve3(pack) && !partial) {
+    rmSync3(pending, { force: true });
+    return { gate: "open (pack read whole; flag cleared)" };
+  }
+  const reason = `Reground first: Read ${pack} whole (no offset or limit) before any other tool. The hook output you saw may have been cut short; the file holds the rule card, what is owed and the live state.`;
+  process.stderr.write(`${reason}
+`);
+  setExit(2);
+  return { gate: "denied", reason };
+}
+var PACK_BUDGET, SESSION_LOG_CAP, MIN_SECTION, DAY2, MAX_OUTAGES;
+var init_coldstart = __esm({
+  "src/opsbot-core/commands/coldstart.ts"() {
+    "use strict";
+    init_args();
+    init_invocation();
+    init_transcript();
+    init_wake();
+    init_repo();
+    init_lifecycle();
+    init_repo();
+    init_settings();
+    init_state();
+    PACK_BUDGET = 16e3;
+    SESSION_LOG_CAP = 4e3;
+    MIN_SECTION = 300;
+    DAY2 = 48 * 36e5;
+    MAX_OUTAGES = 5;
+  }
+});
+
 // src/opsbot-core/commands/cycle.ts
-import { existsSync as existsSync8, rmSync as rmSync3 } from "node:fs";
+import { existsSync as existsSync10, rmSync as rmSync4 } from "node:fs";
 function next(root, s) {
   return delayLine(nextDelay(s, readCycleLog(root), nowMs()));
+}
+function wakeReport(root, s, boundByNext) {
+  if (wakeFiles(s).length === 0) return [];
+  const ptr = sessionPointer(root);
+  const evs = ptr ? readEvents(ptr.transcript_path) : [];
+  const until = boundByNext ? nextDelay(s, readCycleLog(root), nowMs()).seconds * 1e3 : null;
+  return wakeLines(s, evs.length ? evs : null, nowMs(), until);
 }
 function cycleCommand(args) {
   const [sub, ...rest] = args;
@@ -3115,15 +3612,21 @@ function cycleBegin() {
     const why = pushCommits(root);
     releaseLock(root);
     setExit(0);
-    return { cycle: `${r.line}${why ? ` \xB7 not pushed: ${why}` : ""} \xB7 next ${next(root, settings)}` };
+    const out = { cycle: `${r.line}${why ? ` \xB7 not pushed: ${why}` : ""} \xB7 next ${next(root, settings)}` };
+    const wake2 = wakeReport(root, settings, true);
+    if (wake2.length) out.wake = wake2;
+    return out;
   }
   setExit(r.code);
-  return {
+  const held = {
     ...r.output,
     help: [
       `Work the items; then \`${cliInvocation()} cycle end --records <n>${r.code === 20 ? " --degraded" : ""}\` (the checkout stays held until then)`
     ]
   };
+  const wake = wakeReport(root, settings, false);
+  if (wake.length) held.wake = wake;
+  return held;
 }
 function cycleEnd(args) {
   const usage = "cycle end --records N [--degraded] [--summary TEXT]";
@@ -3196,13 +3699,13 @@ function cycleEnd(args) {
   if (summary !== void 0) line.summary = summary;
   appendJsonl(p.log, line);
   const files = [p.log];
-  if (existsSync8(p.watermark)) files.push(p.watermark);
-  if (existsSync8(p.outages)) files.push(p.outages);
+  if (existsSync10(p.watermark)) files.push(p.watermark);
+  if (existsSync10(p.outages)) files.push(p.outages);
   const why = commitOnly(root, files, `chore(cycle): finished, ${records} records`);
   if (why) {
     truncateTo(p.log, logSize);
     if (oldWm) writeWatermark(root, oldWm);
-    else if (!degraded) rmSync3(p.watermark, { force: true });
+    else if (!degraded) rmSync4(p.watermark, { force: true });
     throw new AxiError(`cannot commit the cycle log (${why}); nothing written, the checkout still held`, "CANNOT_COMMIT", [
       "Fix the repo, then run cycle end again"
     ]);
@@ -3214,6 +3717,8 @@ function cycleEnd(args) {
   };
   if (notes.length) out.notes = notes;
   out.next = next(root, settings);
+  const wake = wakeReport(root, settings, true);
+  if (wake.length) out.wake = wake;
   return out;
 }
 var init_cycle = __esm({
@@ -3228,354 +3733,9 @@ var init_cycle = __esm({
     init_settings();
     init_state();
     init_check();
-  }
-});
-
-// src/opsbot-core/transcript.ts
-import { existsSync as existsSync9, readFileSync as readFileSync4 } from "node:fs";
-function readEvents(path) {
-  if (!existsSync9(path)) return [];
-  const out = [];
-  for (const line of readFileSync4(path, "utf8").split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const v = JSON.parse(line);
-      if (v && typeof v === "object" && typeof v.type === "string") out.push({ type: v.type, timestamp: String(v.timestamp ?? ""), content: v.message?.content });
-    } catch {
-    }
-  }
-  return out;
-}
-function lastCompaction(evs) {
-  for (let i = evs.length - 1; i >= 0; i--) {
-    const e = evs[i];
-    if (e.type === "user" && typeof e.content === "string" && e.content.startsWith(COMPACTION_MARK)) return i;
-  }
-  return -1;
-}
-function humanMessages(evs, from = 0) {
-  const out = [];
-  for (const e of evs.slice(Math.max(0, from))) {
-    if (e.type !== "user") continue;
-    if (typeof e.content === "string") {
-      const t = e.content.trim();
-      if (!t || t.startsWith(COMPACTION_MARK) || NOISE.some((r) => r.test(t))) continue;
-      out.push({ at: e.timestamp, text: t });
-      continue;
-    }
-    for (const p of parts(e.content)) {
-      if (p.type !== "text" || !p.text) continue;
-      const i = p.text.indexOf(MIDTURN_MARK);
-      if (i >= 0) {
-        const t = p.text.slice(i + MIDTURN_MARK.length).split(/\n\s*This is how Claude Code surfaces/)[0].trim();
-        if (t) out.push({ at: e.timestamp, text: t });
-      }
-    }
-  }
-  return out;
-}
-function toolCalls(evs, n, from = 0) {
-  const results = /* @__PURE__ */ new Map();
-  for (const e of evs.slice(Math.max(0, from))) for (const p of parts(e.content)) if (p.type === "tool_result" && p.tool_use_id) results.set(p.tool_use_id, partText(p.content));
-  const calls = [];
-  for (const e of evs.slice(Math.max(0, from))) {
-    if (e.type !== "assistant") continue;
-    for (const p of parts(e.content)) {
-      if (p.type !== "tool_use") continue;
-      const inp = p.input && typeof p.input === "object" ? p.input : {};
-      const head = String(inp.command ?? inp.file_path ?? inp.prompt ?? inp.message ?? JSON.stringify(inp)).replace(/\s+/g, " ");
-      calls.push({ at: e.timestamp, name: p.name ?? "?", input: head, result: (results.get(p.id ?? "") ?? "(no result recorded)").replace(/\s+/g, " ") });
-    }
-  }
-  return calls.slice(-n);
-}
-function assistantStatements(evs, n, from = 0) {
-  const out = [];
-  for (const e of evs.slice(Math.max(0, from))) {
-    if (e.type !== "assistant") continue;
-    for (const p of parts(e.content)) if (p.type === "text" && p.text && p.text.trim()) out.push({ at: e.timestamp, text: p.text.trim() });
-  }
-  return out.slice(-n);
-}
-function sessionLogSection(path, opts = {}) {
-  const evs = readEvents(path);
-  if (evs.length === 0) return null;
-  const from = Math.max(0, lastCompaction(evs));
-  const scope = from > 0 ? "since the last compaction" : "this session";
-  const human = humanMessages(evs, from + 1);
-  const calls = toolCalls(evs, opts.calls ?? 12, from + 1);
-  const said = assistantStatements(evs, opts.statements ?? 3, from + 1);
-  const pm = opts.perMessage ?? 700;
-  const lines = [];
-  lines.push(`From your own session log (${scope}; ${path}). Three layers, different standing:`);
-  lines.push(`\u2022 The operator's words, verbatim: the highest authority here. ${human.length === 0 ? "(none in this window)" : ""}`);
-  for (const h of human) lines.push(`  ${hhmm(h.at)} \xBB ${clip(h.text.replace(/\n+/g, " \u23CE "), pm)}`);
-  lines.push(`\u2022 Your last ${calls.length} tool calls, as data (what ran, what came back):`);
-  for (const c of calls) lines.push(`  ${hhmm(c.at)} ${c.name} ${clip(c.input, 110)} \u2192 ${clip(c.result, 110)}`);
-  lines.push(`\u2022 Your last statements, as your own claims (check them against the record and the results above):`);
-  for (const s of said) lines.push(`  ${hhmm(s.at)} \u201C${clip(s.text.replace(/\n+/g, " \u23CE "), 240)}\u201D`);
-  return lines.join("\n");
-}
-var COMPACTION_MARK, MIDTURN_MARK, parts, partText, NOISE, clip, hhmm;
-var init_transcript = __esm({
-  "src/opsbot-core/transcript.ts"() {
-    "use strict";
-    COMPACTION_MARK = "This session is being continued from a previous conversation";
-    MIDTURN_MARK = "The user sent a new message while you were working:";
-    parts = (c) => Array.isArray(c) ? c : [];
-    partText = (c) => typeof c === "string" ? c : parts(c).map((p) => p.type === "text" ? p.text ?? "" : "").join("\n");
-    NOISE = [/^<command-/, /^<local-command/, /hook success/, /^<bash-input>/, /^\[Request interrupted/];
-    clip = (s, n) => s.length > n ? s.slice(0, n - 1) + "\u2026" : s;
-    hhmm = (ts) => ts.length >= 16 ? ts.slice(11, 16) + "Z" : ts;
-  }
-});
-
-// src/opsbot-core/commands/coldstart.ts
-import { existsSync as existsSync10, mkdirSync as mkdirSync3, readdirSync as readdirSync2, readFileSync as readFileSync5, rmSync as rmSync4, statSync as statSync3, writeFileSync as writeFileSync3 } from "node:fs";
-import { homedir as homedir3 } from "node:os";
-import { join as join6, resolve as resolve3 } from "node:path";
-function cacheDir(name) {
-  const base = process.env.XDG_CACHE_HOME || join6(homedir3(), ".cache");
-  return join6(base, name);
-}
-function packPaths(name) {
-  const dir = cacheDir(name);
-  return { pack: join6(dir, "reground.md"), pending: join6(dir, "reground.pending") };
-}
-function bytes(s) {
-  return Buffer.byteLength(s, "utf8");
-}
-function capSection(text, limit) {
-  const lines = text.replace(/\n+$/, "").split("\n");
-  if (bytes(lines.join("\n")) <= limit) return lines.join("\n");
-  const kept = [];
-  let used = 0;
-  const tailRoom = 40;
-  for (const l of lines) {
-    const b = bytes(l) + 1;
-    if (used + b > limit - tailRoom) break;
-    kept.push(l);
-    used += b;
-  }
-  if (kept.length === 0 && lines.length > 0) {
-    kept.push(Buffer.from(lines[0], "utf8").subarray(0, Math.max(0, limit - tailRoom)).toString("utf8").replace(/�$/, ""));
-  }
-  const more = lines.length - kept.length;
-  return `${kept.join("\n")}
-\u2026 ${more} more line${more === 1 ? "" : "s"}`;
-}
-function logSummary(root, now) {
-  const all = readCycleLog(root).filter((l) => {
-    const t = parseIso(l.at);
-    return t !== null && t >= now - DAY2;
-  });
-  const checks = all.filter((l) => CHECK_OUTCOMES.includes(l.outcome));
-  const out = [];
-  if (checks.length === 0) out.push("no cycles in the last 48 hours");
-  else {
-    const count = (o) => checks.filter((c) => c.outcome === o).length;
-    const items = checks.reduce((a, c) => a + Number(c.new ?? 0), 0);
-    out.push(
-      `cycles ${checks.length} \xB7 nothing new ${count("nothing-new")} \xB7 new ${count("new")} \xB7 degraded ${count("degraded")} \xB7 items ${items}`
-    );
-    const times = all.filter((l) => CYCLE_OUTCOMES.includes(l.outcome)).map((l) => parseIso(l.at)).sort((a, b) => a - b);
-    let gap = 0;
-    let from = 0;
-    for (let i = 1; i < times.length; i++) {
-      if (times[i] - times[i - 1] > gap) {
-        gap = times[i] - times[i - 1];
-        from = times[i - 1];
-      }
-    }
-    if (times.length > 1) out.push(`longest gap ${Math.floor(gap / 6e4)} min, from ${iso(from)}`);
-    const last = checks[checks.length - 1];
-    out.push(`last cycle ${last.at} \xB7 ${last.outcome}`);
-    const lastDeg = [...checks].reverse().find((c) => c.outcome === "degraded");
-    if (lastDeg) {
-      const f = Array.isArray(lastDeg.failed) ? lastDeg.failed.map((x) => x.input).join(", ") : "";
-      out.push(`last degraded ${lastDeg.at}: ${f}`);
-    }
-  }
-  const recent = outages(root).filter((o) => {
-    const t = parseIso(o.at);
-    return t !== null && t >= now - DAY2 || o.ended === null;
-  });
-  if (recent.length === 0) out.push("outages: none recorded");
-  else {
-    out.push(`outages: ${recent.length}`);
-    const shown = recent.slice(-MAX_OUTAGES);
-    if (recent.length > shown.length) out.push(`  \u2026 ${recent.length - shown.length} earlier: outage list`);
-    for (const o of shown) {
-      out.push(`  ${o.kind} from ${o.started} to ${o.ended ?? "OPEN"}${o.note ? `: ${o.note}` : ""}`.slice(0, 200));
-    }
-  }
-  return out;
-}
-function kitSections() {
-  const dir = process.env.OPSBOT_PACK_DIR || join6(skillDir(), "references", "pack");
-  if (!existsSync10(dir)) return [];
-  return readdirSync2(dir).filter((f) => f.endsWith(".md")).sort().map((f) => {
-    let text = readFileSync5(join6(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
-    const m = text.match(/^#\s+(.+)$/m);
-    const title = m ? m[1].trim() : f.replace(/^\d+[-_]/, "").replace(/\.md$/, "");
-    if (m) text = text.replace(m[0], "").replace(/^\n+/, "");
-    return { title, body: text.replace(/\n+$/, "") };
-  });
-}
-function buildPack(root, s, settingsText, transcript) {
-  const now = nowMs();
-  const head = `\u2550\u2550\u2550 Cold start, ${nowIso()}. Read all of this before acting. Until you have, what you remember is untrusted.
-`;
-  let card;
-  if (!s.rule_card) card = "\u2550\u2550\u2550 1. The rule card\n(no rule_card is set in opsbot.json: say so to the operator)";
-  else {
-    const text = showHead(root, s.rule_card);
-    card = text === null ? `\u2550\u2550\u2550 1. The rule card (${s.rule_card})
-(the rule card is not committed at HEAD: say so to the operator)` : `\u2550\u2550\u2550 1. The rule card (${s.rule_card})
-${text.replace(/\n+$/, "")}`;
-  }
-  const kit = kitSections().map((k, i) => `\u2550\u2550\u2550 1.${i + 1} ${k.title} (the kit's; updates with the skill)
-${k.body}`);
-  if (transcript) {
-    const body = sessionLogSection(transcript);
-    if (body) kit.push(`\u2550\u2550\u2550 1.${kit.length + 1} Before this start
-${capSection(body, SESSION_LOG_CAP)}`);
-  }
-  const scripts = discover(root, "wake").scripts;
-  const summaryNo = 2 + scripts.length;
-  const summary = `\u2550\u2550\u2550 ${summaryNo}. The cycle log, last 48 hours
-${logSummary(root, now).join("\n")}`;
-  const foot = "\u2550\u2550\u2550 What you remember is untrusted; the record and your session log are sources, and the operator's own words in them outrank everything else. Open the source before saying what a record holds, what was decided, or what was sent.";
-  const fixed = bytes(head) + bytes(card) + kit.reduce((n, k) => n + bytes(k) + 2, 0) + bytes(summary) + bytes(foot) + 8 + scripts.length * 2;
-  const room = Math.max(0, PACK_BUDGET - fixed);
-  const sections = [];
-  if (scripts.length) {
-    const configPath = settingsText !== null ? configSnapshot(root, settingsText) : join6(root, SETTINGS_FILE);
-    let remaining = room;
-    scripts.forEach((sc, i) => {
-      const title = `\u2550\u2550\u2550 ${i + 2}. ${sc.name.replace(/^\d+[-_]/, "")}`;
-      const share = Math.max(MIN_SECTION, Math.floor(remaining / (scripts.length - i)) - bytes(title) - 1);
-      const r = runScript(sc, root, baseEnv(root, s, configPath, "wake"));
-      let body = r.stdout.trim();
-      if (r.code !== 0) {
-        body = `(wake.d/${sc.name} failed, exit ${r.code}: ${firstLine(r.stderr) || "no message"})${body ? `
-${body}` : ""}`;
-      }
-      if (!body) body = "(nothing)";
-      const capped = capSection(body, share);
-      const section = `${title}
-${capped}`;
-      remaining -= bytes(section) + 2;
-      sections.push(section);
-    });
-  }
-  return [head, card, ...kit, ...sections, summary, foot].join("\n\n").replace(/\n{3,}/g, "\n\n") + "\n";
-}
-async function coldStartCommand(args) {
-  const { flags } = parseArgs(args, { bool: ["write"], value: ["transcript"] }, "cold-start [--write] [--transcript <jsonl>]");
-  let transcript = typeof flags.transcript === "string" ? flags.transcript : void 0;
-  if (!transcript) {
-    try {
-      const raw = (await readStdin()).trim();
-      if (raw) {
-        const v = JSON.parse(raw);
-        if (v && typeof v.transcript_path === "string") transcript = v.transcript_path;
-      }
-    } catch {
-    }
-  }
-  setExit(0);
-  const root = findRoot();
-  if (!root) return "cold-start: not inside a git checkout, so there is no pack to read.";
-  const text = showHead(root, SETTINGS_FILE);
-  let s = null;
-  if (text !== null) {
-    const { raw, problems } = parseSettingsText(text, SETTINGS_FILE);
-    if (raw && problems.length === 0) s = withDefaults(raw);
-  }
-  s ??= trySettings(root);
-  if (!s) {
-    return `cold-start: ${SETTINGS_FILE} is missing or invalid at HEAD, so the pack cannot be built. Say so to the operator, and run \`settings validate\`.`;
-  }
-  const pack = buildPack(root, s, text, transcript);
-  if (!flags.write) return pack.replace(/\n$/, "");
-  const { pack: packFile, pending } = packPaths(s.name);
-  mkdirSync3(cacheDir(s.name), { recursive: true });
-  writeFileSync3(packFile, pack);
-  writeFileSync3(pending, `${nowIso()}
-`);
-  return [
-    `\u2550\u2550\u2550 READ THE WHOLE PACK BEFORE ANYTHING ELSE: Read ${packFile} now, whole (no offset or limit).`,
-    "\u2550\u2550\u2550 Every other tool is refused until you do (gate check). This hook output may be cut short; the file is not.",
-    "",
-    pack.replace(/\n$/, "")
-  ].join("\n");
-}
-async function readStdin() {
-  if (process.stdin.isTTY) return "";
-  const chunks = [];
-  for await (const c of process.stdin) chunks.push(c);
-  return Buffer.concat(chunks).toString("utf8");
-}
-async function gateCommand(args) {
-  const [sub, ...rest] = args;
-  if (sub !== "check") {
-    throw usageError(sub ? `unknown gate subcommand ${sub}` : "gate needs a subcommand", "gate check");
-  }
-  parseArgs(rest, {}, "gate check");
-  setExit(0);
-  const root = findRoot();
-  if (!root) return { gate: "open (not inside a git checkout)" };
-  const s = trySettings(root);
-  if (!s) return { gate: "open (no settings)" };
-  const { pack, pending } = packPaths(s.name);
-  if (!existsSync10(pending)) return { gate: "open" };
-  let packSize = 0;
-  try {
-    packSize = statSync3(pack).size;
-  } catch {
-    packSize = 0;
-  }
-  if (packSize === 0) {
-    rmSync4(pending, { force: true });
-    return { gate: "open (no pack to read; flag cleared)" };
-  }
-  let input = {};
-  try {
-    input = JSON.parse(await readStdin() || "{}");
-  } catch {
-    input = {};
-  }
-  const tool = String(input.tool_name ?? "");
-  const ti = input.tool_input ?? {};
-  const path = typeof ti.file_path === "string" ? ti.file_path : "";
-  const partial = ti.offset !== void 0 || ti.limit !== void 0 || ti.pages !== void 0;
-  if (tool === "Read" && path && resolve3(path) === resolve3(pack) && !partial) {
-    rmSync4(pending, { force: true });
-    return { gate: "open (pack read whole; flag cleared)" };
-  }
-  const reason = `Reground first: Read ${pack} whole (no offset or limit) before any other tool. The hook output you saw may have been cut short; the file holds the rule card, what is owed and the live state.`;
-  process.stderr.write(`${reason}
-`);
-  setExit(2);
-  return { gate: "denied", reason };
-}
-var PACK_BUDGET, SESSION_LOG_CAP, MIN_SECTION, DAY2, MAX_OUTAGES;
-var init_coldstart = __esm({
-  "src/opsbot-core/commands/coldstart.ts"() {
-    "use strict";
-    init_args();
-    init_invocation();
+    init_coldstart();
     init_transcript();
-    init_lifecycle();
-    init_repo();
-    init_settings();
-    init_state();
-    PACK_BUDGET = 16e3;
-    SESSION_LOG_CAP = 4e3;
-    MIN_SECTION = 300;
-    DAY2 = 48 * 36e5;
-    MAX_OUTAGES = 5;
+    init_wake();
   }
 });
 
@@ -3638,6 +3798,8 @@ var init_outage = __esm({
 
 // src/opsbot-core/runtime.ts
 import { appendFileSync as appendFileSync2, readFileSync as readFileSync6 } from "node:fs";
+import { homedir as homedir5 } from "node:os";
+import { join as join7 } from "node:path";
 function normStatus(s) {
   return s === "idle" || s === "done" || s === "working" || s === "blocked" ? s : "unknown";
 }
@@ -3656,12 +3818,28 @@ function herdrError(out) {
 function pickAgent(agents, agent, root) {
   if (!Array.isArray(agents)) return null;
   const rows = agents.filter((a) => a && typeof a === "object");
+  const hit = (row, by) => {
+    const out = { pane: String(row.pane_id ?? "?"), status: row.agent_status, by };
+    const log = sessionLogPath(row);
+    if (log) out.log = log;
+    return out;
+  };
   const byName = rows.find((a) => a.name === agent);
-  if (byName) return { pane: String(byName.pane_id ?? "?"), status: byName.agent_status, by: "name" };
+  if (byName) return hit(byName, "name");
   const norm = (p) => String(p ?? "").replace(/\/+$/, "");
   const byCwd = rows.filter((a) => norm(a.cwd) === norm(root));
-  if (byCwd.length === 1) return { pane: String(byCwd[0].pane_id ?? "?"), status: byCwd[0].agent_status, by: "cwd" };
+  if (byCwd.length === 1) return hit(byCwd[0], "cwd");
   return null;
+}
+function projectSlug(cwd) {
+  return cwd.replace(/[^A-Za-z0-9]/g, "-");
+}
+function sessionLogPath(row) {
+  const sess = row.agent_session;
+  const id = sess && sess.kind === "id" && typeof sess.value === "string" ? sess.value : null;
+  const cwd = typeof row.cwd === "string" ? row.cwd : null;
+  if (!id || !cwd || !/^[A-Za-z0-9-]+$/.test(id)) return null;
+  return join7(homedir5(), ".claude", "projects", projectSlug(cwd), `${id}.jsonl`);
 }
 function herdrResolve(agent) {
   const r = run("herdr", ["agent", "list"]);
@@ -3677,7 +3855,7 @@ ${r.stdout}`) };
   const root = process.env.OPSBOT_ROOT || process.cwd();
   const hit = pickAgent(list, agent, root);
   if (!hit) return { ok: false, code: "agent_not_found", message: `no herdr agent named ${agent} and no single agent running in ${root}` };
-  return { ok: true, pane: hit.pane, status: normStatus(hit.status), by: hit.by };
+  return { ok: true, pane: hit.pane, status: normStatus(hit.status), by: hit.by, ...hit.log ? { log: hit.log } : {} };
 }
 function fakeAdapter(file) {
   const state = () => {
@@ -3693,7 +3871,8 @@ function fakeAdapter(file) {
       const s = state();
       const e = s.error;
       if (e) return { ok: false, code: String(e.code ?? "error"), message: String(e.message ?? "") };
-      return { ok: true, status: normStatus(s.status), pane: String(s.pane ?? "p1") };
+      const log = typeof s.session_log === "string" ? s.session_log : void 0;
+      return { ok: true, status: normStatus(s.status), pane: String(s.pane ?? "p1"), ...log ? { log } : {} };
     },
     prompt(_agent, text) {
       const e = state().prompt_error;
@@ -3723,7 +3902,7 @@ var init_runtime = __esm({
       get(agent) {
         const h = herdrResolve(agent);
         if (!h.ok) return h;
-        return { ok: true, status: h.status, pane: h.pane };
+        return { ok: true, status: h.status, pane: h.pane, ...h.log ? { log: h.log } : {} };
       },
       prompt(agent, text) {
         const h = herdrResolve(agent);
@@ -3854,12 +4033,20 @@ function nudgeCommand(args) {
     setExit(1);
     return { nudge: found2.code === "agent_not_found" ? `cannot \xB7 the runtime has no agent named ${agent}` : `cannot \xB7 ${rt.name}: ${found2.code}: ${found2.message}` };
   }
+  let via = "";
   switch (found2.status) {
     case "idle":
     case "done":
       break;
-    case "working":
-      return { nudge: `nothing \xB7 ${agent} is working (mid-turn)` };
+    case "working": {
+      const log = found2.log ?? sessionPointer(root)?.transcript_path ?? null;
+      const evs = log ? readEvents(log) : [];
+      if (evs.length === 0) return { nudge: `nothing \xB7 ${agent} is working (mid-turn; no session log to check)` };
+      const t = turnEnded(evs);
+      if (!t.ended) return { nudge: `nothing \xB7 ${agent} is working (mid-turn since ${t.since.slice(11, 16)}Z)` };
+      via = ` \xB7 the runtime said working, but the session log shows the turn ended${t.at ? ` at ${t.at.slice(11, 16)}Z` : ""} (background work only)`;
+      break;
+    }
     case "blocked":
       return { nudge: `nothing \xB7 ${agent} is blocked at a dialog; a prompt would land in it` };
     default:
@@ -3876,7 +4063,7 @@ ${reason}
     return { nudge: `cannot \xB7 ${rt.name} prompt ${agent}: ${r.code}: ${r.message}` };
   }
   writeFileSync4(marker, stamp);
-  return { nudge: wake ? `woke ${agent}${reason ? ` for: ${reason}` : ""}` : `nudged ${agent}: ${line}`, at: nowIso() };
+  return { nudge: `${wake ? `woke ${agent}${reason ? ` for: ${reason}` : ""}` : `nudged ${agent}: ${line}`}${via}`, at: nowIso() };
 }
 var init_liveness = __esm({
   "src/opsbot-core/commands/liveness.ts"() {
@@ -3887,25 +4074,27 @@ var init_liveness = __esm({
     init_repo();
     init_settings();
     init_runtime();
+    init_transcript();
+    init_coldstart();
     init_state();
   }
 });
 
 // src/opsbot-core/commands/infra.ts
 import { existsSync as existsSync12, mkdirSync as mkdirSync4, readFileSync as readFileSync8, readdirSync as readdirSync3, rmSync as rmSync5, writeFileSync as writeFileSync5 } from "node:fs";
-import { homedir as homedir4 } from "node:os";
-import { join as join7 } from "node:path";
+import { homedir as homedir6 } from "node:os";
+import { join as join8 } from "node:path";
 function unitDir() {
-  const base = process.env.XDG_CONFIG_HOME || join7(homedir4(), ".config");
-  return join7(base, "systemd", "user");
+  const base = process.env.XDG_CONFIG_HOME || join8(homedir6(), ".config");
+  return join8(base, "systemd", "user");
 }
 function templatesDir() {
   const env = process.env.OPSBOT_TEMPLATES;
   if (env) return env;
-  return join7(skillDir(), "templates");
+  return join8(skillDir(), "templates");
 }
 function template(name) {
-  const p = join7(templatesDir(), name);
+  const p = join8(templatesDir(), name);
   if (!existsSync12(p)) {
     throw new AxiError(`the unit template ${name} is missing from ${templatesDir()}`, "CANNOT_RUN", [
       "Reinstall the skill: npx skills add JarvusInnovations/opsbots --skill opsbot-core"
@@ -3986,7 +4175,7 @@ function infraCommand(args) {
     const { units, problems } = renderUnits(root, settings);
     const want = new Set(units.map((u) => u.file));
     const rows = units.map((u) => {
-      const p = join7(dir, u.file);
+      const p = join8(dir, u.file);
       const state = !existsSync12(p) ? "missing" : samePathless(readFileSync8(p, "utf8"), u.content) ? "current" : "stale";
       let active = "-";
       if (u.enable && state !== "missing") {
@@ -4027,9 +4216,9 @@ function infraCommand(args) {
     mkdirSync4(dir, { recursive: true });
     if (stale.length) {
       systemctl(["disable", "--now", ...stale]);
-      for (const f of stale) rmSync5(join7(dir, f), { force: true });
+      for (const f of stale) rmSync5(join8(dir, f), { force: true });
     }
-    for (const u of units) writeFileSync5(join7(dir, u.file), u.content);
+    for (const u of units) writeFileSync5(join8(dir, u.file), u.content);
     const steps = [];
     const reload2 = systemctl(["daemon-reload"]);
     steps.push({ step: "daemon-reload", ok: reload2.ok, detail: firstLine(reload2.out) });
@@ -4046,7 +4235,7 @@ function infraCommand(args) {
   if (files.length === 0) return { infra: `no ${prefix(settings)}* units installed (no-op)` };
   if (dry) return { infra: `would disable and remove ${files.length} units from ${dir}`, units: files };
   const dis = systemctl(["disable", "--now", ...files]);
-  for (const f of files) rmSync5(join7(dir, f), { force: true });
+  for (const f of files) rmSync5(join8(dir, f), { force: true });
   const reload = systemctl(["daemon-reload"]);
   if (!reload.ok) setExit(1);
   return {
@@ -4074,11 +4263,11 @@ var init_infra = __esm({
 
 // src/opsbot-core/commands/hook.ts
 import { existsSync as existsSync13, mkdirSync as mkdirSync5, readFileSync as readFileSync9, writeFileSync as writeFileSync6 } from "node:fs";
-import { homedir as homedir5 } from "node:os";
-import { dirname as dirname4, join as join8, relative as relative2 } from "node:path";
+import { homedir as homedir7 } from "node:os";
+import { dirname as dirname4, join as join9, relative as relative2 } from "node:path";
 function settingsPath(scope, dir) {
-  if (scope === "global") return join8(homedir5(), ".claude", "settings.json");
-  return join8(dir, ".claude", "settings.json");
+  if (scope === "global") return join9(homedir7(), ".claude", "settings.json");
+  return join9(dir, ".claude", "settings.json");
 }
 function hookBase(scope, dir) {
   const shim = shimPath();
@@ -4250,7 +4439,7 @@ var init_start = __esm({
 
 // src/opsbot-core/commands/simple.ts
 import { existsSync as existsSync14, readFileSync as readFileSync10 } from "node:fs";
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 function nextDelayCommand(args) {
   parseArgs(args, {}, "next-delay");
   const root = requireRoot();
@@ -4377,7 +4566,7 @@ function settingsCommand(args) {
     text = showHead(root, SETTINGS_FILE);
     where = `${SETTINGS_FILE} at HEAD`;
   } else {
-    const p = join9(root, SETTINGS_FILE);
+    const p = join10(root, SETTINGS_FILE);
     text = existsSync14(p) ? readFileSync10(p, "utf8") : null;
     where = SETTINGS_FILE;
   }
@@ -4387,7 +4576,7 @@ function settingsCommand(args) {
     ]);
   }
   const { raw, problems } = parseSettingsText(text, where);
-  const claude = join9(root, ".claude", "settings.json");
+  const claude = join10(root, ".claude", "settings.json");
   if (raw && existsSync14(claude)) {
     try {
       const cs = JSON.parse(readFileSync10(claude, "utf8"));
