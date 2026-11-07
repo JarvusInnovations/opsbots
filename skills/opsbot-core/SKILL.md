@@ -123,6 +123,13 @@ nudge to reach it.
 
 ## Commands
 
+
+## How a bot writes
+
+Every message a bot sends follows the house style in `references/writing.md` (tone, shape,
+and the per-surface rules for Slack mrkdwn, email drafts, records, logs). A bot's own
+`specs/persona.md` colors that style and never overrides it.
+
 <!-- BEGIN GENERATED: command-reference -->
 
 ### The cycle
