@@ -4,7 +4,7 @@ done: 2026-11-07
 depends: []
 specs:
   - specs/skills/opsbot-core.md
-pr: TBD
+pr: 28
 ---
 
 # Pack section: reading the digest
