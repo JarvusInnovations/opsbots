@@ -11,6 +11,7 @@ import { outageCommand } from "./commands/outage.js";
 import { watchdogCommand, nudgeCommand } from "./commands/liveness.js";
 import { infraCommand } from "./commands/infra.js";
 import { hookCommand } from "./commands/hook.js";
+import { startCommand } from "./commands/start.js";
 import { hooksCommand, lockCommand, logCommand, nextDelayCommand, settingsCommand } from "./commands/simple.js";
 
 const CLI = cliInvocation();
@@ -39,6 +40,7 @@ const COMMANDS: Record<string, AxiCliCommand<undefined>> = {
   hooks: (a) => hooksCommand(a),
   log: (a) => logCommand(a),
   settings: (a) => settingsCommand(a),
+  start: (a) => startCommand(a),
   // shadows the SDK's npm self-update: this CLI ships inside a skill
   update: () => {
     throw new AxiError("opsbot-core ships inside a skill, not on npm", "VALIDATION_ERROR", [

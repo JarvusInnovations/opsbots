@@ -43,6 +43,11 @@ export const COMMAND_GROUPS: CommandGroup[] = [
     group: "Cold start",
     commands: [
       {
+        usage: "start [--continue] [--dry-run] [-- <extra claude args>]",
+        summary:
+          "Launch the bot's Claude Code session with the flags opsbot.json implies: permission mode (default auto), model, autocompact window, autocompact forced on, and `loop.prompt` as the first message. `--continue` resumes the last session in this checkout. A bot's `bin/start` shim calls this.",
+      },
+      {
         usage: "cold-start [--write]",
         summary:
           "Print the reground pack: the rule card, each `wake.d/` section, the last 48 hours of the cycle log, the untrusted-memory line. `--write` also writes the pack file and sets the pending flag.",
