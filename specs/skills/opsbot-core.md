@@ -129,7 +129,8 @@ order.
 - A degraded input never yields "nothing new".
 - `cycle end` refuses a future time, a backwards move, or no check since the lock.
 - The cold-start pack is capped at a byte budget (16 000 bytes); the rule card, the kit's sections and the session-log section are whole and count against it, `wake.d/` sections share the rest and are truncated with "… N more".
-- House rules that must be in front of every session (how to write, when to delegate) ship inside the skill as `references/pack/*.md` and ride the pack, so they are updated by `npx skills update` and never copied into a bot's CLAUDE.md. `OPSBOT_PACK_DIR` overrides the directory.
+- House rules that must be in front of every session (how to write, when to delegate, how to read the digest) ship inside the skill as `references/pack/*.md` and ride the pack, so they are updated by `npx skills update` and never copied into a bot's CLAUDE.md. `OPSBOT_PACK_DIR` overrides the directory.
+- The digest is read whole, never filtered, and a stream item's `reply` field (the channel skill computes it: the thread when the message is threaded, else the message itself) is where the answer goes. Why: a bot that trimmed its digest to the text answered two questions in a third thread; the columns are the addresses.
 - The gate denies every tool while the pending flag is set and the pack has not been
   read whole; a read with an offset or limit does not clear it.
 - `nudge` never creates a second loop; it prompts the one named agent.

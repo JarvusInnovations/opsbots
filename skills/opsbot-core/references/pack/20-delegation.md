@@ -19,6 +19,8 @@ would not degrade it.
 Delegation is not free either: a subagent starts cold, needs a brief, and hands back less
 than it saw. When you know the command, run it, send the output to a file, and pull what
 you need with `grep`, `jq` or `head`. Spawn only when the reading itself needs judgment.
+The one output you never filter is your own loop's: the check digest is already the
+filtered form, and its columns are the addresses (see *Reading the digest*).
 
 Class and context are two axes. Your own class in a subagent is a real cell: a long
 document whose verdict must be as good as your own; an unanchored second read of something
