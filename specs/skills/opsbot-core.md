@@ -43,7 +43,7 @@ The bot's own files the skill reads and writes:
 | `cadence` | `{hot, warm, quiet_working, quiet, night, cap}` in seconds, plus `working_hours` (`days` as ISO weekday numbers 1–7, `start`, `end` as `HH:MM`) and `night_hours` (`start`, `end`, a span that may cross midnight) in the bot's timezone; every key optional, defaulting to the architecture's table (working hours Monday–Friday 09:00–17:00, night 22:00–07:00) |
 | `lock_max_minutes` | after which a lock is abandoned |
 | `liveness` | `{watchdog_minutes, nudge_minutes, nudge_cooldown_minutes, wake_cooldown_minutes, interval_minutes}`: the stop limit (60), the quiet limit before a nudge (50), the nudge's cooldown (50), the cooldown of `nudge --now` (10), and how often the watchdog and nudge timers fire (10; the nudge runs half an interval after the watchdog) |
-| `runtime` | `{adapter: "herdr", agent: "<name>"}`; the adapter supplies `idle` and `prompt` |
+| `runtime` | `{adapter: "herdr", agent: "<name>"}`; the adapter supplies `idle` and `prompt`. The herdr adapter finds the bot's pane by that name first and, when the name is missing (a renamed pane, a restarted herdr), by the one agent whose cwd is the bot's checkout; it prompts the pane, not the name |
 | `streams.<name>` | per-stream values a heartbeat script reads (postures, ids, lookbacks); the script is found by name in `opsbot.d/heartbeat.d/`, not listed here |
 | `repo_sync` | `pull-on-clean` or `never-pull` |
 

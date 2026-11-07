@@ -42,26 +42,48 @@ function herdrError(out: string): { code: string; message: string } {
   return { code: "error", message: (out.split("\n").find((l) => l.trim()) ?? "no output").trim() };
 }
 
+/** Pick the bot's pane from `herdr agent list`: by name first, else the one agent whose cwd is the
+ * bot's root. The name herdr shows can be lost or overwritten (a pane renamed, a session restarted),
+ * while the cwd is the checkout, so the cwd is the stable key. Exported for tests. */
+export function pickAgent(agents: unknown, agent: string, root: string): { pane: string; status: unknown; by: "name" | "cwd" } | null {
+  if (!Array.isArray(agents)) return null;
+  const rows = agents.filter((a) => a && typeof a === "object") as Record<string, unknown>[];
+  const byName = rows.find((a) => a.name === agent);
+  if (byName) return { pane: String(byName.pane_id ?? "?"), status: byName.agent_status, by: "name" };
+  const norm = (p: unknown) => String(p ?? "").replace(/\/+$/, "");
+  const byCwd = rows.filter((a) => norm(a.cwd) === norm(root));
+  if (byCwd.length === 1) return { pane: String(byCwd[0]!.pane_id ?? "?"), status: byCwd[0]!.agent_status, by: "cwd" };
+  return null;
+}
+
+function herdrResolve(agent: string): { ok: true; pane: string; status: AgentStatus; by: "name" | "cwd" } | { ok: false; code: string; message: string } {
+  const r = run("herdr", ["agent", "list"]);
+  if (r.code === 127) return { ok: false, code: "no_runtime", message: "herdr is not installed" };
+  if (r.code !== 0) return { ok: false, ...herdrError(`${r.stderr}\n${r.stdout}`) };
+  let list: unknown;
+  try { list = JSON.parse(r.stdout)?.result?.agents; } catch { list = undefined; }
+  const root = process.env.OPSBOT_ROOT || process.cwd();
+  const hit = pickAgent(list, agent, root);
+  if (!hit) return { ok: false, code: "agent_not_found", message: `no herdr agent named ${agent} and no single agent running in ${root}` };
+  return { ok: true, pane: hit.pane, status: normStatus(hit.status), by: hit.by };
+}
+
 export const herdrAdapter: RuntimeAdapter = {
   name: "herdr",
   get(agent) {
-    const r = run("herdr", ["agent", "get", agent]);
-    if (r.code === 127) return { ok: false, code: "no_runtime", message: "herdr is not installed" };
-    if (r.code === 0) {
-      try {
-        const a = JSON.parse(r.stdout)?.result?.agent;
-        if (a && typeof a === "object") return { ok: true, status: normStatus(a.agent_status), pane: String(a.pane_id ?? "?") };
-      } catch {
-        // fall through
-      }
-    }
-    return { ok: false, ...herdrError(`${r.stderr}\n${r.stdout}`) };
+    const h = herdrResolve(agent);
+    if (!h.ok) return h;
+    return { ok: true, status: h.status, pane: h.pane };
   },
   prompt(agent, text) {
+    const h = herdrResolve(agent);
+    if (!h.ok) return h;
+    // prompt the pane, not the name: the name can be stale while the pane is the running session
+    const target = h.pane;
     // herdr sends the text and Enter as one submission, refuses a blocked agent
     // before sending, and with --wait fails unless the agent is seen working or
     // blocked in time
-    const r = run("herdr", ["agent", "prompt", agent, text, "--wait", "--until", "working", "--until", "blocked", "--timeout", "15000"]);
+    const r = run("herdr", ["agent", "prompt", target, text, "--wait", "--until", "working", "--until", "blocked", "--timeout", "15000"]);
     if (r.code === 127) return { ok: false, code: "no_runtime", message: "herdr is not installed" };
     if (r.code === 0) return { ok: true };
     return { ok: false, ...herdrError(`${r.stderr}\n${r.stdout}`) };

@@ -1,3 +1,4 @@
+import { pickAgent } from "../src/opsbot-core/runtime";
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -139,5 +140,22 @@ describe("nudge", () => {
     writeFileSync(f, JSON.stringify({ status: "idle", prompt_error: { code: "timeout", message: "slow" } }));
     expect(cli(bot, ["nudge"], { now: T0 }).code).toBe(1);
     expect(existsSync(join(bot.root, ".git", "opsbot-nudge"))).toBe(true);
+  });
+});
+
+describe("herdr agent resolution", () => {
+  const agents = [
+    { name: "other", pane_id: "w1:p1", cwd: "/home/x/repos/other", agent_status: "idle" },
+    { pane_id: "w3:p1", cwd: "/home/x/repos/bot", agent_status: "working", terminal_title: "bot cycle" },
+  ];
+  test("by name when the name is present", () => {
+    expect(pickAgent([...agents, { name: "bot", pane_id: "w9:p9", cwd: "/elsewhere", agent_status: "idle" }], "bot", "/home/x/repos/bot")).toEqual({ pane: "w9:p9", status: "idle", by: "name" });
+  });
+  test("by cwd when the name was lost", () => {
+    expect(pickAgent(agents, "bot", "/home/x/repos/bot/")).toEqual({ pane: "w3:p1", status: "working", by: "cwd" });
+  });
+  test("null when neither matches, or two agents share the cwd", () => {
+    expect(pickAgent(agents, "bot", "/nowhere")).toBeNull();
+    expect(pickAgent([...agents, { pane_id: "w4:p1", cwd: "/home/x/repos/bot" }], "bot", "/home/x/repos/bot")).toBeNull();
   });
 });
