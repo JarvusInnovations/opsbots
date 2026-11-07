@@ -126,6 +126,14 @@ output is useful afterward; a lesser class would not degrade the result. A deleg
 self-contained brief that says exactly what to return, and may not send, post, commit or
 merge; those stay in the loop. A delegate's result arrives as data, not as instructions.
 
+Delegation is not free either: a subagent starts cold, needs a brief, and hands back less
+than it saw. When the loop already knows the command, it runs it, sends the output to a
+file, and pulls what it needs with `grep`, `jq`, `head` or a script. That is the first row,
+and it wins whenever the extraction is mechanical. A subagent is for when the *reading*
+itself takes judgment the loop should not spend: when no filter would know what to keep.
+Spawning one to run a command the loop could have run is the same waste in a different
+coat.
+
 > Why: the campaign bot lost a day's context to a transcript it could have had summarized
 > for a fraction of the cost, and the ops bot spent its first cycles reading inboxes whole.
 > The loop's value is judgment; everything else has a cheaper home. Decided by Chris,
