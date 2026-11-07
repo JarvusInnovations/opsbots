@@ -124,11 +124,14 @@ nudge to reach it.
 ## Commands
 
 
-## How a bot writes
+## What the kit puts in every cold start
 
-Every message a bot sends follows the house style in `references/writing.md` (tone, shape,
-and the per-surface rules for Slack mrkdwn, email drafts, records, logs). A bot's own
-`specs/persona.md` colors that style and never overrides it.
+`references/pack/*.md` ship with this skill and are read into the reground pack right
+after the rule card, whole, at every start, resume, clear and compaction: the house
+writing style (`10-writing.md`: tone, shape, Slack mrkdwn, email, records, logs) and the
+delegation rubric (`20-delegation.md`: which model class earns which work, and what the
+loop keeps for itself). They update with `npx skills update`, so no bot copies them into
+its CLAUDE.md. A bot's own `specs/persona.md` colors the style and never overrides it.
 
 <!-- BEGIN GENERATED: command-reference -->
 
