@@ -15,10 +15,15 @@ may not weigh.
   target (one repo, one mailbox, one role) and refuses every argument that would widen it.
   Why: Claude Code resolves narrow Bash allow rules before the auto-mode classifier, so the
   rule is deterministic; the script is where the safety is, so the rule can be.
-- **A bot cannot grant itself anything.** The permission surface (`bin/`, `.claude/`, the
-  rule card, `opsbot.json`, `opsbot.d/`, the installed skills) changes only by a PR a
-  person merges; the bot's own merge script refuses PRs that touch it. Why: an allowlist
-  the bot can edit is not an allowlist.
+- **A bot cannot grant itself anything.** The permission surface is the allow rules
+  (`.claude/settings*`) and the scripts those rules name (`bin/`); it changes only by a PR
+  a person merges, and the bot's own merge script refuses PRs that touch it. Why: an
+  allowlist the bot can edit is not an allowlist. Everything else in the repo, the skills
+  above all, is the bot's own work and merges through its script: a bot's self-improvement
+  loop is mostly skill edits, and a guard that blocks them stalls the loop on a person for
+  changes that widen nothing. The cost accepted: an allow rule that names a skill's script
+  (the core's own, say) trusts that skill as installed; keep such rules to the vendored,
+  `npx skills`-managed skills whose source is a reviewed repo.
 
 ## The three layers, as Claude Code applies them
 
