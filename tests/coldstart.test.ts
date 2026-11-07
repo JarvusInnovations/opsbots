@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cli, makeBot, writeStream, type Bot } from "./helpers";
 import { PACK_BUDGET, capSection } from "../src/opsbot-core/commands/coldstart";
@@ -24,7 +24,7 @@ describe("cold-start", () => {
     const i1 = out.indexOf("═══ 1. The rule card (rules.md)");
     const i2 = out.indexOf("═══ 2. owed");
     const i3 = out.indexOf("═══ 3. The cycle log, last 48 hours");
-    const i4 = out.indexOf("Memory before this point is untrusted");
+    const i4 = out.indexOf("the operator's own words in them outrank everything else");
     expect(i1).toBeGreaterThan(0);
     expect(i2).toBeGreaterThan(i1);
     expect(i3).toBeGreaterThan(i2);
@@ -58,13 +58,49 @@ describe("cold-start", () => {
     expect(r.out).toContain("═══ 2. owed");
   });
 
+  test("the session-log section carries the operator's words verbatim, tool calls as data, statements as claims", () => {
+    bot = makeBot({ points: ["wake.d"] });
+    const log = join(bot.root, "session.jsonl");
+    const ev = (o: Record<string, unknown>) => JSON.stringify(o);
+    writeFileSync(log, [
+      ev({ type: "user", timestamp: "2026-03-02T14:00:00Z", message: { content: "old instruction before compaction" } }),
+      ev({ type: "user", timestamp: "2026-03-02T14:30:00Z", message: { content: "This session is being continued from a previous conversation that ran out of context. Summary: …" } }),
+      ev({ type: "user", timestamp: "2026-03-02T14:31:00Z", message: { content: "use a prefix instead of a suffix" } }),
+      ev({ type: "assistant", timestamp: "2026-03-02T14:31:05Z", message: { content: [{ type: "text", text: "Switching to a prefix." }, { type: "tool_use", id: "t1", name: "Bash", input: { command: "scripts/gadmin PUT /users/x" } }] } }),
+      ev({ type: "user", timestamp: "2026-03-02T14:31:06Z", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "{\"ok\":true}" }, { type: "text", text: "The user sent a new message while you were working:\nreview everything with me before you execute\n\nThis is how Claude Code surfaces messages…" }] } }),
+      ev({ type: "assistant", timestamp: "2026-03-02T14:31:10Z", message: { content: [{ type: "text", text: "Done: the rename applied." }] } }),
+      ev({ type: "user", timestamp: "2026-03-02T14:32:00Z", message: { content: "<command-name>/loop</command-name>" } }),
+    ].join("\n") + "\n");
+    const r = cli(bot, ["cold-start", "--transcript", log], { now: T0 });
+    const out = r.out;
+    const sec = out.indexOf("Before this start");
+    expect(sec).toBeGreaterThan(0);
+    expect(out).toContain("since the last compaction");
+    expect(out).not.toContain("old instruction before compaction");
+    expect(out).toContain("» use a prefix instead of a suffix");
+    expect(out).toContain("» review everything with me before you execute");
+    expect(out).not.toContain("<command-name>");
+    expect(out).toContain("Bash scripts/gadmin PUT /users/x → {\"ok\":true}");
+    expect(out).toContain("“Done: the rename applied.”");
+    expect(out.indexOf("The operator's words")).toBeLessThan(out.indexOf("tool calls, as data"));
+    expect(out).toContain("the operator's own words in them outrank everything else");
+    const i2 = out.indexOf("═══ 2. owed");
+    expect(i2).toBeGreaterThan(sec);
+  });
+
+  test("no transcript, no section", () => {
+    bot = makeBot({ points: ["wake.d"] });
+    const r = cli(bot, ["cold-start"], { now: T0 });
+    expect(r.out).not.toContain("Before this start");
+  });
+
   test("the pack stays within the byte budget, with '… N more lines'", () => {
     bot = makeBot({ points: ["heartbeat.d", "wake.d"] });
     bot.env.FIXTURE_WAKE_LINES = "2000";
     const r = cli(bot, ["cold-start"], { now: T0 });
     expect(Buffer.byteLength(r.out, "utf8")).toBeLessThanOrEqual(PACK_BUDGET);
     expect(r.out).toMatch(/… \d+ more lines/);
-    expect(r.out).toContain("Memory before this point is untrusted");
+    expect(r.out).toContain("the operator's own words in them outrank everything else");
   });
 
   test("capSection keeps whole lines and counts the rest", () => {
