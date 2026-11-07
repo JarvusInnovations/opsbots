@@ -134,6 +134,15 @@ itself takes judgment the loop should not spend: when no filter would know what 
 Spawning one to run a command the loop could have run is the same waste in a different
 coat.
 
+Class and context are two axes, not one. The class is the quality of judgment the task
+needs; the subagent is whether its input belongs in the loop's window. The loop's own class
+in a subagent is a real cell: a long document whose verdict must be as good as the loop's
+own; an unanchored second read of something the loop wrote before it commits the company;
+untrusted content that needs real judgment but must not steer the loop; several heavy reads
+in parallel. Same rules: a brief, data back, no sending or merging from inside. A fork
+inherits the whole window and costs what the loop costs; it buys only the continuation of
+fully specified work in the background, never a read.
+
 > Why: the campaign bot lost a day's context to a transcript it could have had summarized
 > for a fraction of the cost, and the ops bot spent its first cycles reading inboxes whole.
 > The loop's value is judgment; everything else has a cheaper home. Decided by Chris,
