@@ -137,9 +137,15 @@ coat.
 The loop's distinct strength is systems: seeing the connections between things. That is
 what context buys and what delegation fragments. A subagent sees one thing well; it does
 not know that the document it is reading is the third message in a thread the loop already
-holds, or that the sender is the person who owes the answer. When the value of a read is
-in relating it to what the loop knows, the loop keeps the read, or the brief carries that
-context in with it, stated as facts, not as the loop's conclusion.
+holds, or that the sender is the person who owes the answer. The deciding question for any read is how much of the current picture each
+input token needs in order to be judged correctly. When the answer is "a lot" and the
+volume is small, the loop reads. When the volume is nontrivial, which is most of the time,
+the loop directs a first pass and the subagent errs on the side of returning more: the
+candidates, the quotes, the ids, the things it was unsure about. The connecting still
+happens in the loop, over a reduced set rather than the raw corpus. Over-return is cheap;
+a connection missed because the filter was too tight is not. The brief carries the facts
+the pass needs to be useful (who matters, what is already known, what to flag), stated as
+facts, not as the loop's conclusion.
 
 Class and context are two axes, not one. The class is the quality of judgment the task
 needs; the subagent is whether its input belongs in the loop's window. The loop's own class
