@@ -5,7 +5,7 @@ depends: []
 specs:
   - specs/skills/opsbot-core.md
   - specs/architecture.md
-pr: TBD
+pr: 26
 ---
 
 # The live wake: a bounded session monitor first, the nudge as backstop
