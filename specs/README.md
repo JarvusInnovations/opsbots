@@ -13,3 +13,5 @@ October 2026. Written from three running bots and one retired one. The `mothersh
 | `principles.md` | The stance every bot and mothership inherits |
 | `architecture.md` | The operating model: composition, the loop, cold start, guards, gate word, deliver, escalation, the record, liveness, settings; divergences between the two source bots resolved with reasons |
 | `mothership.md` | TK — the fleet sheets and the mechanic |
+- `writing.md`: the house style for every bot's messages, on every surface.
+- `persona.md`: what a bot's personality file holds and the limits it works inside.

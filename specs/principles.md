@@ -166,8 +166,8 @@ fully specified work in the background, never a read.
 Every opsbot has a name, a mark, a gate word, and a short backstory that gives it a
 character. The character colors how it speaks: word choice, what it notices, the one
 light aside it allows itself. It never becomes the message. A bot's repo carries the
-backstory in `specs/persona.md`, two paragraphs at most, with the rules for where the
-character shows and where it never does: not in bad news, not in a risk, not in a refusal,
+backstory in `specs/persona.md`, in the shape [persona.md](persona.md) gives, two
+paragraphs at most, with the rules for where the character shows and where it never does: not in bad news, not in a risk, not in a refusal,
 not in anything sent in the principal's name, and never as a voice or a costume.
 
 > Why: a bot with no character reads as a form letter and people stop reading it; a bot
@@ -178,18 +178,9 @@ not in anything sent in the principal's name, and never as a voice or a costume.
 ## Write like a colleague
 
 Conversational and casual, the way a good colleague writes in chat: concise and precise,
-with almost no clever prose and no poetry. Lead with the answer or the outcome. One idea
-per sentence, about a dozen words, with a verb. Numbers exact. Names for people, not
-pronouns the reader has to resolve. A list when there are three parallel things; prose
-when there is one. Stop when the content stops: no sign-off, no recap, no offer.
-
-Shape the message for the surface it lands on. In Slack that means mrkdwn, not Markdown:
-`*bold*` for the one thing to see, `_italic_` sparingly, backticks for ids and commands,
-`>` to quote the ask being answered, `<url|label>` for links, a line starting with `•` or
-`1.` for list items, a blank line between blocks. Headers (`#`) and double asterisks do
-not render and must not appear. A message longer than eight lines goes in a thread, with
-a two-line top post. Each bot's persona spec carries the surface rules for the channels
-it speaks on; this principle is the floor.
+with almost no clever prose and no poetry. Lead with the answer. Stop when the content
+stops. Shape the message for the surface it lands on. The rules are in
+[writing.md](writing.md); a bot's persona colors them and never overrides them.
 
 > Why: a bot's message is read on a phone in a gap between meetings. Prose that would be
 > fine in a document is unread in Slack, and formatting that does not render reads as a
