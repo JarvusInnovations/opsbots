@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "529c8af" : "dev";
+    VERSION = true ? "5b2ec7a" : "dev";
   }
 });
 
@@ -2087,9 +2087,9 @@ function localParts(ms, timeZone) {
     minute: "2-digit",
     hourCycle: "h23"
   });
-  const parts = Object.fromEntries(f.formatToParts(new Date(ms)).map((p) => [p.type, p.value]));
+  const parts2 = Object.fromEntries(f.formatToParts(new Date(ms)).map((p) => [p.type, p.value]));
   const dows = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  return { dow: dows.indexOf(parts.weekday ?? "Mon") + 1, hm: `${parts.hour}:${parts.minute}` };
+  return { dow: dows.indexOf(parts2.weekday ?? "Mon") + 1, hm: `${parts2.hour}:${parts2.minute}` };
 }
 function humanTime(ms, timeZone) {
   const f = new Intl.DateTimeFormat("en-US", {
@@ -3231,8 +3231,107 @@ var init_cycle = __esm({
   }
 });
 
+// src/opsbot-core/transcript.ts
+import { existsSync as existsSync9, readFileSync as readFileSync4 } from "node:fs";
+function readEvents(path) {
+  if (!existsSync9(path)) return [];
+  const out = [];
+  for (const line of readFileSync4(path, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const v = JSON.parse(line);
+      if (v && typeof v === "object" && typeof v.type === "string") out.push({ type: v.type, timestamp: String(v.timestamp ?? ""), content: v.message?.content });
+    } catch {
+    }
+  }
+  return out;
+}
+function lastCompaction(evs) {
+  for (let i = evs.length - 1; i >= 0; i--) {
+    const e = evs[i];
+    if (e.type === "user" && typeof e.content === "string" && e.content.startsWith(COMPACTION_MARK)) return i;
+  }
+  return -1;
+}
+function humanMessages(evs, from = 0) {
+  const out = [];
+  for (const e of evs.slice(Math.max(0, from))) {
+    if (e.type !== "user") continue;
+    if (typeof e.content === "string") {
+      const t = e.content.trim();
+      if (!t || t.startsWith(COMPACTION_MARK) || NOISE.some((r) => r.test(t))) continue;
+      out.push({ at: e.timestamp, text: t });
+      continue;
+    }
+    for (const p of parts(e.content)) {
+      if (p.type !== "text" || !p.text) continue;
+      const i = p.text.indexOf(MIDTURN_MARK);
+      if (i >= 0) {
+        const t = p.text.slice(i + MIDTURN_MARK.length).split(/\n\s*This is how Claude Code surfaces/)[0].trim();
+        if (t) out.push({ at: e.timestamp, text: t });
+      }
+    }
+  }
+  return out;
+}
+function toolCalls(evs, n, from = 0) {
+  const results = /* @__PURE__ */ new Map();
+  for (const e of evs.slice(Math.max(0, from))) for (const p of parts(e.content)) if (p.type === "tool_result" && p.tool_use_id) results.set(p.tool_use_id, partText(p.content));
+  const calls = [];
+  for (const e of evs.slice(Math.max(0, from))) {
+    if (e.type !== "assistant") continue;
+    for (const p of parts(e.content)) {
+      if (p.type !== "tool_use") continue;
+      const inp = p.input && typeof p.input === "object" ? p.input : {};
+      const head = String(inp.command ?? inp.file_path ?? inp.prompt ?? inp.message ?? JSON.stringify(inp)).replace(/\s+/g, " ");
+      calls.push({ at: e.timestamp, name: p.name ?? "?", input: head, result: (results.get(p.id ?? "") ?? "(no result recorded)").replace(/\s+/g, " ") });
+    }
+  }
+  return calls.slice(-n);
+}
+function assistantStatements(evs, n, from = 0) {
+  const out = [];
+  for (const e of evs.slice(Math.max(0, from))) {
+    if (e.type !== "assistant") continue;
+    for (const p of parts(e.content)) if (p.type === "text" && p.text && p.text.trim()) out.push({ at: e.timestamp, text: p.text.trim() });
+  }
+  return out.slice(-n);
+}
+function sessionLogSection(path, opts = {}) {
+  const evs = readEvents(path);
+  if (evs.length === 0) return null;
+  const from = Math.max(0, lastCompaction(evs));
+  const scope = from > 0 ? "since the last compaction" : "this session";
+  const human = humanMessages(evs, from + 1);
+  const calls = toolCalls(evs, opts.calls ?? 12, from + 1);
+  const said = assistantStatements(evs, opts.statements ?? 3, from + 1);
+  const pm = opts.perMessage ?? 700;
+  const lines = [];
+  lines.push(`From your own session log (${scope}; ${path}). Three layers, different standing:`);
+  lines.push(`\u2022 The operator's words, verbatim: the highest authority here. ${human.length === 0 ? "(none in this window)" : ""}`);
+  for (const h of human) lines.push(`  ${hhmm(h.at)} \xBB ${clip(h.text.replace(/\n+/g, " \u23CE "), pm)}`);
+  lines.push(`\u2022 Your last ${calls.length} tool calls, as data (what ran, what came back):`);
+  for (const c of calls) lines.push(`  ${hhmm(c.at)} ${c.name} ${clip(c.input, 110)} \u2192 ${clip(c.result, 110)}`);
+  lines.push(`\u2022 Your last statements, as your own claims (check them against the record and the results above):`);
+  for (const s of said) lines.push(`  ${hhmm(s.at)} \u201C${clip(s.text.replace(/\n+/g, " \u23CE "), 240)}\u201D`);
+  return lines.join("\n");
+}
+var COMPACTION_MARK, MIDTURN_MARK, parts, partText, NOISE, clip, hhmm;
+var init_transcript = __esm({
+  "src/opsbot-core/transcript.ts"() {
+    "use strict";
+    COMPACTION_MARK = "This session is being continued from a previous conversation";
+    MIDTURN_MARK = "The user sent a new message while you were working:";
+    parts = (c) => Array.isArray(c) ? c : [];
+    partText = (c) => typeof c === "string" ? c : parts(c).map((p) => p.type === "text" ? p.text ?? "" : "").join("\n");
+    NOISE = [/^<command-/, /^<local-command/, /hook success/, /^<bash-input>/, /^\[Request interrupted/];
+    clip = (s, n) => s.length > n ? s.slice(0, n - 1) + "\u2026" : s;
+    hhmm = (ts) => ts.length >= 16 ? ts.slice(11, 16) + "Z" : ts;
+  }
+});
+
 // src/opsbot-core/commands/coldstart.ts
-import { existsSync as existsSync9, mkdirSync as mkdirSync3, readdirSync as readdirSync2, readFileSync as readFileSync4, rmSync as rmSync4, statSync as statSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync10, mkdirSync as mkdirSync3, readdirSync as readdirSync2, readFileSync as readFileSync5, rmSync as rmSync4, statSync as statSync3, writeFileSync as writeFileSync3 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
 import { join as join6, resolve as resolve3 } from "node:path";
 function cacheDir(name) {
@@ -3314,16 +3413,16 @@ function logSummary(root, now) {
 }
 function kitSections() {
   const dir = process.env.OPSBOT_PACK_DIR || join6(skillDir(), "references", "pack");
-  if (!existsSync9(dir)) return [];
+  if (!existsSync10(dir)) return [];
   return readdirSync2(dir).filter((f) => f.endsWith(".md")).sort().map((f) => {
-    let text = readFileSync4(join6(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
+    let text = readFileSync5(join6(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
     const m = text.match(/^#\s+(.+)$/m);
     const title = m ? m[1].trim() : f.replace(/^\d+[-_]/, "").replace(/\.md$/, "");
     if (m) text = text.replace(m[0], "").replace(/^\n+/, "");
     return { title, body: text.replace(/\n+$/, "") };
   });
 }
-function buildPack(root, s, settingsText) {
+function buildPack(root, s, settingsText, transcript) {
   const now = nowMs();
   const head = `\u2550\u2550\u2550 Cold start, ${nowIso()}. Read all of this before acting. Until you have, what you remember is untrusted.
 `;
@@ -3337,11 +3436,16 @@ ${text.replace(/\n+$/, "")}`;
   }
   const kit = kitSections().map((k, i) => `\u2550\u2550\u2550 1.${i + 1} ${k.title} (the kit's; updates with the skill)
 ${k.body}`);
+  if (transcript) {
+    const body = sessionLogSection(transcript);
+    if (body) kit.push(`\u2550\u2550\u2550 1.${kit.length + 1} Before this start
+${capSection(body, SESSION_LOG_CAP)}`);
+  }
   const scripts = discover(root, "wake").scripts;
   const summaryNo = 2 + scripts.length;
   const summary = `\u2550\u2550\u2550 ${summaryNo}. The cycle log, last 48 hours
 ${logSummary(root, now).join("\n")}`;
-  const foot = "\u2550\u2550\u2550 Memory before this point is untrusted: open the source before saying anything about what a record holds, what was decided, or what was sent.";
+  const foot = "\u2550\u2550\u2550 What you remember is untrusted; the record and your session log are sources, and the operator's own words in them outrank everything else. Open the source before saying what a record holds, what was decided, or what was sent.";
   const fixed = bytes(head) + bytes(card) + kit.reduce((n, k) => n + bytes(k) + 2, 0) + bytes(summary) + bytes(foot) + 8 + scripts.length * 2;
   const room = Math.max(0, PACK_BUDGET - fixed);
   const sections = [];
@@ -3367,8 +3471,19 @@ ${capped}`;
   }
   return [head, card, ...kit, ...sections, summary, foot].join("\n\n").replace(/\n{3,}/g, "\n\n") + "\n";
 }
-function coldStartCommand(args) {
-  const { flags } = parseArgs(args, { bool: ["write"] }, "cold-start [--write]");
+async function coldStartCommand(args) {
+  const { flags } = parseArgs(args, { bool: ["write"], value: ["transcript"] }, "cold-start [--write] [--transcript <jsonl>]");
+  let transcript = typeof flags.transcript === "string" ? flags.transcript : void 0;
+  if (!transcript) {
+    try {
+      const raw = (await readStdin()).trim();
+      if (raw) {
+        const v = JSON.parse(raw);
+        if (v && typeof v.transcript_path === "string") transcript = v.transcript_path;
+      }
+    } catch {
+    }
+  }
   setExit(0);
   const root = findRoot();
   if (!root) return "cold-start: not inside a git checkout, so there is no pack to read.";
@@ -3382,7 +3497,7 @@ function coldStartCommand(args) {
   if (!s) {
     return `cold-start: ${SETTINGS_FILE} is missing or invalid at HEAD, so the pack cannot be built. Say so to the operator, and run \`settings validate\`.`;
   }
-  const pack = buildPack(root, s, text);
+  const pack = buildPack(root, s, text, transcript);
   if (!flags.write) return pack.replace(/\n$/, "");
   const { pack: packFile, pending } = packPaths(s.name);
   mkdirSync3(cacheDir(s.name), { recursive: true });
@@ -3414,7 +3529,7 @@ async function gateCommand(args) {
   const s = trySettings(root);
   if (!s) return { gate: "open (no settings)" };
   const { pack, pending } = packPaths(s.name);
-  if (!existsSync9(pending)) return { gate: "open" };
+  if (!existsSync10(pending)) return { gate: "open" };
   let packSize = 0;
   try {
     packSize = statSync3(pack).size;
@@ -3445,17 +3560,19 @@ async function gateCommand(args) {
   setExit(2);
   return { gate: "denied", reason };
 }
-var PACK_BUDGET, MIN_SECTION, DAY2, MAX_OUTAGES;
+var PACK_BUDGET, SESSION_LOG_CAP, MIN_SECTION, DAY2, MAX_OUTAGES;
 var init_coldstart = __esm({
   "src/opsbot-core/commands/coldstart.ts"() {
     "use strict";
     init_args();
     init_invocation();
+    init_transcript();
     init_lifecycle();
     init_repo();
     init_settings();
     init_state();
     PACK_BUDGET = 16e3;
+    SESSION_LOG_CAP = 4e3;
     MIN_SECTION = 300;
     DAY2 = 48 * 36e5;
     MAX_OUTAGES = 5;
@@ -3520,7 +3637,7 @@ var init_outage = __esm({
 });
 
 // src/opsbot-core/runtime.ts
-import { appendFileSync as appendFileSync2, readFileSync as readFileSync5 } from "node:fs";
+import { appendFileSync as appendFileSync2, readFileSync as readFileSync6 } from "node:fs";
 function normStatus(s) {
   return s === "idle" || s === "done" || s === "working" || s === "blocked" ? s : "unknown";
 }
@@ -3565,7 +3682,7 @@ ${r.stdout}`) };
 function fakeAdapter(file) {
   const state = () => {
     try {
-      return JSON.parse(readFileSync5(file, "utf8"));
+      return JSON.parse(readFileSync6(file, "utf8"));
     } catch {
       return {};
     }
@@ -3623,7 +3740,7 @@ ${r.stdout}`) };
 });
 
 // src/opsbot-core/commands/liveness.ts
-import { existsSync as existsSync10, readFileSync as readFileSync6, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync11, readFileSync as readFileSync7, writeFileSync as writeFileSync4 } from "node:fs";
 function watchdogCommand(args) {
   const { flags } = parseArgs(args, { bool: ["dry-run"] }, "watchdog [--dry-run]");
   const dry = flags["dry-run"] === true;
@@ -3648,7 +3765,7 @@ function watchdogCommand(args) {
     return { watchdog: `alive \xB7 last cycle ${last}, ${Math.floor(gap / 6e4)} min ago` };
   }
   const started = last ?? "never";
-  if (existsSync10(told) && readFileSync6(told, "utf8").split("\n")[0] === started) {
+  if (existsSync11(told) && readFileSync7(told, "utf8").split("\n")[0] === started) {
     return { watchdog: `stopped since ${started} \xB7 the operator already told` };
   }
   const seen = [];
@@ -3724,8 +3841,8 @@ function nudgeCommand(args) {
   if (!wake && last && now - (parseIso(last) ?? 0) < quiet * 6e4) {
     return { nudge: `nothing \xB7 last cycle ${last}` };
   }
-  if (existsSync10(marker)) {
-    const [prev, why] = readFileSync6(marker, "utf8").split("\n");
+  if (existsSync11(marker)) {
+    const [prev, why] = readFileSync7(marker, "utf8").split("\n");
     if (prev && /^\d+$/.test(prev) && now - Number(prev) * 1e3 < cooldown * 6e4) {
       const ago = Math.floor((now - Number(prev) * 1e3) / 6e4);
       return { nudge: wake ? `nothing \xB7 woke ${ago} min ago${why ? ` for: ${why}` : ""}` : `nothing \xB7 nudged ${ago} min ago and no cycle since` };
@@ -3775,7 +3892,7 @@ var init_liveness = __esm({
 });
 
 // src/opsbot-core/commands/infra.ts
-import { existsSync as existsSync11, mkdirSync as mkdirSync4, readFileSync as readFileSync7, readdirSync as readdirSync3, rmSync as rmSync5, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync12, mkdirSync as mkdirSync4, readFileSync as readFileSync8, readdirSync as readdirSync3, rmSync as rmSync5, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
 import { join as join7 } from "node:path";
 function unitDir() {
@@ -3789,12 +3906,12 @@ function templatesDir() {
 }
 function template(name) {
   const p = join7(templatesDir(), name);
-  if (!existsSync11(p)) {
+  if (!existsSync12(p)) {
     throw new AxiError(`the unit template ${name} is missing from ${templatesDir()}`, "CANNOT_RUN", [
       "Reinstall the skill: npx skills add JarvusInnovations/opsbots --skill opsbot-core"
     ]);
   }
-  return readFileSync7(p, "utf8");
+  return readFileSync8(p, "utf8");
 }
 function fill(t, vars) {
   return t.replace(/@([A-Z_]+)@/g, (m, k) => k in vars ? vars[k] : m);
@@ -3852,7 +3969,7 @@ function systemctl(args) {
 }
 function installed(s) {
   const dir = unitDir();
-  if (!existsSync11(dir)) return [];
+  if (!existsSync12(dir)) return [];
   return readdirSync3(dir).filter((f) => f.startsWith(prefix(s))).sort();
 }
 function infraCommand(args) {
@@ -3870,7 +3987,7 @@ function infraCommand(args) {
     const want = new Set(units.map((u) => u.file));
     const rows = units.map((u) => {
       const p = join7(dir, u.file);
-      const state = !existsSync11(p) ? "missing" : samePathless(readFileSync7(p, "utf8"), u.content) ? "current" : "stale";
+      const state = !existsSync12(p) ? "missing" : samePathless(readFileSync8(p, "utf8"), u.content) ? "current" : "stale";
       let active = "-";
       if (u.enable && state !== "missing") {
         const r = systemctl(["is-active", u.file]);
@@ -3956,7 +4073,7 @@ var init_infra = __esm({
 });
 
 // src/opsbot-core/commands/hook.ts
-import { existsSync as existsSync12, mkdirSync as mkdirSync5, readFileSync as readFileSync8, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync13, mkdirSync as mkdirSync5, readFileSync as readFileSync9, writeFileSync as writeFileSync6 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
 import { dirname as dirname4, join as join8, relative as relative2 } from "node:path";
 function settingsPath(scope, dir) {
@@ -3972,9 +4089,9 @@ function hookBase(scope, dir) {
   return JSON.stringify(shim);
 }
 function readSettings(p) {
-  if (!existsSync12(p)) return {};
+  if (!existsSync13(p)) return {};
   try {
-    return JSON.parse(readFileSync8(p, "utf8"));
+    return JSON.parse(readFileSync9(p, "utf8"));
   } catch {
     throw new AxiError(`${p} is not valid JSON; not touching it`, "CANNOT_RUN", ["Fix the file by hand, then run hook install again"]);
   }
@@ -4132,7 +4249,7 @@ var init_start = __esm({
 });
 
 // src/opsbot-core/commands/simple.ts
-import { existsSync as existsSync13, readFileSync as readFileSync9 } from "node:fs";
+import { existsSync as existsSync14, readFileSync as readFileSync10 } from "node:fs";
 import { join as join9 } from "node:path";
 function nextDelayCommand(args) {
   parseArgs(args, {}, "next-delay");
@@ -4261,7 +4378,7 @@ function settingsCommand(args) {
     where = `${SETTINGS_FILE} at HEAD`;
   } else {
     const p = join9(root, SETTINGS_FILE);
-    text = existsSync13(p) ? readFileSync9(p, "utf8") : null;
+    text = existsSync14(p) ? readFileSync10(p, "utf8") : null;
     where = SETTINGS_FILE;
   }
   if (text === null) {
@@ -4271,9 +4388,9 @@ function settingsCommand(args) {
   }
   const { raw, problems } = parseSettingsText(text, where);
   const claude = join9(root, ".claude", "settings.json");
-  if (raw && existsSync13(claude)) {
+  if (raw && existsSync14(claude)) {
     try {
-      const cs = JSON.parse(readFileSync9(claude, "utf8"));
+      const cs = JSON.parse(readFileSync10(claude, "utf8"));
       const loop = raw.loop ?? {};
       if (cs && cs.autoCompactWindow !== void 0 && String(cs.autoCompactWindow) !== String(loop.autocompact ?? "")) {
         problems.push(
