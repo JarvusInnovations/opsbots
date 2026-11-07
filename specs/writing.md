@@ -77,23 +77,29 @@ After:
     Need input. Two answers from PR 33 whenever you have them: OntrayApp, and the
     newsletter keep-or-drop list.
 
-## Slack (mrkdwn)
+## Slack
 
-The text is sent as written and Slack renders mrkdwn, not Markdown.
+Write Markdown. `slack-axi` (1.3.0 and later) renders it on send: in bot mode (a bot
+token) to Block Kit through the same renderer Hari's Slack app uses, in human mode (a
+person's token) to mrkdwn text, which is the only form that survives a person editing
+their own message. You never write Slack's own dialect by hand.
 
-- `*bold*` the one thing the reader must see: the number, the decision, the date. Not
-  sentences. `_italic_` almost never.
+- `**bold**` for the one thing the reader must see: the number, the decision, the date.
+  Not sentences. A lone `*word*` is *italic* now; do not use it for emphasis.
 - Backticks for anything a person would copy: an id, an address, a command, a label.
-- One item per line, starting `•` for a list or `1.` for ordered steps. Never steps run
-  together in a sentence. A blank line before and after.
-- A blank line is two newlines in the text you send; one newline is a soft break inside
-  a part. Parts (outcome, details, next) always get the blank line.
-- Links as `<url|what it is>`; never a bare URL longer than the words around it.
+- `- ` or `1. ` list items, one per line, a blank line before and after; the renderer
+  makes them native lists. Never steps run together in a sentence.
+- `[what it is](url)` for links; never a bare URL longer than the words around it.
 - `>` to quote the one line being answered when a thread has moved on.
-- No `#` headers, no `**double asterisks**`, no tables: none render.
+- `#` headings render in bot mode; in human mode they become a bold line. Use one at most,
+  and only on a post long enough to need it.
 - Eight lines is the ceiling. Longer goes in a thread under a two-line top post, or
   becomes a record with the link in the message.
 - One message, one topic. Reply in the thread you were asked in.
+- Hand-written Slack syntax still passes through unchanged (`<@U…>`, `<!here>`, `<url|label>`,
+  `•` lines), so an old habit will not break a message; it is just no longer the style.
+- `slack-axi draft --preview` shows what will render before anything is created; `edit`
+  and `delete` act on the bot's own messages through the same draft step.
 
 ## Email drafts
 
