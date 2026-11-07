@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "e321917" : "dev";
+    VERSION = true ? "9e1a8b7" : "dev";
   }
 });
 
@@ -1912,6 +1912,10 @@ var init_reference = __esm({
         group: "Cold start",
         commands: [
           {
+            usage: "start [--continue] [--dry-run] [-- <extra claude args>]",
+            summary: "Launch the bot's Claude Code session with the flags opsbot.json implies: permission mode (default auto), model, autocompact window, autocompact forced on, and `loop.prompt` as the first message. `--continue` resumes the last session in this checkout. A bot's `bin/start` shim calls this."
+          },
+          {
             usage: "cold-start [--write]",
             summary: "Print the reground pack: the rule card, each `wake.d/` section, the last 48 hours of the cycle log, the untrusted-memory line. `--write` also writes the pack file and sets the pending flag."
           },
@@ -2249,8 +2253,11 @@ function validateSettings(raw) {
   }
   const loop = obj(raw, "loop", "", true);
   if (loop) {
-    allow(loop, "loop.", ["prompt", "autocompact"]);
+    allow(loop, "loop.", ["prompt", "autocompact", "model", "permission_mode"]);
     str(loop, "prompt", "loop.", true);
+    if (loop.model !== void 0 && (typeof loop.model !== "string" || loop.model === "")) problems.push("loop.model must be a non-empty string (a Claude Code model name or alias)");
+    const PM = ["auto", "default", "acceptEdits", "plan"];
+    if (loop.permission_mode !== void 0 && !PM.includes(loop.permission_mode)) problems.push(`loop.permission_mode must be one of ${PM.join(", ")}`);
     const ac = loop.autocompact;
     if (ac !== void 0 && !(typeof ac === "string" && ac !== "") && !(typeof ac === "number" && ac > 0)) {
       problems.push('loop.autocompact must be a window such as "300k" or a number');
@@ -2348,7 +2355,9 @@ function withDefaults(raw) {
     gate_word: pick(raw.gate_word, null),
     loop: {
       prompt: loop.prompt,
-      autocompact: loop.autocompact === void 0 ? null : String(loop.autocompact)
+      autocompact: loop.autocompact === void 0 ? null : String(loop.autocompact),
+      model: loop.model === void 0 ? null : String(loop.model),
+      permission_mode: loop.permission_mode === void 0 ? "auto" : String(loop.permission_mode)
     },
     cadence,
     lock_max_minutes: pick(raw.lock_max_minutes, 60),
@@ -4055,6 +4064,52 @@ var init_hook = __esm({
   }
 });
 
+// src/opsbot-core/commands/start.ts
+import { spawnSync as spawnSync2 } from "node:child_process";
+function startArgv(s, opts) {
+  const argv = ["claude", "--permission-mode", s.loop.permission_mode];
+  if (s.loop.model) argv.push("--model", s.loop.model);
+  if (s.loop.autocompact) argv.push("--autocompact", s.loop.autocompact);
+  argv.push("--settings", JSON.stringify({ autoCompactEnabled: true }));
+  if (opts.cont) argv.push("--continue");
+  argv.push(...opts.extra);
+  argv.push(s.loop.prompt);
+  return argv;
+}
+function startCommand(args) {
+  const sep = args.indexOf("--");
+  const own = sep >= 0 ? args.slice(0, sep) : args;
+  const extra = sep >= 0 ? args.slice(sep + 1) : [];
+  const { flags } = parseArgs(own, { bool: ["continue", "dry-run"] }, USAGE);
+  setExit(0);
+  const root = findRoot();
+  if (!root) {
+    setExit(1);
+    return { error: "not inside a git checkout", help: ["Run from the bot's repo"] };
+  }
+  const s = trySettings(root);
+  if (!s) {
+    setExit(1);
+    return { error: "opsbot.json is missing or invalid", help: ["Run `settings validate`"] };
+  }
+  const argv = startArgv(s, { cont: flags["continue"] === true, extra });
+  if (flags["dry-run"]) return { start: "would run", cwd: root, argv };
+  const r = spawnSync2(argv[0], argv.slice(1), { cwd: root, stdio: "inherit" });
+  setExit(r.status ?? 1);
+  return r.error ? encode2({ error: `could not start claude: ${r.error.message}`, help: ["Is `claude` on PATH for this user?"] }) : "";
+}
+var USAGE;
+var init_start = __esm({
+  "src/opsbot-core/commands/start.ts"() {
+    "use strict";
+    init_dist3();
+    init_args();
+    init_repo();
+    init_settings();
+    USAGE = "start [--continue] [--dry-run] [-- <extra claude args>]";
+  }
+});
+
 // src/opsbot-core/commands/simple.ts
 import { existsSync as existsSync13, readFileSync as readFileSync9 } from "node:fs";
 import { join as join9 } from "node:path";
@@ -4276,6 +4331,7 @@ var init_cli2 = __esm({
     init_liveness();
     init_infra();
     init_hook();
+    init_start();
     init_simple();
     CLI = cliInvocation();
     TOP_HELP = `usage: ${CLI} <command> [subcommand] [args] [flags]
@@ -4301,6 +4357,7 @@ env:   OPSBOT_ROOT (the bot's repo; default: the git top level of the working di
       hooks: (a) => hooksCommand(a),
       log: (a) => logCommand(a),
       settings: (a) => settingsCommand(a),
+      start: (a) => startCommand(a),
       // shadows the SDK's npm self-update: this CLI ships inside a skill
       update: () => {
         throw new AxiError("opsbot-core ships inside a skill, not on npm", "VALIDATION_ERROR", [

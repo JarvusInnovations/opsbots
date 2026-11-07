@@ -41,7 +41,7 @@ export interface Settings {
   timezone: string;
   rule_card: string | null;
   gate_word: string | null;
-  loop: { prompt: string; autocompact: string | null };
+  loop: { prompt: string; autocompact: string | null; model: string | null; permission_mode: string };
   cadence: Cadence;
   lock_max_minutes: number;
   liveness: Liveness;
@@ -158,8 +158,11 @@ export function validateSettings(raw: unknown): string[] {
 
   const loop = obj(raw, "loop", "", true);
   if (loop) {
-    allow(loop, "loop.", ["prompt", "autocompact"]);
+    allow(loop, "loop.", ["prompt", "autocompact", "model", "permission_mode"]);
     str(loop, "prompt", "loop.", true);
+    if (loop.model !== undefined && (typeof loop.model !== "string" || loop.model === "")) problems.push("loop.model must be a non-empty string (a Claude Code model name or alias)");
+    const PM = ["auto", "default", "acceptEdits", "plan"];
+    if (loop.permission_mode !== undefined && !PM.includes(loop.permission_mode as string)) problems.push(`loop.permission_mode must be one of ${PM.join(", ")}`);
     const ac = loop.autocompact;
     if (ac !== undefined && !(typeof ac === "string" && ac !== "") && !(typeof ac === "number" && ac > 0)) {
       problems.push("loop.autocompact must be a window such as \"300k\" or a number");
@@ -264,6 +267,8 @@ export function withDefaults(raw: Json): Settings {
     loop: {
       prompt: loop.prompt as string,
       autocompact: loop.autocompact === undefined ? null : String(loop.autocompact),
+      model: loop.model === undefined ? null : String(loop.model),
+      permission_mode: loop.permission_mode === undefined ? "auto" : String(loop.permission_mode),
     },
     cadence,
     lock_max_minutes: pick(raw.lock_max_minutes, 60),
