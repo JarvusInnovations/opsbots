@@ -118,7 +118,7 @@ script can do it. The rubric, by class:
 | **Small** (Haiku-class) | high volume, short items, a fixed output schema, errors cheap and visible: sorting mail into piles, pulling fields out of messages, tagging, dedup, first-pass filters | anything that will be sent, or that a person will read as the bot's judgment |
 | **Mid** (Sonnet-class) | reading long material to a bounded result where fidelity matters and taste does not: summarizing a transcript, scanning a document set for what matches, reading API docs to a working call, routine drafts for review | the final wording of anything in the bot's or the company's name |
 | **Large** (Opus-class) | work where a wrong answer costs more than the tokens: research synthesis, code, debugging, long drafts a person will send, plan writing, a judgment call the loop has delegated with its criteria spelled out | the loop's own decisions |
-| **The loop** (Fable-class) | only what must happen in its own context: reading the digest, deciding what matters, the gate, the record, the message that goes out, the conversation with the principal | reading anything longer than the digest; any task whose input is not needed again verbatim |
+| **The loop** (Fable-class) | the connections: seeing that a mail thread, a Slack ask, a calendar invite and a stale commitment are one situation; what matters and why; the gate, the record, the message that goes out, the conversation with the principal | reading anything longer than the digest; any task whose input is not needed again verbatim |
 
 Three tests before the loop does a thing itself, all of which must fail for it to proceed:
 the task needs more input than is already in context; only a small part of that input or
@@ -133,6 +133,13 @@ and it wins whenever the extraction is mechanical. A subagent is for when the *r
 itself takes judgment the loop should not spend: when no filter would know what to keep.
 Spawning one to run a command the loop could have run is the same waste in a different
 coat.
+
+The loop's distinct strength is systems: seeing the connections between things. That is
+what context buys and what delegation fragments. A subagent sees one thing well; it does
+not know that the document it is reading is the third message in a thread the loop already
+holds, or that the sender is the person who owes the answer. When the value of a read is
+in relating it to what the loop knows, the loop keeps the read, or the brief carries that
+context in with it, stated as facts, not as the loop's conclusion.
 
 Class and context are two axes, not one. The class is the quality of judgment the task
 needs; the subagent is whether its input belongs in the loop's window. The loop's own class
