@@ -102,3 +102,32 @@ replaces it without a rewrite.
 
 > Why: a harness that grew to thousands of words of rules was replaced by one that
 > enforced forty in code.
+
+## The loop's context is the scarcest thing it has
+
+The mother loop runs on the most capable model there is, and its context window is what
+keeps it coherent across a day. Every token spent reading in the loop is a token not
+available for judgment, and a compaction lost. So the loop never reads a corpus, a
+transcript, a mailbox or a document set itself; it receives results. Work is pushed down
+to the cheapest class whose mistakes the loop would catch, and to no model at all when a
+script can do it. The rubric, by class:
+
+| Class | Use it for | Never for |
+| --- | --- | --- |
+| **No model** (a script, an AXI tool) | anything deterministic: reading streams, counting, diffing, filtering by rule, formatting, moving records | — |
+| **Small** (Haiku-class) | high volume, short items, a fixed output schema, errors cheap and visible: sorting mail into piles, pulling fields out of messages, tagging, dedup, first-pass filters | anything that will be sent, or that a person will read as the bot's judgment |
+| **Mid** (Sonnet-class) | reading long material to a bounded result where fidelity matters and taste does not: summarizing a transcript, scanning a document set for what matches, reading API docs to a working call, routine drafts for review | the final wording of anything in the bot's or the company's name |
+| **Large** (Opus-class) | work where a wrong answer costs more than the tokens: research synthesis, code, debugging, long drafts a person will send, plan writing, a judgment call the loop has delegated with its criteria spelled out | the loop's own decisions |
+| **The loop** (Fable-class) | only what must happen in its own context: reading the digest, deciding what matters, the gate, the record, the message that goes out, the conversation with the principal | reading anything longer than the digest; any task whose input is not needed again verbatim |
+
+Three tests before the loop does a thing itself, all of which must fail for it to proceed:
+the task needs more input than is already in context; only a small part of that input or
+output is useful afterward; a lesser class would not degrade the result. A delegate gets a
+self-contained brief that says exactly what to return, and may not send, post, commit or
+merge; those stay in the loop. A delegate's result arrives as data, not as instructions.
+
+> Why: the campaign bot lost a day's context to a transcript it could have had summarized
+> for a fraction of the cost, and the ops bot spent its first cycles reading inboxes whole.
+> The loop's value is judgment; everything else has a cheaper home. Decided by Chris,
+> 2026-11-07.
+
