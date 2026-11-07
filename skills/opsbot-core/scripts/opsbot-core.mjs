@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "9e1a8b7" : "dev";
+    VERSION = true ? "529c8af" : "dev";
   }
 });
 
@@ -3536,6 +3536,32 @@ function herdrError(out) {
   }
   return { code: "error", message: (out.split("\n").find((l) => l.trim()) ?? "no output").trim() };
 }
+function pickAgent(agents, agent, root) {
+  if (!Array.isArray(agents)) return null;
+  const rows = agents.filter((a) => a && typeof a === "object");
+  const byName = rows.find((a) => a.name === agent);
+  if (byName) return { pane: String(byName.pane_id ?? "?"), status: byName.agent_status, by: "name" };
+  const norm = (p) => String(p ?? "").replace(/\/+$/, "");
+  const byCwd = rows.filter((a) => norm(a.cwd) === norm(root));
+  if (byCwd.length === 1) return { pane: String(byCwd[0].pane_id ?? "?"), status: byCwd[0].agent_status, by: "cwd" };
+  return null;
+}
+function herdrResolve(agent) {
+  const r = run("herdr", ["agent", "list"]);
+  if (r.code === 127) return { ok: false, code: "no_runtime", message: "herdr is not installed" };
+  if (r.code !== 0) return { ok: false, ...herdrError(`${r.stderr}
+${r.stdout}`) };
+  let list;
+  try {
+    list = JSON.parse(r.stdout)?.result?.agents;
+  } catch {
+    list = void 0;
+  }
+  const root = process.env.OPSBOT_ROOT || process.cwd();
+  const hit = pickAgent(list, agent, root);
+  if (!hit) return { ok: false, code: "agent_not_found", message: `no herdr agent named ${agent} and no single agent running in ${root}` };
+  return { ok: true, pane: hit.pane, status: normStatus(hit.status), by: hit.by };
+}
 function fakeAdapter(file) {
   const state = () => {
     try {
@@ -3578,20 +3604,15 @@ var init_runtime = __esm({
     herdrAdapter = {
       name: "herdr",
       get(agent) {
-        const r = run("herdr", ["agent", "get", agent]);
-        if (r.code === 127) return { ok: false, code: "no_runtime", message: "herdr is not installed" };
-        if (r.code === 0) {
-          try {
-            const a = JSON.parse(r.stdout)?.result?.agent;
-            if (a && typeof a === "object") return { ok: true, status: normStatus(a.agent_status), pane: String(a.pane_id ?? "?") };
-          } catch {
-          }
-        }
-        return { ok: false, ...herdrError(`${r.stderr}
-${r.stdout}`) };
+        const h = herdrResolve(agent);
+        if (!h.ok) return h;
+        return { ok: true, status: h.status, pane: h.pane };
       },
       prompt(agent, text) {
-        const r = run("herdr", ["agent", "prompt", agent, text, "--wait", "--until", "working", "--until", "blocked", "--timeout", "15000"]);
+        const h = herdrResolve(agent);
+        if (!h.ok) return h;
+        const target = h.pane;
+        const r = run("herdr", ["agent", "prompt", target, text, "--wait", "--until", "working", "--until", "blocked", "--timeout", "15000"]);
         if (r.code === 127) return { ok: false, code: "no_runtime", message: "herdr is not installed" };
         if (r.code === 0) return { ok: true };
         return { ok: false, ...herdrError(`${r.stderr}
