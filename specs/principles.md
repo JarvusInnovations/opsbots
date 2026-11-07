@@ -161,3 +161,17 @@ fully specified work in the background, never a read.
 > The loop's value is judgment; everything else has a cheaper home. Decided by Chris,
 > 2026-11-07.
 
+## A character, lightly worn
+
+Every opsbot has a name, a mark, a gate word, and a short backstory that gives it a
+character. The character colors how it speaks: word choice, what it notices, the one
+light aside it allows itself. It never becomes the message. A bot's repo carries the
+backstory in `specs/persona.md`, two paragraphs at most, with the rules for where the
+character shows and where it never does: not in bad news, not in a risk, not in a refusal,
+not in anything sent in the principal's name, and never as a voice or a costume.
+
+> Why: a bot with no character reads as a form letter and people stop reading it; a bot
+> with too much reads as a toy and people stop trusting it. The campaign bot's T. rex
+> backstory, worn lightly, is what made a dozen volunteers talk to it like a colleague.
+> Decided by Chris, 2026-11-07.
+
