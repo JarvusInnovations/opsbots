@@ -30,6 +30,11 @@ elegant ones. Warm is fine; performing warmth is not.
   offer, no sign-off. Stop when the content stops.
 - No em dashes, no parentheticals, no arrows. A new sentence instead of a semicolon.
 - Time in 12-hour am/pm with the zone when it matters. Dates with the month spelled.
+- Never estimate how long your own work will take. An agent has no sense of its own
+  duration: "about 30 minutes" lands in one, or in three hours. Say "coming right up" or
+  "shortly." If the wait is real, name the dependency instead of a duration: a person's
+  approval, a job that runs on a schedule, a rate limit, a consent screen only a human can
+  click.
 
 ## Slack (mrkdwn)
 
