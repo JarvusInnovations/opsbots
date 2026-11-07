@@ -62,7 +62,7 @@ unless it equals `loop.autocompact` (one value, one place).
 | `cycle begin` | refuses while another writer holds the checkout; takes the lock; records a `stopped` outage if overdue; runs `cycle.d/begin/`; runs `check`; on 0 releases and prints the closing line | as `check`; 30 wait |
 | `cycle end --records N [--degraded] [--summary TEXT]` | runs `cycle.d/end/`; pins the watermark to this cycle's check time; appends `finished`; commits with `--only`; pushes; releases; prints whatever `cycle.d/end/` scripts printed (due promises, owed fixes), then `next <s> <reason>` | 0 · 1 refused (nothing written; the lock released) or could not commit (the lock kept) |
 | `next-delay` | reads the log and the cadence table; prints `<seconds> <reason>` | 0 |
-| `cold-start [--write]` | prints the pack: the rule card, then every script in `wake.d/` in order (each prints one section), then the 48 h log summary and the untrusted-memory line; `--write` also writes the pack file and sets pending | 0 |
+| `cold-start [--write]` | prints the pack: the rule card; the kit's own sections (`references/pack/*.md` shipped with the skill, in order, whole: house writing style, delegation rubric); then every script in `wake.d/` in order (each prints one section); then the 48 h log summary and the untrusted-memory line; `--write` also writes the pack file and sets pending | 0 |
 | `gate check` | the PreToolUse body: exit 0 when nothing is pending or the pending pack was read whole; otherwise prints the deny reason and exits 2 | 0 · 2 |
 | `lock status|release` | shows or releases the lock (release refuses another live process's lock without `--abandon`) | 0 · 1 |
 | `outage record <kind> [--note] [--started] [--ended]` / `outage end [--ended]` / `outage list` | `failed-turn · refused · plan-limit · session-ended · stopped`; times default to now; end closes the open one | 0 |
@@ -125,7 +125,8 @@ order.
   `index.lock`.
 - A degraded input never yields "nothing new".
 - `cycle end` refuses a future time, a backwards move, or no check since the lock.
-- The cold-start pack is capped at a byte budget; lists are truncated with "… N more".
+- The cold-start pack is capped at a byte budget (16 000 bytes); the rule card and the kit's sections are whole and count against it, `wake.d/` sections share the rest and are truncated with "… N more".
+- House rules that must be in front of every session (how to write, when to delegate) ship inside the skill as `references/pack/*.md` and ride the pack, so they are updated by `npx skills update` and never copied into a bot's CLAUDE.md. `OPSBOT_PACK_DIR` overrides the directory.
 - The gate denies every tool while the pending flag is set and the pack has not been
   read whole; a read with an offset or limit does not clear it.
 - `nudge` never creates a second loop; it prompts the one named agent.

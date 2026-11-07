@@ -3,6 +3,9 @@
  * compaction. Prints the reground pack, in order:
  *
  *   1. the rule card (settings.rule_card at HEAD), whole
+ *   1.1, 1.2, … the kit's own sections: every references/pack/*.md shipped with
+ *      the skill, in order, whole (house style, delegation); they update with
+ *      the skill, so no bot copies them into its CLAUDE.md
  *   2. one section per opsbot.d/wake.d/ script, in order, each capped to its
  *      share of the byte budget ("… N more lines")
  *   3. the cycle log's last 48 hours: counts, longest gap, last degraded, outages
@@ -16,17 +19,19 @@
  * this call is a Read of the pack with no offset, limit or pages (which
  * clears the flag); otherwise prints the deny reason and exits 2.
  */
-import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs, setExit, usageError } from "../args.js";
+import { skillDir } from "../invocation.js";
 import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
 import { findRoot, firstLine, iso, nowIso, nowMs, parseIso, showHead } from "../repo.js";
 import { SETTINGS_FILE, parseSettingsText, trySettings, withDefaults, type Settings } from "../settings.js";
 import { CHECK_OUTCOMES, CYCLE_OUTCOMES, outages, readCycleLog } from "../state.js";
 
-/** The pack's byte budget; the rule card is exempt and always whole. */
-export const PACK_BUDGET = 9500;
+/** The pack's byte budget. The rule card and the kit's own sections are whole and count
+ * against it; wake.d sections share what is left. */
+export const PACK_BUDGET = 16000;
 const MIN_SECTION = 300;
 const DAY2 = 48 * 3600_000;
 const MAX_OUTAGES = 5;
@@ -117,6 +122,24 @@ function logSummary(root: string, now: number): string[] {
   return out;
 }
 
+/** The kit's own pack sections: references/pack/*.md next to the running skill, lexical
+ * order, each whole, titled by its first H1 (else its file name), leading HTML comment
+ * dropped. `OPSBOT_PACK_DIR` overrides the directory (tests, a bot that ships its own). */
+export function kitSections(): { title: string; body: string }[] {
+  const dir = process.env.OPSBOT_PACK_DIR || join(skillDir(), "references", "pack");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".md"))
+    .sort()
+    .map((f) => {
+      let text = readFileSync(join(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
+      const m = text.match(/^#\s+(.+)$/m);
+      const title = m ? m[1]!.trim() : f.replace(/^\d+[-_]/, "").replace(/\.md$/, "");
+      if (m) text = text.replace(m[0], "").replace(/^\n+/, "");
+      return { title, body: text.replace(/\n+$/, "") };
+    });
+}
+
 export function buildPack(root: string, s: Settings, settingsText: string | null): string {
   const now = nowMs();
   const head = `═══ Cold start, ${nowIso()}. Read all of this before acting. Until you have, what you remember is untrusted.\n`;
@@ -131,12 +154,14 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
         : `═══ 1. The rule card (${s.rule_card})\n${text.replace(/\n+$/, "")}`;
   }
 
+  const kit = kitSections().map((k, i) => `═══ 1.${i + 1} ${k.title} (the kit's; updates with the skill)\n${k.body}`);
+
   const scripts = discover(root, "wake").scripts;
   const summaryNo = 2 + scripts.length;
   const summary = `═══ ${summaryNo}. The cycle log, last 48 hours\n${logSummary(root, now).join("\n")}`;
   const foot = "═══ Memory before this point is untrusted: open the source before saying anything about what a record holds, what was decided, or what was sent.";
 
-  const fixed = bytes(head) + bytes(card) + bytes(summary) + bytes(foot) + 8 + scripts.length * 2;
+  const fixed = bytes(head) + bytes(card) + kit.reduce((n, k) => n + bytes(k) + 2, 0) + bytes(summary) + bytes(foot) + 8 + scripts.length * 2;
   const room = Math.max(0, PACK_BUDGET - fixed);
   const sections: string[] = [];
   if (scripts.length) {
@@ -157,7 +182,7 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
       sections.push(section);
     });
   }
-  return [head, card, ...sections, summary, foot].join("\n\n").replace(/\n{3,}/g, "\n\n") + "\n";
+  return [head, card, ...kit, ...sections, summary, foot].join("\n\n").replace(/\n{3,}/g, "\n\n") + "\n";
 }
 
 export function coldStartCommand(args: string[]): string {

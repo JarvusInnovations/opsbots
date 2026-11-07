@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "2d4c81e" : "dev";
+    VERSION = true ? "e321917" : "dev";
   }
 });
 
@@ -3223,7 +3223,7 @@ var init_cycle = __esm({
 });
 
 // src/opsbot-core/commands/coldstart.ts
-import { existsSync as existsSync9, mkdirSync as mkdirSync3, rmSync as rmSync4, statSync as statSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync9, mkdirSync as mkdirSync3, readdirSync as readdirSync2, readFileSync as readFileSync4, rmSync as rmSync4, statSync as statSync3, writeFileSync as writeFileSync3 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
 import { join as join6, resolve as resolve3 } from "node:path";
 function cacheDir(name) {
@@ -3303,6 +3303,17 @@ function logSummary(root, now) {
   }
   return out;
 }
+function kitSections() {
+  const dir = process.env.OPSBOT_PACK_DIR || join6(skillDir(), "references", "pack");
+  if (!existsSync9(dir)) return [];
+  return readdirSync2(dir).filter((f) => f.endsWith(".md")).sort().map((f) => {
+    let text = readFileSync4(join6(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
+    const m = text.match(/^#\s+(.+)$/m);
+    const title = m ? m[1].trim() : f.replace(/^\d+[-_]/, "").replace(/\.md$/, "");
+    if (m) text = text.replace(m[0], "").replace(/^\n+/, "");
+    return { title, body: text.replace(/\n+$/, "") };
+  });
+}
 function buildPack(root, s, settingsText) {
   const now = nowMs();
   const head = `\u2550\u2550\u2550 Cold start, ${nowIso()}. Read all of this before acting. Until you have, what you remember is untrusted.
@@ -3315,12 +3326,14 @@ function buildPack(root, s, settingsText) {
 (the rule card is not committed at HEAD: say so to the operator)` : `\u2550\u2550\u2550 1. The rule card (${s.rule_card})
 ${text.replace(/\n+$/, "")}`;
   }
+  const kit = kitSections().map((k, i) => `\u2550\u2550\u2550 1.${i + 1} ${k.title} (the kit's; updates with the skill)
+${k.body}`);
   const scripts = discover(root, "wake").scripts;
   const summaryNo = 2 + scripts.length;
   const summary = `\u2550\u2550\u2550 ${summaryNo}. The cycle log, last 48 hours
 ${logSummary(root, now).join("\n")}`;
   const foot = "\u2550\u2550\u2550 Memory before this point is untrusted: open the source before saying anything about what a record holds, what was decided, or what was sent.";
-  const fixed = bytes(head) + bytes(card) + bytes(summary) + bytes(foot) + 8 + scripts.length * 2;
+  const fixed = bytes(head) + bytes(card) + kit.reduce((n, k) => n + bytes(k) + 2, 0) + bytes(summary) + bytes(foot) + 8 + scripts.length * 2;
   const room = Math.max(0, PACK_BUDGET - fixed);
   const sections = [];
   if (scripts.length) {
@@ -3343,7 +3356,7 @@ ${capped}`;
       sections.push(section);
     });
   }
-  return [head, card, ...sections, summary, foot].join("\n\n").replace(/\n{3,}/g, "\n\n") + "\n";
+  return [head, card, ...kit, ...sections, summary, foot].join("\n\n").replace(/\n{3,}/g, "\n\n") + "\n";
 }
 function coldStartCommand(args) {
   const { flags } = parseArgs(args, { bool: ["write"] }, "cold-start [--write]");
@@ -3428,11 +3441,12 @@ var init_coldstart = __esm({
   "src/opsbot-core/commands/coldstart.ts"() {
     "use strict";
     init_args();
+    init_invocation();
     init_lifecycle();
     init_repo();
     init_settings();
     init_state();
-    PACK_BUDGET = 9500;
+    PACK_BUDGET = 16e3;
     MIN_SECTION = 300;
     DAY2 = 48 * 36e5;
     MAX_OUTAGES = 5;
@@ -3497,7 +3511,7 @@ var init_outage = __esm({
 });
 
 // src/opsbot-core/runtime.ts
-import { appendFileSync as appendFileSync2, readFileSync as readFileSync4 } from "node:fs";
+import { appendFileSync as appendFileSync2, readFileSync as readFileSync5 } from "node:fs";
 function normStatus(s) {
   return s === "idle" || s === "done" || s === "working" || s === "blocked" ? s : "unknown";
 }
@@ -3516,7 +3530,7 @@ function herdrError(out) {
 function fakeAdapter(file) {
   const state = () => {
     try {
-      return JSON.parse(readFileSync4(file, "utf8"));
+      return JSON.parse(readFileSync5(file, "utf8"));
     } catch {
       return {};
     }
@@ -3579,7 +3593,7 @@ ${r.stdout}`) };
 });
 
 // src/opsbot-core/commands/liveness.ts
-import { existsSync as existsSync10, readFileSync as readFileSync5, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync10, readFileSync as readFileSync6, writeFileSync as writeFileSync4 } from "node:fs";
 function watchdogCommand(args) {
   const { flags } = parseArgs(args, { bool: ["dry-run"] }, "watchdog [--dry-run]");
   const dry = flags["dry-run"] === true;
@@ -3604,7 +3618,7 @@ function watchdogCommand(args) {
     return { watchdog: `alive \xB7 last cycle ${last}, ${Math.floor(gap / 6e4)} min ago` };
   }
   const started = last ?? "never";
-  if (existsSync10(told) && readFileSync5(told, "utf8").split("\n")[0] === started) {
+  if (existsSync10(told) && readFileSync6(told, "utf8").split("\n")[0] === started) {
     return { watchdog: `stopped since ${started} \xB7 the operator already told` };
   }
   const seen = [];
@@ -3681,7 +3695,7 @@ function nudgeCommand(args) {
     return { nudge: `nothing \xB7 last cycle ${last}` };
   }
   if (existsSync10(marker)) {
-    const [prev, why] = readFileSync5(marker, "utf8").split("\n");
+    const [prev, why] = readFileSync6(marker, "utf8").split("\n");
     if (prev && /^\d+$/.test(prev) && now - Number(prev) * 1e3 < cooldown * 6e4) {
       const ago = Math.floor((now - Number(prev) * 1e3) / 6e4);
       return { nudge: wake ? `nothing \xB7 woke ${ago} min ago${why ? ` for: ${why}` : ""}` : `nothing \xB7 nudged ${ago} min ago and no cycle since` };
@@ -3731,7 +3745,7 @@ var init_liveness = __esm({
 });
 
 // src/opsbot-core/commands/infra.ts
-import { existsSync as existsSync11, mkdirSync as mkdirSync4, readFileSync as readFileSync6, readdirSync as readdirSync2, rmSync as rmSync5, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync11, mkdirSync as mkdirSync4, readFileSync as readFileSync7, readdirSync as readdirSync3, rmSync as rmSync5, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
 import { join as join7 } from "node:path";
 function unitDir() {
@@ -3750,7 +3764,7 @@ function template(name) {
       "Reinstall the skill: npx skills add JarvusInnovations/opsbots --skill opsbot-core"
     ]);
   }
-  return readFileSync6(p, "utf8");
+  return readFileSync7(p, "utf8");
 }
 function fill(t, vars) {
   return t.replace(/@([A-Z_]+)@/g, (m, k) => k in vars ? vars[k] : m);
@@ -3809,7 +3823,7 @@ function systemctl(args) {
 function installed(s) {
   const dir = unitDir();
   if (!existsSync11(dir)) return [];
-  return readdirSync2(dir).filter((f) => f.startsWith(prefix(s))).sort();
+  return readdirSync3(dir).filter((f) => f.startsWith(prefix(s))).sort();
 }
 function infraCommand(args) {
   const [sub, ...rest] = args;
@@ -3826,7 +3840,7 @@ function infraCommand(args) {
     const want = new Set(units.map((u) => u.file));
     const rows = units.map((u) => {
       const p = join7(dir, u.file);
-      const state = !existsSync11(p) ? "missing" : samePathless(readFileSync6(p, "utf8"), u.content) ? "current" : "stale";
+      const state = !existsSync11(p) ? "missing" : samePathless(readFileSync7(p, "utf8"), u.content) ? "current" : "stale";
       let active = "-";
       if (u.enable && state !== "missing") {
         const r = systemctl(["is-active", u.file]);
@@ -3912,7 +3926,7 @@ var init_infra = __esm({
 });
 
 // src/opsbot-core/commands/hook.ts
-import { existsSync as existsSync12, mkdirSync as mkdirSync5, readFileSync as readFileSync7, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync12, mkdirSync as mkdirSync5, readFileSync as readFileSync8, writeFileSync as writeFileSync6 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
 import { dirname as dirname4, join as join8, relative as relative2 } from "node:path";
 function settingsPath(scope, dir) {
@@ -3930,7 +3944,7 @@ function hookBase(scope, dir) {
 function readSettings(p) {
   if (!existsSync12(p)) return {};
   try {
-    return JSON.parse(readFileSync7(p, "utf8"));
+    return JSON.parse(readFileSync8(p, "utf8"));
   } catch {
     throw new AxiError(`${p} is not valid JSON; not touching it`, "CANNOT_RUN", ["Fix the file by hand, then run hook install again"]);
   }
@@ -4042,7 +4056,7 @@ var init_hook = __esm({
 });
 
 // src/opsbot-core/commands/simple.ts
-import { existsSync as existsSync13, readFileSync as readFileSync8 } from "node:fs";
+import { existsSync as existsSync13, readFileSync as readFileSync9 } from "node:fs";
 import { join as join9 } from "node:path";
 function nextDelayCommand(args) {
   parseArgs(args, {}, "next-delay");
@@ -4171,7 +4185,7 @@ function settingsCommand(args) {
     where = `${SETTINGS_FILE} at HEAD`;
   } else {
     const p = join9(root, SETTINGS_FILE);
-    text = existsSync13(p) ? readFileSync8(p, "utf8") : null;
+    text = existsSync13(p) ? readFileSync9(p, "utf8") : null;
     where = SETTINGS_FILE;
   }
   if (text === null) {
@@ -4183,7 +4197,7 @@ function settingsCommand(args) {
   const claude = join9(root, ".claude", "settings.json");
   if (raw && existsSync13(claude)) {
     try {
-      const cs = JSON.parse(readFileSync8(claude, "utf8"));
+      const cs = JSON.parse(readFileSync9(claude, "utf8"));
       const loop = raw.loop ?? {};
       if (cs && cs.autoCompactWindow !== void 0 && String(cs.autoCompactWindow) !== String(loop.autocompact ?? "")) {
         problems.push(

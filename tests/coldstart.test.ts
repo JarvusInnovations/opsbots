@@ -35,6 +35,29 @@ describe("cold-start", () => {
     expect(out).toContain("outages: none recorded");
   });
 
+  test("the kit's references/pack sections follow the rule card and precede wake.d", () => {
+    bot = makeBot({ points: ["wake.d"] });
+    const r = cli(bot, ["cold-start"], { now: T0 });
+    const out = r.out;
+    const i1 = out.indexOf("═══ 1. The rule card");
+    const k1 = out.indexOf("═══ 1.1 Writing (the kit's; updates with the skill)");
+    const k2 = out.indexOf("═══ 1.2 Delegation (the kit's; updates with the skill)");
+    const i2 = out.indexOf("═══ 2. owed");
+    expect(k1).toBeGreaterThan(i1);
+    expect(k2).toBeGreaterThan(k1);
+    expect(i2).toBeGreaterThan(k2);
+    expect(out).toContain("Never estimate how long your own work will take");
+    expect(out).not.toContain("<!--");
+  });
+
+  test("OPSBOT_PACK_DIR overrides the kit sections; an empty dir means none", () => {
+    bot = makeBot({ points: ["wake.d"] });
+    bot.env.OPSBOT_PACK_DIR = join(bot.root, "no-such-dir");
+    const r = cli(bot, ["cold-start"], { now: T0 });
+    expect(r.out).not.toContain("═══ 1.1");
+    expect(r.out).toContain("═══ 2. owed");
+  });
+
   test("the pack stays within the byte budget, with '… N more lines'", () => {
     bot = makeBot({ points: ["heartbeat.d", "wake.d"] });
     bot.env.FIXTURE_WAKE_LINES = "2000";
