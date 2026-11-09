@@ -192,7 +192,7 @@ recipe or protocol; the same failure happens a second time; an incident spans mo
 of the bot's customers or systems; the operator asks for a plan, a recommendation or a
 strategy; or the bot would propose a change to its own rules. The brief names what to read
 instead of pasting it: the record entries, and the session and event ids the subagent opens
-itself with `agent-session-axi`. Fable returns a plan or a recommendation as data; the
+itself with `agent-recall-axi`. Fable returns a plan or a recommendation as data; the
 dispatcher records it, acts within its gate, and asks the operator for anything new.
 
 The mode is revisited, not fixed: a month of logs is the evidence for switching either way.

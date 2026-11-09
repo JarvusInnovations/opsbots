@@ -60,7 +60,7 @@ before this skill pins its existing numbers here. `opsbot-core settings validate
 - The environment goes in three places, each for its own reader: the repo settings for Claude
   sessions, `environment.d` for systemd units, `.bashrc` above the interactive guard for
   non-interactive shells. A value in one place and not the others is `differs`.
-- Session logs are the bot's full-resolution memory (the cold-start pack and agent-session-axi
+- Session logs are the bot's full-resolution memory (the cold-start pack and agent-recall-axi
   read them), so a bot keeps them as long as its operator does; pruning is `missing`, not a
   preference.
 - Probes run in the bot's own interactive shell (`bash -ic`), because that is what the

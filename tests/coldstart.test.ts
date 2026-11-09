@@ -79,7 +79,7 @@ describe("cold-start", () => {
     const out = r.out;
     const sec = out.indexOf("Before this start");
     expect(sec).toBeGreaterThan(0);
-    expect(out).toContain("read by agent-session-axi");
+    expect(out).toContain("read by agent-recall-axi");
     expect(out).not.toContain("old instruction before compaction");
     expect(out).toContain("» use a prefix instead of a suffix");
     expect(out).toContain("» review everything with me before you execute");
