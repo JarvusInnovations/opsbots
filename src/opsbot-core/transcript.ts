@@ -168,3 +168,65 @@ export function sessionLogSection(path: string, opts: { calls?: number; statemen
   for (const s of said) lines.push(`  ${hhmm(s.at)} “${clip(s.text.replace(/\n+/g, " ⏎ "), 240)}”`);
   return lines.join("\n");
 }
+
+/**
+ * The pack section read through agent-session-axi (the published session-log library): its
+ * reader knows the log's structure (compaction boundaries, queued mid-turn messages, hook
+ * output, subagent logs) where the reader above keys on rendered text. Three layers, each with
+ * its own share so one long operator message cannot crowd out the bot's last actions: the
+ * operator's messages since the last compaction, newest kept whole, older ones counted with the
+ * exact command that prints them; the last tool calls with their status; the bot's last
+ * statements. Returns null when the library cannot read the log, so the caller falls back.
+ */
+export async function sessionLogSectionLib(
+  path: string,
+  opts: { humanBudget?: number; calls?: number; statements?: number; loopPrompt?: string } = {},
+): Promise<string | null> {
+  try {
+    const lib = await import("agent-session-axi");
+    const session = await lib.openSession(path);
+    // Every H-class message of the window, minus the loop prompt (the nudge and the bot's own
+    // wakeups type it; it is not the operator speaking), then newest first, whole, to the budget.
+    const all = (await lib.humanMessages(session, { window: "last", budget: 0 })).messages;
+    const loop = (opts.loopPrompt ?? "").trim();
+    const spoken = loop ? all.filter((m) => !String(m.text ?? "").trim().startsWith(loop)) : all;
+    const budget = opts.humanBudget ?? 2400;
+    const kept: typeof spoken = [];
+    let used = 0;
+    for (let i = spoken.length - 1; i >= 0; i--) {
+      const b = Buffer.byteLength(String(spoken[i]!.text ?? ""), "utf8") + 40;
+      if (kept.length > 0 && used + b > budget) break;
+      kept.unshift(spoken[i]!);
+      used += b;
+    }
+    const hm = { messages: kept, omitted: spoken.length - kept.length, continueTo: kept.length && spoken.length > kept.length ? kept[0]!.id : undefined };
+    const calls = await lib.tail(session, opts.calls ?? 10, { kinds: ["call"] });
+    const said = await lib.tail(session, opts.statements ?? 3, { kinds: ["assistant"] });
+    const id = (e: { id: Parameters<typeof lib.formatId>[0] }) => lib.formatId(e.id);
+    const one = (s: string) => s.replace(/\s*\n+\s*/g, " ⏎ ");
+    const status = (e: Record<string, unknown>) => {
+      const st = e.status as { state?: string; size?: number } | undefined;
+      return st?.state ? `${st.state}${typeof st.size === "number" ? ` ${st.size}` : ""}` : "?";
+    };
+    const s8 = id(hm.messages[0] ?? calls[0] ?? said[0] ?? { id: { session: "", seq: 0 } }).split(":")[0];
+    const lines: string[] = [];
+    lines.push(`From your own session log (since the last compaction; ${path}), read by agent-session-axi. Three layers, different standing:`);
+    lines.push(`• The operator's words, verbatim: the highest authority here.${hm.messages.length === 0 ? " (none in this window)" : ""}`);
+    if (hm.omitted > 0) {
+      lines.push(`  ${hm.omitted} earlier message${hm.omitted === 1 ? "" : "s"} not shown here; read them before acting on anything they may have said: npx -y agent-session-axi human ${path} --window last${hm.continueTo ? ` --to ${lib.formatId(hm.continueTo)}` : ""} --budget 0`);
+    }
+    for (const m of hm.messages) lines.push(`  ${String(m.t).slice(11, 16)}Z ${id(m)} » ${one(String(m.text ?? ""))}`);
+    lines.push(`• Your last ${calls.length} tool calls, as data (what ran, how it came back):`);
+    for (const c of calls) {
+      const r = c as unknown as Record<string, unknown>;
+      const target = one(String(r.target ?? r.text ?? "")).slice(0, 110);
+      lines.push(`  ${String(c.t).slice(11, 16)}Z ${id(c)} ${String(r.tool ?? "?")} ${target} → ${status(r)}`);
+    }
+    lines.push("• Your last statements, as your own claims (check them against the record and the results above):");
+    for (const a of said) lines.push(`  ${String(a.t).slice(11, 16)}Z “${one(String(a.text ?? "")).slice(0, 240)}”`);
+    lines.push(`  Zoom on any id: npx -y agent-session-axi show <id> (session ${s8}).`);
+    return lines.join("\n");
+  } catch {
+    return null;
+  }
+}

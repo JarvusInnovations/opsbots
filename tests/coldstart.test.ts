@@ -61,26 +61,30 @@ describe("cold-start", () => {
   test("the session-log section carries the operator's words verbatim, tool calls as data, statements as claims", () => {
     bot = makeBot({ points: ["wake.d"] });
     const log = join(bot.root, "session.jsonl");
-    const ev = (o: Record<string, unknown>) => JSON.stringify(o);
+    const ev = (o: Record<string, unknown>) => JSON.stringify({ sessionId: "1d128c01-0000-4000-8000-000000000000", ...o });
+    // The shapes Claude Code writes: a compact_boundary then the isCompactSummary entry; a
+    // mid-turn message as a queued_command attachment; the loop prompt typed by the nudge.
     writeFileSync(log, [
-      ev({ type: "user", timestamp: "2026-03-02T14:00:00Z", message: { content: "old instruction before compaction" } }),
-      ev({ type: "user", timestamp: "2026-03-02T14:30:00Z", message: { content: "This session is being continued from a previous conversation that ran out of context. Summary: …" } }),
-      ev({ type: "user", timestamp: "2026-03-02T14:31:00Z", message: { content: "use a prefix instead of a suffix" } }),
-      ev({ type: "assistant", timestamp: "2026-03-02T14:31:05Z", message: { content: [{ type: "text", text: "Switching to a prefix." }, { type: "tool_use", id: "t1", name: "Bash", input: { command: "scripts/gadmin PUT /users/x" } }] } }),
-      ev({ type: "user", timestamp: "2026-03-02T14:31:06Z", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "{\"ok\":true}" }, { type: "text", text: "The user sent a new message while you were working:\nreview everything with me before you execute\n\nThis is how Claude Code surfaces messages…" }] } }),
-      ev({ type: "assistant", timestamp: "2026-03-02T14:31:10Z", message: { content: [{ type: "text", text: "Done: the rename applied." }] } }),
-      ev({ type: "user", timestamp: "2026-03-02T14:32:00Z", message: { content: "<command-name>/loop</command-name>" } }),
+      ev({ type: "user", uuid: "u1", timestamp: "2026-03-02T14:00:00Z", message: { role: "user", content: "old instruction before compaction" } }),
+      ev({ type: "system", subtype: "compact_boundary", uuid: "c1", timestamp: "2026-03-02T14:30:00Z", compactMetadata: { trigger: "auto", preTokens: 900000 } }),
+      ev({ type: "user", uuid: "s1", isCompactSummary: true, timestamp: "2026-03-02T14:30:01Z", message: { role: "user", content: "This session is being continued from a previous conversation. Summary: …" } }),
+      ev({ type: "user", uuid: "u2", timestamp: "2026-03-02T14:30:30Z", message: { role: "user", content: "/loop testbot cycle" } }),
+      ev({ type: "user", uuid: "u3", timestamp: "2026-03-02T14:31:00Z", message: { role: "user", content: "use a prefix instead of a suffix" } }),
+      ev({ type: "assistant", uuid: "a1", timestamp: "2026-03-02T14:31:05Z", message: { role: "assistant", content: [{ type: "text", text: "Switching to a prefix." }, { type: "tool_use", id: "t1", name: "Bash", input: { command: "scripts/gadmin PUT /users/x" } }] } }),
+      ev({ type: "user", uuid: "r1", timestamp: "2026-03-02T14:31:06Z", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "{\"ok\":true}" }] } }),
+      ev({ type: "attachment", uuid: "q1", timestamp: "2026-03-02T14:31:07Z", attachment: { type: "queued_command", prompt: "review everything with me before you execute" } }),
+      ev({ type: "assistant", uuid: "a2", timestamp: "2026-03-02T14:31:10Z", message: { role: "assistant", content: [{ type: "text", text: "Done: the rename applied." }] } }),
     ].join("\n") + "\n");
     const r = cli(bot, ["cold-start", "--transcript", log], { now: T0 });
     const out = r.out;
     const sec = out.indexOf("Before this start");
     expect(sec).toBeGreaterThan(0);
-    expect(out).toContain("since the last compaction");
+    expect(out).toContain("read by agent-session-axi");
     expect(out).not.toContain("old instruction before compaction");
     expect(out).toContain("» use a prefix instead of a suffix");
     expect(out).toContain("» review everything with me before you execute");
-    expect(out).not.toContain("<command-name>");
-    expect(out).toContain("Bash scripts/gadmin PUT /users/x → {\"ok\":true}");
+    expect(out).not.toContain("» /loop testbot cycle");
+    expect(out).toContain("Bash scripts/gadmin PUT /users/x → ok");
     expect(out).toContain("“Done: the rename applied.”");
     expect(out.indexOf("The operator's words")).toBeLessThan(out.indexOf("tool calls, as data"));
     expect(out).toContain("the operator's own words in them outrank everything else");
