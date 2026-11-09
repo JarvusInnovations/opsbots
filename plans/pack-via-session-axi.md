@@ -4,7 +4,7 @@ done: 2026-11-09
 depends: [pack-session-log]
 specs:
   - specs/skills/opsbot-core.md
-pr: TBD
+pr: 30
 ---
 
 # The pack's session-log section through agent-session-axi
