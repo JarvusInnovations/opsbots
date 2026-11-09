@@ -13,6 +13,7 @@
  * --dry-run prints the argv instead of running it. Otherwise execs claude with inherited
  * stdio and exits with its code. A bot's repo carries a two-line bin/start shim that calls this.
  */
+import { MODE_MODEL, type LoopMode } from "../settings.js";
 import { spawnSync } from "node:child_process";
 import { encode } from "@toon-format/toon";
 import { parseArgs, setExit } from "../args.js";
@@ -21,9 +22,11 @@ import { trySettings } from "../settings.js";
 
 const USAGE = "start [--continue] [--dry-run] [-- <extra claude args>]";
 
-export function startArgv(s: { loop: { prompt: string; autocompact: string | null; model: string | null; permission_mode: string } }, opts: { cont: boolean; extra: string[] }): string[] {
+export function startArgv(s: { loop: { prompt: string; autocompact: string | null; model: string | null; permission_mode: string; mode?: LoopMode } }, opts: { cont: boolean; extra: string[] }): string[] {
   const argv = ["claude", "--permission-mode", s.loop.permission_mode];
-  if (s.loop.model) argv.push("--model", s.loop.model);
+  // loop.model wins; else the mode's class (strategist → fable, dispatcher → opus)
+  const model = s.loop.model ?? (s.loop.mode ? MODE_MODEL[s.loop.mode] : null);
+  if (model) argv.push("--model", model);
   if (s.loop.autocompact) argv.push("--autocompact", s.loop.autocompact);
   argv.push("--settings", JSON.stringify({ autoCompactEnabled: true }));
   if (opts.cont) argv.push("--continue");

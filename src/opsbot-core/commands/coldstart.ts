@@ -147,11 +147,13 @@ function logSummary(root: string, now: number): string[] {
 /** The kit's own pack sections: references/pack/*.md next to the running skill, lexical
  * order, each whole, titled by its first H1 (else its file name), leading HTML comment
  * dropped. `OPSBOT_PACK_DIR` overrides the directory (tests, a bot that ships its own). */
-export function kitSections(): { title: string; body: string }[] {
+export function kitSections(mode?: string): { title: string; body: string }[] {
   const dir = process.env.OPSBOT_PACK_DIR || join(skillDir(), "references", "pack");
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
     .filter((f) => f.endsWith(".md"))
+    // NN-mode-<mode>.md belongs to one loop mode; every other section rides every pack
+    .filter((f) => { const m = f.match(/^\d+[-_]mode-([a-z]+)\.md$/); return !m || m[1] === (mode ?? "strategist"); })
     .sort()
     .map((f) => {
       let text = readFileSync(join(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
@@ -176,7 +178,7 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
         : `═══ 1. The rule card (${s.rule_card})\n${text.replace(/\n+$/, "")}`;
   }
 
-  const kit = kitSections().map((k, i) => `═══ 1.${i + 1} ${k.title} (the kit's; updates with the skill)\n${k.body}`);
+  const kit = kitSections(s.loop.mode).map((k, i) => `═══ 1.${i + 1} ${k.title} (the kit's; updates with the skill)\n${k.body}`);
   if (transcript) {
     const body = sessionLog ?? sessionLogSection(transcript);
     if (body) kit.push(`═══ 1.${kit.length + 1} Before this start\n${capSection(body, SESSION_LOG_CAP)}`);

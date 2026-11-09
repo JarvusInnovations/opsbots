@@ -124,6 +124,40 @@ describe("start", () => {
     } finally { bot.cleanup(); }
   });
 
+  test("loop.mode picks the model when loop.model is unset; loop.model still wins", () => {
+    const disp = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "/loop go", mode: "dispatcher" } } });
+    const strat = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "/loop go" } } });
+    const pinned = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "/loop go", mode: "dispatcher", model: "sonnet" } } });
+    try {
+      expect(cli(disp, ["start", "--dry-run"]).out).toContain('"--model",opus');
+      expect(cli(strat, ["start", "--dry-run"]).out).toContain('"--model",fable');
+      expect(cli(pinned, ["start", "--dry-run"]).out).toContain('"--model",sonnet');
+    } finally { disp.cleanup(); strat.cleanup(); pinned.cleanup(); }
+  });
+
+  test("the pack carries exactly the loop mode's section", () => {
+    const disp = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "p", mode: "dispatcher" } } });
+    const strat = makeBot();
+    try {
+      const d = cli(disp, ["cold-start"]).out;
+      expect(d).toContain("Your loop mode: dispatcher");
+      expect(d).toContain("Call a Fable-class subagent");
+      expect(d).not.toContain("Your loop mode: strategist");
+      const s = cli(strat, ["cold-start"]).out;
+      expect(s).toContain("Your loop mode: strategist");
+      expect(s).not.toContain("Your loop mode: dispatcher");
+    } finally { disp.cleanup(); strat.cleanup(); }
+  });
+
+  test("settings validate rejects an unknown loop.mode", () => {
+    const bot = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "p", mode: "boss" } } });
+    try {
+      const r = cli(bot, ["settings", "validate"]);
+      expect(r.code).not.toBe(0);
+      expect(r.out).toContain("loop.mode must be one of strategist, dispatcher");
+    } finally { bot.cleanup(); }
+  });
+
   test("settings validate rejects a bad permission_mode and an empty model", () => {
     const bot = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "p", permission_mode: "yolo", model: "" } } });
     try {
