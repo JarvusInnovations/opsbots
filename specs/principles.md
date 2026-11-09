@@ -105,8 +105,8 @@ replaces it without a rewrite.
 
 ## The loop's context is the scarcest thing it has
 
-The mother loop runs on the most capable model there is, and its context window is what
-keeps it coherent across a day. Every token spent reading in the loop is a token not
+The mother loop runs on the class its work needs (next principle), and its context window
+is what keeps it coherent across a day. Every token spent reading in the loop is a token not
 available for judgment, and a compaction lost. So the loop never reads a corpus, a
 transcript, a mailbox or a document set itself; it receives results. Work is pushed down
 to the cheapest class whose mistakes the loop would catch, and to no model at all when a
@@ -160,6 +160,47 @@ fully specified work in the background, never a read.
 > for a fraction of the cost, and the ops bot spent its first cycles reading inboxes whole.
 > The loop's value is judgment; everything else has a cheaper home. Decided by Chris,
 > 2026-11-07.
+
+## The loop's class follows its work: strategist or dispatcher
+
+A bot's loop runs in one of two modes, set as `loop.mode` in `opsbot.json`, and the mode is
+chosen from what the bot's own logs say its work is, not from how important the bot feels.
+
+- **Strategist** (Fable-class loop). The loop *is* the product: the operator talks with it
+  all day, it coordinates other agents, and its everyday decisions are connections across
+  streams (what a Slack thread means for a PR, which of five asks matters today). Its large,
+  warm context earns its cost because nearly every turn uses it. A project lead or an
+  office manager.
+- **Dispatcher** (Opus-class loop). The loop mostly watches. Most cycles find nothing; what
+  arrives usually matches a known procedure (a recipe, a runbook, a past decision), and the
+  work is to match, draft, record and route. It calls a Fable-class subagent for the cases
+  that need strategy (below). A support coordinator.
+
+Measure before choosing; every signal is in the bot's session log and cycle log:
+
+| Signal (per week) | Strategist when | Dispatcher when |
+| --- | --- | --- |
+| Messages the operator typed to it | dozens | a handful |
+| Messages to and from other agent sessions | routine | rare |
+| Share of new items needing new judgment (a new decision or limitation, not a recipe match) | most | few |
+| Cost and reversibility of a routine mistake | a wrong call commits the company | sends sit behind a draft and the gate word |
+| Cycles that find nothing new | any | most (the model class matters less than keeping quiet cycles to one small call) |
+
+A dispatcher calls Fable as a subagent, never by switching its own model (a switch discards
+the cache and the loop cannot run `/model` itself). It does so when: an item matches no
+recipe or protocol; the same failure happens a second time; an incident spans more than one
+of the bot's customers or systems; the operator asks for a plan, a recommendation or a
+strategy; or the bot would propose a change to its own rules. The brief names what to read
+instead of pasting it: the record entries, and the session and event ids the subagent opens
+itself with `agent-session-axi`. Fable returns a plan or a recommendation as data; the
+dispatcher records it, acts within its gate, and asks the operator for anything new.
+
+The mode is revisited, not fixed: a month of logs is the evidence for switching either way.
+
+> Why: one week of two bots' logs. A support coordinator woke 863 times, found something new
+> in 10 of 446 cycles and heard from its operator three times; a project lead got 89 operator
+> messages, 397 agent messages and 178 task notifications. Same kit, opposite work. Decided
+> by Chris, 2026-11-09.
 
 ## A character, lightly worn
 

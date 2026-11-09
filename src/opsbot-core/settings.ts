@@ -16,6 +16,12 @@ import { isValidTimeZone, showHead } from "./repo.js";
 
 export const SETTINGS_FILE = "opsbot.json";
 
+/** specs/principles.md#the-loops-class-follows-its-work-strategist-or-dispatcher */
+export const LOOP_MODES = ["strategist", "dispatcher"] as const;
+export type LoopMode = (typeof LOOP_MODES)[number];
+/** The model `start` passes when `loop.model` is not set. */
+export const MODE_MODEL: Record<LoopMode, string> = { strategist: "fable", dispatcher: "opus" };
+
 export interface Cadence {
   hot: number;
   warm: number;
@@ -41,7 +47,7 @@ export interface Settings {
   timezone: string;
   rule_card: string | null;
   gate_word: string | null;
-  loop: { prompt: string; autocompact: string | null; model: string | null; permission_mode: string };
+  loop: { prompt: string; autocompact: string | null; model: string | null; permission_mode: string; mode: LoopMode };
   cadence: Cadence;
   lock_max_minutes: number;
   liveness: Liveness;
@@ -163,7 +169,8 @@ export function validateSettings(raw: unknown): string[] {
 
   const loop = obj(raw, "loop", "", true);
   if (loop) {
-    allow(loop, "loop.", ["prompt", "autocompact", "model", "permission_mode"]);
+    allow(loop, "loop.", ["prompt", "autocompact", "model", "permission_mode", "mode"]);
+    if (loop.mode !== undefined && !LOOP_MODES.includes(loop.mode as LoopMode)) problems.push(`loop.mode must be one of ${LOOP_MODES.join(", ")}`);
     str(loop, "prompt", "loop.", true);
     if (loop.model !== undefined && (typeof loop.model !== "string" || loop.model === "")) problems.push("loop.model must be a non-empty string (a Claude Code model name or alias)");
     const PM = ["auto", "default", "acceptEdits", "plan"];
@@ -286,6 +293,7 @@ export function withDefaults(raw: Json): Settings {
       autocompact: loop.autocompact === undefined ? null : String(loop.autocompact),
       model: loop.model === undefined ? null : String(loop.model),
       permission_mode: loop.permission_mode === undefined ? "auto" : String(loop.permission_mode),
+      mode: LOOP_MODES.includes(loop.mode as LoopMode) ? (loop.mode as LoopMode) : "strategist",
     },
     cadence,
     lock_max_minutes: pick(raw.lock_max_minutes, 60),

@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "5d2564c" : "dev";
+    VERSION = true ? "4dd53da" : "dev";
   }
 });
 
@@ -2255,7 +2255,8 @@ function validateSettings(raw) {
   }
   const loop = obj(raw, "loop", "", true);
   if (loop) {
-    allow(loop, "loop.", ["prompt", "autocompact", "model", "permission_mode"]);
+    allow(loop, "loop.", ["prompt", "autocompact", "model", "permission_mode", "mode"]);
+    if (loop.mode !== void 0 && !LOOP_MODES.includes(loop.mode)) problems.push(`loop.mode must be one of ${LOOP_MODES.join(", ")}`);
     str2(loop, "prompt", "loop.", true);
     if (loop.model !== void 0 && (typeof loop.model !== "string" || loop.model === "")) problems.push("loop.model must be a non-empty string (a Claude Code model name or alias)");
     const PM = ["auto", "default", "acceptEdits", "plan"];
@@ -2370,7 +2371,8 @@ function withDefaults(raw) {
       prompt: loop.prompt,
       autocompact: loop.autocompact === void 0 ? null : String(loop.autocompact),
       model: loop.model === void 0 ? null : String(loop.model),
-      permission_mode: loop.permission_mode === void 0 ? "auto" : String(loop.permission_mode)
+      permission_mode: loop.permission_mode === void 0 ? "auto" : String(loop.permission_mode),
+      mode: LOOP_MODES.includes(loop.mode) ? loop.mode : "strategist"
     },
     cadence,
     lock_max_minutes: pick(raw.lock_max_minutes, 60),
@@ -2417,13 +2419,15 @@ function trySettings(root) {
   const p = join3(root, SETTINGS_FILE);
   return existsSync4(p) ? tryText(readFileSync2(p, "utf8")) : null;
 }
-var SETTINGS_FILE, DEFAULT_CADENCE, DEFAULT_LIVENESS, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR;
+var SETTINGS_FILE, LOOP_MODES, MODE_MODEL, DEFAULT_CADENCE, DEFAULT_LIVENESS, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR;
 var init_settings = __esm({
   "src/opsbot-core/settings.ts"() {
     "use strict";
     init_dist2();
     init_repo();
     SETTINGS_FILE = "opsbot.json";
+    LOOP_MODES = ["strategist", "dispatcher"];
+    MODE_MODEL = { strategist: "fable", dispatcher: "opus" };
     DEFAULT_CADENCE = {
       hot: 180,
       warm: 600,
@@ -8278,10 +8282,13 @@ function logSummary(root, now) {
   }
   return out;
 }
-function kitSections() {
+function kitSections(mode) {
   const dir = process.env.OPSBOT_PACK_DIR || join16(skillDir(), "references", "pack");
   if (!existsSync10(dir)) return [];
-  return readdirSync2(dir).filter((f) => f.endsWith(".md")).sort().map((f) => {
+  return readdirSync2(dir).filter((f) => f.endsWith(".md")).filter((f) => {
+    const m = f.match(/^\d+[-_]mode-([a-z]+)\.md$/);
+    return !m || m[1] === (mode ?? "strategist");
+  }).sort().map((f) => {
     let text = readFileSync6(join16(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
     const m = text.match(/^#\s+(.+)$/m);
     const title = m ? m[1].trim() : f.replace(/^\d+[-_]/, "").replace(/\.md$/, "");
@@ -8301,7 +8308,7 @@ function buildPack(root, s, settingsText, transcript, sessionLog) {
 (the rule card is not committed at HEAD: say so to the operator)` : `\u2550\u2550\u2550 1. The rule card (${s.rule_card})
 ${text.replace(/\n+$/, "")}`;
   }
-  const kit = kitSections().map((k, i) => `\u2550\u2550\u2550 1.${i + 1} ${k.title} (the kit's; updates with the skill)
+  const kit = kitSections(s.loop.mode).map((k, i) => `\u2550\u2550\u2550 1.${i + 1} ${k.title} (the kit's; updates with the skill)
 ${k.body}`);
   if (transcript) {
     const body = sessionLog ?? sessionLogSection(transcript);
@@ -9338,7 +9345,8 @@ var init_hook = __esm({
 import { spawnSync as spawnSync2 } from "node:child_process";
 function startArgv(s, opts) {
   const argv = ["claude", "--permission-mode", s.loop.permission_mode];
-  if (s.loop.model) argv.push("--model", s.loop.model);
+  const model = s.loop.model ?? (s.loop.mode ? MODE_MODEL[s.loop.mode] : null);
+  if (model) argv.push("--model", model);
   if (s.loop.autocompact) argv.push("--autocompact", s.loop.autocompact);
   argv.push("--settings", JSON.stringify({ autoCompactEnabled: true }));
   if (opts.cont) argv.push("--continue");
@@ -9372,6 +9380,7 @@ var USAGE;
 var init_start = __esm({
   "src/opsbot-core/commands/start.ts"() {
     "use strict";
+    init_settings();
     init_dist3();
     init_args();
     init_repo();
