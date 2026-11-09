@@ -116,8 +116,10 @@ describe("start", () => {
       expect(r.out).toContain("would run");
       expect(r.out).toContain('"--permission-mode",auto');
       expect(r.out).toContain('"--model",fable');
-      expect(r.out).toContain('"--autocompact",300k');
+      expect(r.out).not.toContain('"--autocompact"');
       expect(r.out).toContain('autoCompactEnabled');
+      expect(r.out).toContain('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+      expect(r.out).toContain('300000');
       expect(r.out).toContain('"--effort",high,/loop go');
       const c = cli(bot, ["start", "--continue", "--dry-run"]);
       expect(c.out).toContain('"--continue"');

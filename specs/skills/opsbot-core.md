@@ -38,7 +38,7 @@ The bot's own files the skill reads and writes:
 | `rule_card` | repo path of the rule card the cold-start pack opens with, read at `HEAD`; optional |
 | `gate_word` | optional; capital letters only; the check flags its presence as a whole word, never judges it |
 | `loop.prompt` | the exact loop prompt, including any cold-cache suffix the operator uses |
-| `loop.autocompact` | the window; `start` passes it as `--autocompact` |
+| `loop.autocompact` | the window (`750k`, `300000`); `start` sets it as `CLAUDE_CODE_AUTO_COMPACT_WINDOW` in the session's environment and its `--settings` `env`, the one control Claude Code honors (the `--autocompact` flag and `autoCompactWindow` were ignored on two bots; the env var works on a third) |
 | `loop.mode` | `strategist` (default) or `dispatcher` ([principles](../principles.md#the-loops-class-follows-its-work-strategist-or-dispatcher)): picks the model `start` passes when `loop.model` is unset (`fable` or `opus`) and which `references/pack/NN-mode-<mode>.md` section rides the pack |
 | `loop.model`, `loop.permission_mode` | what `start` passes as `--model` and `--permission-mode` (default `auto`); the only place the launch flags are set |
 | `cadence` | `{hot, warm, quiet_working, quiet, night, cap}` in seconds, plus `working_hours` (`days` as ISO weekday numbers 1–7, `start`, `end` as `HH:MM`) and `night_hours` (`start`, `end`, a span that may cross midnight) in the bot's timezone; every key optional, defaulting to the architecture's table (working hours Monday–Friday 09:00–17:00, night 22:00–07:00) |
