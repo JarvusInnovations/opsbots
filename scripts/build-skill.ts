@@ -7,13 +7,17 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { spliceGeneratedRegions as spliceOpsbotCore } from "../src/opsbot-core/skill.js";
+import { spliceOpsbotHost } from "../src/opsbot-host/skill.js";
 
 interface SkillTarget {
   path: string;
   splice: (doc: string) => string;
 }
 
-const TARGETS: SkillTarget[] = [{ path: "skills/opsbot-core/SKILL.md", splice: (d) => spliceOpsbotCore(d) }];
+const TARGETS: SkillTarget[] = [
+  { path: "skills/opsbot-core/SKILL.md", splice: (d) => spliceOpsbotCore(d) },
+  { path: "skills/opsbot-host/SKILL.md", splice: (d) => spliceOpsbotHost(d) },
+];
 
 const check = process.argv.includes("--check");
 let stale = false;

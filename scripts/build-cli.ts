@@ -27,6 +27,11 @@ const TARGETS: Target[] = [
     outfile: "skills/opsbot-core/scripts/opsbot-core.mjs",
     define: "__OPSBOT_CORE_VERSION__",
   },
+  {
+    entry: "src/opsbot-host/bin.ts",
+    outfile: "skills/opsbot-host/scripts/opsbot-host.mjs",
+    define: "__OPSBOT_HOST_VERSION__",
+  },
 ];
 
 const check = process.argv.includes("--check");
