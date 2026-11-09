@@ -4,11 +4,13 @@
   "workspaces": {
     "": {
       "name": "opsbots",
+      "dependencies": {
+        "agent-recall-axi": "^0.2.0",
+      },
       "devDependencies": {
         "@toon-format/toon": "4.4.0",
         "@types/bun": "1.4.3",
         "@types/node": "26.6.5",
-        "agent-session-axi": "0.1.0",
         "axi-sdk-js": "0.1.13",
         "esbuild": "0.28.2",
         "typescript": "7.0.2",
@@ -114,7 +116,7 @@
 
     "@typescript/typescript-win32-x64": ["@typescript/typescript-win32-x64@7.0.2", "", { "os": "win32", "cpu": "x64" }, "sha512-0BQ3HkAHHlKLSp1qRvf3SUhGpGsDuhB/jgFw75guyqbxJqEaS0Cw/VFO8i2nHglJUzQCRtMMR/IBAKE3ETMC4g=="],
 
-    "agent-session-axi": ["agent-session-axi@0.1.0", "", { "dependencies": { "@toon-format/toon": "^4.4.0", "axi-sdk-js": "^0.1.14" }, "bin": { "agent-session-axi": "dist/bin/agent-session-axi.js" } }, "sha512-bCScgqC9I4jkiSioXDT0NxJIs0FkmoyJxd4f7KJ+q51DSn3bulrxBTZdmNAyrZmWGP94esv4rWokivc6CVq0JA=="],
+    "agent-recall-axi": ["agent-recall-axi@0.2.0", "", { "dependencies": { "@toon-format/toon": "^4.4.0", "axi-sdk-js": "^0.1.14" }, "bin": { "agent-recall-axi": "dist/bin/agent-recall-axi.js" } }, "sha512-wDPc0M/Y0vkl23SreLDOKBRhxQKnTNQM+hx3XQj0Yd+fKu1/UsA7noZPDAn+iRiAOybtSxiX2HxqFpVhOGiIAA=="],
 
     "axi-sdk-js": ["axi-sdk-js@0.1.13", "", { "dependencies": { "@toon-format/toon": "^2.1.0" } }, "sha512-Ygh8qUN5kdwQ3ASw+BNzCKYpy5QYi18vfcEpqEOQOSrcyh6i4wChrPMtvVW0/3Sqho3xPH3CuFkP0QUma5oxxA=="],
 
@@ -126,10 +128,10 @@
 
     "undici-types": ["undici-types@8.9.0", "", {}, "sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg=="],
 
-    "agent-session-axi/axi-sdk-js": ["axi-sdk-js@0.1.14", "", { "dependencies": { "@toon-format/toon": "^2.1.0" } }, "sha512-m4zQbGj7+xwOeLDMPhFE/+DGAvtX6tATNcQiBOHXTEoZoolF0jZKpO2gkGdydQ3p8y2gytfr8X3aGvSY9u/flQ=="],
+    "agent-recall-axi/axi-sdk-js": ["axi-sdk-js@0.1.14", "", { "dependencies": { "@toon-format/toon": "^2.1.0" } }, "sha512-m4zQbGj7+xwOeLDMPhFE/+DGAvtX6tATNcQiBOHXTEoZoolF0jZKpO2gkGdydQ3p8y2gytfr8X3aGvSY9u/flQ=="],
 
     "axi-sdk-js/@toon-format/toon": ["@toon-format/toon@2.3.1", "", {}, "sha512-sWqEMeAJGMda9qRrfPKrX3C4c33CO9SJuvJzzrcBEn5sbDB+k6pSLkDsfN0rVnLQwR97MV3sDgVbcxQNsq8xVw=="],
 
-    "agent-session-axi/axi-sdk-js/@toon-format/toon": ["@toon-format/toon@2.3.1", "", {}, "sha512-sWqEMeAJGMda9qRrfPKrX3C4c33CO9SJuvJzzrcBEn5sbDB+k6pSLkDsfN0rVnLQwR97MV3sDgVbcxQNsq8xVw=="],
+    "agent-recall-axi/axi-sdk-js/@toon-format/toon": ["@toon-format/toon@2.3.1", "", {}, "sha512-sWqEMeAJGMda9qRrfPKrX3C4c33CO9SJuvJzzrcBEn5sbDB+k6pSLkDsfN0rVnLQwR97MV3sDgVbcxQNsq8xVw=="],
   }
 }

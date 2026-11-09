@@ -14,9 +14,11 @@
     "@toon-format/toon": "4.4.0",
     "@types/bun": "1.4.3",
     "@types/node": "26.6.5",
-    "agent-session-axi": "0.1.0",
     "axi-sdk-js": "0.1.13",
     "esbuild": "0.28.2",
     "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "agent-recall-axi": "^0.2.0"
   }
 }
