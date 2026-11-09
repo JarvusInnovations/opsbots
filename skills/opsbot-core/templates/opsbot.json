@@ -8,6 +8,8 @@
   "loop": {
     "//": "prompt is sent verbatim by the nudge; include any cold-cache suffix your setup uses. autocompact is the one place the compaction window is set.",
     "prompt": "/loop examplebot cycle. Follow the opsbot-core skill: start with `cycle begin`.",
+    "model": "fable",
+    "permission_mode": "auto",
     "autocompact": "300k"
   },
   "cadence": {

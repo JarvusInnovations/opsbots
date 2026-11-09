@@ -41,13 +41,16 @@ export interface Settings {
   timezone: string;
   rule_card: string | null;
   gate_word: string | null;
-  loop: { prompt: string; autocompact: string | null };
+  loop: { prompt: string; autocompact: string | null; model: string | null; permission_mode: string };
   cadence: Cadence;
   lock_max_minutes: number;
   liveness: Liveness;
   runtime: { adapter: "herdr"; agent: string };
   streams: Record<string, Record<string, unknown>>;
   repo_sync: "pull-on-clean" | "never-pull";
+  /** Files a stream's monitor appends one line per event to; the session arms a bounded
+   * Monitor on each between cycles (the live wake), and the listener's nudge is the backstop. */
+  wake: { files: string[] };
 }
 
 /** The kit's defaults (specs/architecture.md, Next wake; specs/skills/opsbot-core.md). */
@@ -142,6 +145,7 @@ export function validateSettings(raw: unknown): string[] {
     "runtime",
     "streams",
     "repo_sync",
+    "wake",
   ]);
   str(raw, "name", "", true, NAME_RE, "must be lowercase letters, digits and dashes, starting with a letter");
   str(raw, "mark", "", true);
@@ -158,8 +162,11 @@ export function validateSettings(raw: unknown): string[] {
 
   const loop = obj(raw, "loop", "", true);
   if (loop) {
-    allow(loop, "loop.", ["prompt", "autocompact"]);
+    allow(loop, "loop.", ["prompt", "autocompact", "model", "permission_mode"]);
     str(loop, "prompt", "loop.", true);
+    if (loop.model !== undefined && (typeof loop.model !== "string" || loop.model === "")) problems.push("loop.model must be a non-empty string (a Claude Code model name or alias)");
+    const PM = ["auto", "default", "acceptEdits", "plan"];
+    if (loop.permission_mode !== undefined && !PM.includes(loop.permission_mode as string)) problems.push(`loop.permission_mode must be one of ${PM.join(", ")}`);
     const ac = loop.autocompact;
     if (ac !== undefined && !(typeof ac === "string" && ac !== "") && !(typeof ac === "number" && ac > 0)) {
       problems.push("loop.autocompact must be a window such as \"300k\" or a number");
@@ -220,6 +227,16 @@ export function validateSettings(raw: unknown): string[] {
       if (!isObj(streams[k])) problems.push(`streams.${k} must be an object`);
     }
   }
+  const wake = obj(raw, "wake", "", false);
+  if (wake) {
+    allow(wake, "wake.", ["files"]);
+    const files = wake.files;
+    if (files !== undefined) {
+      if (!Array.isArray(files) || files.some((f) => typeof f !== "string" || !f.trim())) {
+        problems.push("wake.files must be an array of file paths (strings)");
+      }
+    }
+  }
   return problems;
 }
 
@@ -264,6 +281,8 @@ export function withDefaults(raw: Json): Settings {
     loop: {
       prompt: loop.prompt as string,
       autocompact: loop.autocompact === undefined ? null : String(loop.autocompact),
+      model: loop.model === undefined ? null : String(loop.model),
+      permission_mode: loop.permission_mode === undefined ? "auto" : String(loop.permission_mode),
     },
     cadence,
     lock_max_minutes: pick(raw.lock_max_minutes, 60),
@@ -271,6 +290,7 @@ export function withDefaults(raw: Json): Settings {
     runtime: { adapter: "herdr", agent: rt.agent as string },
     streams,
     repo_sync: pick(raw.repo_sync, "pull-on-clean"),
+    wake: { files: Array.isArray((raw.wake as Json | undefined)?.files) ? ((raw.wake as Json).files as string[]) : [] },
   };
 }
 

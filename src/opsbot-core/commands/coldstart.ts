@@ -6,6 +6,9 @@
  *   1.1, 1.2, … the kit's own sections: every references/pack/*.md shipped with
  *      the skill, in order, whole (house style, delegation); they update with
  *      the skill, so no bot copies them into its CLAUDE.md
+ *   1.N (last kit section) what the session log says: the operator's messages since the
+ *      last compaction verbatim, the last tool calls as data, the bot's last statements as
+ *      claims; read from the SessionStart hook's transcript_path (stdin JSON) or --transcript
  *   2. one section per opsbot.d/wake.d/ script, in order, each capped to its
  *      share of the byte budget ("… N more lines")
  *   3. the cycle log's last 48 hours: counts, longest gap, last degraded, outages
@@ -24,6 +27,9 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs, setExit, usageError } from "../args.js";
 import { skillDir } from "../invocation.js";
+import { readEvents, sessionLogSection } from "../transcript.js";
+import { WAKE_RULES, wakeFiles, wakeLines } from "../wake.js";
+import { gitPath } from "../repo.js";
 import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
 import { findRoot, firstLine, iso, nowIso, nowMs, parseIso, showHead } from "../repo.js";
 import { SETTINGS_FILE, parseSettingsText, trySettings, withDefaults, type Settings } from "../settings.js";
@@ -32,6 +38,8 @@ import { CHECK_OUTCOMES, CYCLE_OUTCOMES, outages, readCycleLog } from "../state.
 /** The pack's byte budget. The rule card and the kit's own sections are whole and count
  * against it; wake.d sections share what is left. */
 export const PACK_BUDGET = 16000;
+/** The session-log section's own cap; the operator's words come first and whole up to it. */
+export const SESSION_LOG_CAP = 4000;
 const MIN_SECTION = 300;
 const DAY2 = 48 * 3600_000;
 const MAX_OUTAGES = 5;
@@ -39,6 +47,20 @@ const MAX_OUTAGES = 5;
 export function cacheDir(name: string): string {
   const base = process.env.XDG_CACHE_HOME || join(homedir(), ".cache");
   return join(base, name);
+}
+
+/** Where this session's log lives, as the SessionStart hook told cold-start; read by cycle and nudge. */
+export interface SessionPointer { transcript_path: string; session_id: string | null; at: string }
+
+export function writeSessionPointer(root: string, p: SessionPointer): void {
+  try { writeFileSync(gitPath(root, "opsbot-session"), `${JSON.stringify(p)}\n`); } catch { /* the pointer is a convenience */ }
+}
+
+export function sessionPointer(root: string): SessionPointer | null {
+  try {
+    const v = JSON.parse(readFileSync(gitPath(root, "opsbot-session"), "utf8"));
+    return v && typeof v.transcript_path === "string" ? (v as SessionPointer) : null;
+  } catch { return null; }
 }
 
 export function packPaths(name: string): { pack: string; pending: string } {
@@ -140,7 +162,7 @@ export function kitSections(): { title: string; body: string }[] {
     });
 }
 
-export function buildPack(root: string, s: Settings, settingsText: string | null): string {
+export function buildPack(root: string, s: Settings, settingsText: string | null, transcript?: string): string {
   const now = nowMs();
   const head = `═══ Cold start, ${nowIso()}. Read all of this before acting. Until you have, what you remember is untrusted.\n`;
 
@@ -155,11 +177,20 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
   }
 
   const kit = kitSections().map((k, i) => `═══ 1.${i + 1} ${k.title} (the kit's; updates with the skill)\n${k.body}`);
+  if (transcript) {
+    const body = sessionLogSection(transcript);
+    if (body) kit.push(`═══ 1.${kit.length + 1} Before this start\n${capSection(body, SESSION_LOG_CAP)}`);
+  }
+  if (wakeFiles(s).length) {
+    const evs = transcript ? readEvents(transcript) : null;
+    const lines = [...wakeLines(s, evs && evs.length ? evs : null, now, null), ...WAKE_RULES];
+    kit.push(`═══ 1.${kit.length + 1} The live wake (arm it before anything else)\n${lines.join("\n")}`);
+  }
 
   const scripts = discover(root, "wake").scripts;
   const summaryNo = 2 + scripts.length;
   const summary = `═══ ${summaryNo}. The cycle log, last 48 hours\n${logSummary(root, now).join("\n")}`;
-  const foot = "═══ Memory before this point is untrusted: open the source before saying anything about what a record holds, what was decided, or what was sent.";
+  const foot = "═══ What you remember is untrusted; the record and your session log are sources, and the operator's own words in them outrank everything else. Open the source before saying what a record holds, what was decided, or what was sent.";
 
   const fixed = bytes(head) + bytes(card) + kit.reduce((n, k) => n + bytes(k) + 2, 0) + bytes(summary) + bytes(foot) + 8 + scripts.length * 2;
   const room = Math.max(0, PACK_BUDGET - fixed);
@@ -185,11 +216,25 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
   return [head, card, ...kit, ...sections, summary, foot].join("\n\n").replace(/\n{3,}/g, "\n\n") + "\n";
 }
 
-export function coldStartCommand(args: string[]): string {
-  const { flags } = parseArgs(args, { bool: ["write"] }, "cold-start [--write]");
+export async function coldStartCommand(args: string[]): Promise<string> {
+  const { flags } = parseArgs(args, { bool: ["write"], value: ["transcript"] }, "cold-start [--write] [--transcript <jsonl>]");
+  let transcript = typeof flags.transcript === "string" ? flags.transcript : undefined;
+  let sessionId: string | null = null;
+  if (!transcript) {
+    // The SessionStart hook hands us JSON on stdin with transcript_path (and session_id, source).
+    try {
+      const raw = (await readStdin()).trim();
+      if (raw) {
+        const v = JSON.parse(raw);
+        if (v && typeof v.transcript_path === "string") transcript = v.transcript_path;
+        if (v && typeof v.session_id === "string") sessionId = v.session_id;
+      }
+    } catch { /* no payload or not JSON: no session-log section */ }
+  }
   setExit(0);
   const root = findRoot();
   if (!root) return "cold-start: not inside a git checkout, so there is no pack to read.";
+  if (transcript) writeSessionPointer(root, { transcript_path: transcript, session_id: sessionId, at: nowIso() });
   const text = showHead(root, SETTINGS_FILE);
   let s: Settings | null = null;
   if (text !== null) {
@@ -200,7 +245,7 @@ export function coldStartCommand(args: string[]): string {
   if (!s) {
     return `cold-start: ${SETTINGS_FILE} is missing or invalid at HEAD, so the pack cannot be built. Say so to the operator, and run \`settings validate\`.`;
   }
-  const pack = buildPack(root, s, text);
+  const pack = buildPack(root, s, text, transcript);
   if (!flags.write) return pack.replace(/\n$/, "");
   const { pack: packFile, pending } = packPaths(s.name);
   mkdirSync(cacheDir(s.name), { recursive: true });

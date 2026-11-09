@@ -1,4 +1,4 @@
-<!-- Installed copy of specs/writing.md in the opsbots kit; that file is canonical. Every bot reads this one from .agents/skills/opsbot-core/references/writing.md. -->
+<!-- Installed copy of specs/writing.md in the opsbots kit; that file is canonical. Every bot reads this one from .agents/skills/opsbot-core/references/pack/10-writing.md. -->
 
 # Writing
 
@@ -38,21 +38,70 @@ elegant ones. Warm is fine; performing warmth is not.
   approval, a job that runs on a schedule, a rate limit, a consent screen only a human can
   click.
 
-## Slack (mrkdwn)
+## Breaks
 
-The text is sent as written and Slack renders mrkdwn, not Markdown.
+A message is parts, and the parts are separated by blank lines. Never one paragraph that
+runs the outcome, the details and the ask together.
 
-- `*bold*` the one thing the reader must see: the number, the decision, the date. Not
-  sentences. `_italic_` almost never.
+1. **The outcome**, first, alone: one or two lines. What happened, or what did not.
+2. **The details**, if any: a list when there are three or more things, prose when one or
+   two. Any enumeration inside a sentence ("23 labels (Attention, Urgency, Vendors, …)")
+   comes out of the sentence and onto its own lines.
+3. **What's next or what's needed**, last, alone, opening with its signal: `Next:`,
+   `Need input.`, or `Nothing needed from you.` An ask never sits inside a paragraph; a
+   reader scanning for "what do they want from me" finds it at the bottom, every time.
+
+A paragraph is three lines at most on a laptop, about 250 characters; past that, break it
+or list it. No semicolons joining clauses: a new line instead. Two messages when there are
+two topics.
+
+Before (one real message, 560 characters, one paragraph):
+
+    Applied, on your word in the terminal. Read back: gmailctl diff is empty; labels
+    went from 80 to 103 and all 23 new ones are there (Attention, Urgency, Vendors,
+    Clients, Procurement and their members); filters went from 52 to 64, the twelve new
+    vendor and procurement rules plus the two widened ones. Steps 3 and 4 done; from
+    now on Fivetran, Twilio, Visualping, … archive on arrival under Vendors/, … Next:
+    step 5 scripts and skill as a PR, with the backfill dry-run counts, and your two
+    answers from PR 33 (OntrayApp; the newsletter keep-or-drop list) whenever you have
+    them.
+
+After:
+
+    Applied, on your word. *Steps 3 and 4 done*, diff is empty.
+
+    • Labels 80 → 103: Attention, Urgency, Vendors, Clients, Procurement and their members.
+    • Filters 52 → 64: twelve new vendor and procurement rules, two widened.
+    • From now on vendor mail archives on arrival under `Vendors/`; procurement notices
+      get `Procurement/` and stay in the inbox for scoring.
+
+    Next: step 5 (scripts and skill) as a PR with the backfill dry-run counts.
+    Need input. Two answers from PR 33 whenever you have them: OntrayApp, and the
+    newsletter keep-or-drop list.
+
+## Slack
+
+Write Markdown. `slack-axi` (1.3.0 and later) renders it on send: in bot mode (a bot
+token) to Block Kit through the same renderer Hari's Slack app uses, in human mode (a
+person's token) to mrkdwn text, which is the only form that survives a person editing
+their own message. You never write Slack's own dialect by hand.
+
+- `**bold**` for the one thing the reader must see: the number, the decision, the date.
+  Not sentences. A lone `*word*` is *italic* now; do not use it for emphasis.
 - Backticks for anything a person would copy: an id, an address, a command, a label.
-- One item per line, starting `•` for a list or `1.` for ordered steps. Never steps run
-  together in a sentence. A blank line before and after.
-- Links as `<url|what it is>`; never a bare URL longer than the words around it.
+- `- ` or `1. ` list items, one per line, a blank line before and after; the renderer
+  makes them native lists. Never steps run together in a sentence.
+- `[what it is](url)` for links; never a bare URL longer than the words around it.
 - `>` to quote the one line being answered when a thread has moved on.
-- No `#` headers, no `**double asterisks**`, no tables: none render.
+- `#` headings render in bot mode; in human mode they become a bold line. Use one at most,
+  and only on a post long enough to need it.
 - Eight lines is the ceiling. Longer goes in a thread under a two-line top post, or
   becomes a record with the link in the message.
 - One message, one topic. Reply in the thread you were asked in.
+- Hand-written Slack syntax still passes through unchanged (`<@U…>`, `<!here>`, `<url|label>`,
+  `•` lines), so an old habit will not break a message; it is just no longer the style.
+- `slack-axi draft --preview` shows what will render before anything is created; `edit`
+  and `delete` act on the bot's own messages through the same draft step.
 
 ## Email drafts
 

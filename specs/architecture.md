@@ -204,15 +204,20 @@ accounts, clips, tasks) are its own.
 
 - **Listener.** An always-on process per channel that needs one: watches for a mention,
   a reply to the bot, or a gate word; reacts with the bot's mark within seconds (the
-  acknowledgement no model is needed for); appends to a mentions log; wakes the loop
-  through the nudge, never through a session-bound monitor.
+  acknowledgement no model is needed for); appends one line per event to a wake file; the
+  session's own bounded monitor on that file is the live wake, and the listener's `nudge
+  --now` is the backstop that survives the session. The monitor exits on the first arrival
+  or at a deadline no later than the loop's next wake, so it cannot re-arm itself into a
+  loop (the failure the first bots paid for); the nudge covers a session that never armed.
 - **Watchdog** (system timer, every 10 minutes): if no cycle has logged within the limit,
   escalates once per outage with what it can see (rebase, lock held, agent missing),
   records the outage, and records its end when cycles resume.
 - **Nudge** (system timer, offset from the watchdog): if the loop is quiet past the
   threshold, no lock is held, it has not nudged recently, and the runtime reports the
   agent idle, it re-issues the loop prompt. The nudge is the only thing that restarts the
-  loop.
+  loop. It trusts the runtime's `working` only when the bot's own session log agrees that a
+  turn is open; a title spinner over finished turn with background work is not a reason
+  to hold a wake.
 - **Runtime adapter.** The session must be addressable (a named agent in a multiplexer)
   for the nudge to work. The adapter is one setting; the first one is herdr.
 
@@ -241,7 +246,7 @@ loop prompt. Nothing about the account the bot speaks from is scattered through 
 | Promises | a prose "owes" block | requests of kind promise, `--due-now` | requests | the cycle shows what is due |
 | Proposals | none | sheet + two-occurrence trigger | sheet | the self-change gate |
 | Liveness | in-session cron or monitor | system watchdog + nudge | system timers | ~100 hours lost to loops that re-armed themselves |
-| Fast wake | listener with reaction ack + session monitor | none (site probe only) | listener → nudge | instant ack without the model; wake survives the session |
+| Fast wake | listener with reaction ack + session monitor | none (site probe only) | listener → bounded session monitor, nudge as backstop | instant ack without the model; the monitor wakes through background work, the nudge survives the session |
 | Launch | bare session | named agent in a multiplexer | named agent | the nudge needs an address |
 | Repo sync | pull on clean, warn on stop | never pull | a setting | depends on how many humans commit |
 | Postures | five, incl. `answer` and `notify` | `post | read-only | ignore` | five | the richer set covers both |

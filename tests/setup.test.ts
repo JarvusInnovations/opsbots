@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { cli, makeBot, makeExecutable, setSettings, type Bot } from "./helpers";
+import { BASE_SETTINGS, cli, makeBot, makeExecutable, setSettings, type Bot } from "./helpers";
 
 let bot: Bot;
 afterEach(() => bot?.cleanup());
@@ -104,5 +104,33 @@ describe("hook (project scope)", () => {
     const { hookBase } = await import("../src/opsbot-core/commands/hook");
     const { REPO } = await import("./helpers");
     expect(hookBase("project", REPO)).toBe('"${CLAUDE_PROJECT_DIR}/skills/opsbot-core/scripts/opsbot-core"');
+  });
+});
+
+describe("start", () => {
+  test("--dry-run builds the claude argv from opsbot.json, autocompact forced on, prompt last", () => {
+    const bot = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "/loop go", autocompact: "300k", model: "fable" } } });
+    try {
+      const r = cli(bot, ["start", "--dry-run", "--", "--effort", "high"]);
+      expect(r.code).toBe(0);
+      expect(r.out).toContain("would run");
+      expect(r.out).toContain('"--permission-mode",auto');
+      expect(r.out).toContain('"--model",fable');
+      expect(r.out).toContain('"--autocompact",300k');
+      expect(r.out).toContain('autoCompactEnabled');
+      expect(r.out).toContain('"--effort",high,/loop go');
+      const c = cli(bot, ["start", "--continue", "--dry-run"]);
+      expect(c.out).toContain('"--continue"');
+    } finally { bot.cleanup(); }
+  });
+
+  test("settings validate rejects a bad permission_mode and an empty model", () => {
+    const bot = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "p", permission_mode: "yolo", model: "" } } });
+    try {
+      const r = cli(bot, ["settings", "validate"]);
+      expect(r.code).not.toBe(0);
+      expect(r.out).toContain("permission_mode");
+      expect(r.out).toContain("loop.model");
+    } finally { bot.cleanup(); }
   });
 });
