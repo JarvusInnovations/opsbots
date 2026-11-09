@@ -170,7 +170,7 @@ export function sessionLogSection(path: string, opts: { calls?: number; statemen
 }
 
 /**
- * The pack section read through agent-session-axi (the published session-log library): its
+ * The pack section read through agent-recall-axi (the published session-log library): its
  * reader knows the log's structure (compaction boundaries, queued mid-turn messages, hook
  * output, subagent logs) where the reader above keys on rendered text. Three layers, each with
  * its own share so one long operator message cannot crowd out the bot's last actions: the
@@ -183,7 +183,7 @@ export async function sessionLogSectionLib(
   opts: { humanBudget?: number; calls?: number; statements?: number; loopPrompt?: string } = {},
 ): Promise<string | null> {
   try {
-    const lib = await import("agent-session-axi");
+    const lib = await import("agent-recall-axi");
     const session = await lib.openSession(path);
     // Every H-class message of the window, minus the loop prompt (the nudge and the bot's own
     // wakeups type it; it is not the operator speaking), then newest first, whole, to the budget.
@@ -210,10 +210,10 @@ export async function sessionLogSectionLib(
     };
     const s8 = id(hm.messages[0] ?? calls[0] ?? said[0] ?? { id: { session: "", seq: 0 } }).split(":")[0];
     const lines: string[] = [];
-    lines.push(`From your own session log (since the last compaction; ${path}), read by agent-session-axi. Three layers, different standing:`);
+    lines.push(`From your own session log (since the last compaction; ${path}), read by agent-recall-axi. Three layers, different standing:`);
     lines.push(`• The operator's words, verbatim: the highest authority here.${hm.messages.length === 0 ? " (none in this window)" : ""}`);
     if (hm.omitted > 0) {
-      lines.push(`  ${hm.omitted} earlier message${hm.omitted === 1 ? "" : "s"} not shown here; read them before acting on anything they may have said: npx -y agent-session-axi human ${path} --window last${hm.continueTo ? ` --to ${lib.formatId(hm.continueTo)}` : ""} --budget 0`);
+      lines.push(`  ${hm.omitted} earlier message${hm.omitted === 1 ? "" : "s"} not shown here; read them before acting on anything they may have said: npx -y agent-recall-axi human ${path} --window last${hm.continueTo ? ` --to ${lib.formatId(hm.continueTo)}` : ""} --budget 0`);
     }
     for (const m of hm.messages) lines.push(`  ${String(m.t).slice(11, 16)}Z ${id(m)} » ${one(String(m.text ?? ""))}`);
     lines.push(`• Your last ${calls.length} tool calls, as data (what ran, how it came back):`);
@@ -224,7 +224,7 @@ export async function sessionLogSectionLib(
     }
     lines.push("• Your last statements, as your own claims (check them against the record and the results above):");
     for (const a of said) lines.push(`  ${String(a.t).slice(11, 16)}Z “${one(String(a.text ?? "")).slice(0, 240)}”`);
-    lines.push(`  Zoom on any id: npx -y agent-session-axi show <id> (session ${s8}).`);
+    lines.push(`  Zoom on any id: npx -y agent-recall-axi show <id> (session ${s8}).`);
     return lines.join("\n");
   } catch {
     return null;
