@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "4dd53da" : "dev";
+    VERSION = true ? "258b170" : "dev";
   }
 });
 
@@ -9343,12 +9343,19 @@ var init_hook = __esm({
 
 // src/opsbot-core/commands/start.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
+function autocompactTokens(v) {
+  if (!v) return null;
+  const m = String(v).trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*([km]?)$/);
+  if (!m) return null;
+  const n = Number(m[1]) * (m[2] === "m" ? 1e6 : m[2] === "k" ? 1e3 : 1);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+}
 function startArgv(s, opts) {
   const argv = ["claude", "--permission-mode", s.loop.permission_mode];
   const model = s.loop.model ?? (s.loop.mode ? MODE_MODEL[s.loop.mode] : null);
   if (model) argv.push("--model", model);
-  if (s.loop.autocompact) argv.push("--autocompact", s.loop.autocompact);
-  argv.push("--settings", JSON.stringify({ autoCompactEnabled: true }));
+  const window = autocompactTokens(s.loop.autocompact);
+  argv.push("--settings", JSON.stringify(window ? { autoCompactEnabled: true, env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) } } : { autoCompactEnabled: true }));
   if (opts.cont) argv.push("--continue");
   argv.push(...opts.extra);
   argv.push(s.loop.prompt);
@@ -9372,7 +9379,9 @@ function startCommand(args) {
   }
   const argv = startArgv(s, { cont: flags["continue"] === true, extra });
   if (flags["dry-run"]) return { start: "would run", cwd: root, argv };
-  const r = spawnSync2(argv[0], argv.slice(1), { cwd: root, stdio: "inherit" });
+  const window = autocompactTokens(s.loop.autocompact);
+  const env = window ? { ...process.env, CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) } : process.env;
+  const r = spawnSync2(argv[0], argv.slice(1), { cwd: root, stdio: "inherit", env });
   setExit(r.status ?? 1);
   return r.error ? encode2({ error: `could not start claude: ${r.error.message}`, help: ["Is `claude` on PATH for this user?"] }) : "";
 }
