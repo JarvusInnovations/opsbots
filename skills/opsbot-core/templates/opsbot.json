@@ -10,7 +10,7 @@
     "prompt": "/loop examplebot cycle. Follow the opsbot-core skill: start with `cycle begin`.",
     "model": "fable",
     "permission_mode": "auto",
-    "autocompact": "300k"
+    "autocompact": "750k"
   },
   "cadence": {
     "//": "Seconds. None may exceed cap; cap stays under the one-hour cache. Hours are in timezone; days are ISO weekdays (1 = Monday).",

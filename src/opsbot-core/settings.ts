@@ -18,6 +18,9 @@ export const SETTINGS_FILE = "opsbot.json";
 
 /** specs/principles.md#the-loops-class-follows-its-work-strategist-or-dispatcher */
 export const LOOP_MODES = ["strategist", "dispatcher"] as const;
+/** Compact with room to spare under a 1M window, and never at a fraction of it: a smaller window
+ * buys nothing a warm cache does not already give, and costs more compactions. Chris, 2026-11-09. */
+export const DEFAULT_AUTOCOMPACT = "750k";
 export type LoopMode = (typeof LOOP_MODES)[number];
 /** The model `start` passes when `loop.model` is not set. */
 export const MODE_MODEL: Record<LoopMode, string> = { strategist: "fable", dispatcher: "opus" };
@@ -177,7 +180,7 @@ export function validateSettings(raw: unknown): string[] {
     if (loop.permission_mode !== undefined && !PM.includes(loop.permission_mode as string)) problems.push(`loop.permission_mode must be one of ${PM.join(", ")}`);
     const ac = loop.autocompact;
     if (ac !== undefined && !(typeof ac === "string" && ac !== "") && !(typeof ac === "number" && ac > 0)) {
-      problems.push("loop.autocompact must be a window such as \"300k\" or a number");
+      problems.push("loop.autocompact must be a window such as \"750k\" or a number");
     }
   }
 
@@ -290,7 +293,7 @@ export function withDefaults(raw: Json): Settings {
     gate_word: pick(raw.gate_word, null),
     loop: {
       prompt: loop.prompt as string,
-      autocompact: loop.autocompact === undefined ? null : String(loop.autocompact),
+      autocompact: loop.autocompact === undefined ? DEFAULT_AUTOCOMPACT : String(loop.autocompact),
       model: loop.model === undefined ? null : String(loop.model),
       permission_mode: loop.permission_mode === undefined ? "auto" : String(loop.permission_mode),
       mode: LOOP_MODES.includes(loop.mode as LoopMode) ? (loop.mode as LoopMode) : "strategist",

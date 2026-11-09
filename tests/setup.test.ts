@@ -126,6 +126,13 @@ describe("start", () => {
     } finally { bot.cleanup(); }
   });
 
+  test("with no loop.autocompact, start compacts at 750k", () => {
+    const bot = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "/loop go" } } });
+    try {
+      expect(cli(bot, ["start", "--dry-run"]).out).toContain('750000');
+    } finally { bot.cleanup(); }
+  });
+
   test("loop.mode picks the model when loop.model is unset; loop.model still wins", () => {
     const disp = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "/loop go", mode: "dispatcher" } } });
     const strat = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "/loop go" } } });
