@@ -5,7 +5,7 @@ depends: []
 specs:
   - specs/principles.md
   - specs/skills/opsbot-core.md
-pr: TBD
+pr: 34
 ---
 
 # Loop modes: strategist and dispatcher
