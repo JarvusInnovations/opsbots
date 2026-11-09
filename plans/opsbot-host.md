@@ -1,7 +1,7 @@
 ---
 status: done
 done: 2026-11-09
-pr: TBD
+pr: 32
 depends: []
 specs:
   - specs/architecture.md
