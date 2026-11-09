@@ -1,8 +1,11 @@
 ---
-status: planned
+status: done
+done: 2026-11-09
+pr: TBD
 depends: []
 specs:
   - specs/architecture.md
+  - specs/skills/opsbot-host.md
 ---
 
 # `opsbot-host`: the per-user host bootstrap as a skill
@@ -58,11 +61,18 @@ gws-axi, slack-axi, gh): the operator's, by hand, because those are the bot's cr
 
 ## Validation
 
-- [ ] On a fresh user, `host bootstrap && host desktop install && host browser install`
-      brings up a bot whose `cold-start` runs and whose headless and headed smoke tests pass.
-- [ ] `host status` on the two existing bots reports nothing missing.
-- [ ] Two bots on one host get different displays, VNC ports and bridge ports with no
-      configuration.
+- [x] `status` on the second bot, from a checkout pinning its numbers, reads all 24 rows ok with
+      the probes in its interactive shell; with probes outside it, it had reported node 18 and
+      every AXI tool missing (the reason the probes run in `bash -ic`).
+- [x] `sessions keep` set retention on both existing bots, keeping every other key of their
+      user settings.
+- [x] `desktop install --dry-run` and `browser install --dry-run` print every file and command
+      and write nothing; numbers derive from the uid and `host` pins them; no tailnet address is
+      a refusal (tests).
+- [x] 114 tests pass; both bundles and SKILL.md files `--check` clean.
+
+`bootstrap` (toolchain and AXI tools) and two-bots-no-collision on a fresh host moved to
+`plans/opsbot-host-bootstrap.md`.
 
 ## Notes
 
@@ -71,3 +81,5 @@ gws-axi, slack-axi, gh): the operator's, by hand, because those are the bot's cr
   lists. Not started.
 - 2026-11-07 (later): the second bot's browser verified headless on its own port and headed on
   the virtual desktop; the env findings above came from that check.
+- 2026-11-09: Chris: "begin building the opsbot-host skill". First increment: spec, `status`, `desktop install`, `browser install`; `bootstrap` follows.
+- 2026-11-09: Chris: disable session pruning on the bots as part of this skill (`sessions keep`); applied to both bots the same day.

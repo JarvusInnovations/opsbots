@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "8cb2608" : "dev";
+    VERSION = true ? "5d2564c" : "dev";
   }
 });
 
@@ -2238,7 +2238,8 @@ function validateSettings(raw) {
     "runtime",
     "streams",
     "repo_sync",
-    "wake"
+    "wake",
+    "host"
   ]);
   str2(raw, "name", "", true, NAME_RE, "must be lowercase letters, digits and dashes, starting with a letter");
   str2(raw, "mark", "", true);
@@ -2315,6 +2316,7 @@ function validateSettings(raw) {
       if (!isObj(streams[k])) problems.push(`streams.${k} must be an object`);
     }
   }
+  obj(raw, "host", "", false);
   const wake = obj(raw, "wake", "", false);
   if (wake) {
     allow(wake, "wake.", ["files"]);

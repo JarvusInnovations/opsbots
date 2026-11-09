@@ -146,6 +146,7 @@ export function validateSettings(raw: unknown): string[] {
     "streams",
     "repo_sync",
     "wake",
+    "host",
   ]);
   str(raw, "name", "", true, NAME_RE, "must be lowercase letters, digits and dashes, starting with a letter");
   str(raw, "mark", "", true);
@@ -227,6 +228,8 @@ export function validateSettings(raw: unknown): string[] {
       if (!isObj(streams[k])) problems.push(`streams.${k} must be an object`);
     }
   }
+  // `host` belongs to opsbot-host (display, ports); it is checked there, not here.
+  obj(raw, "host", "", false);
   const wake = obj(raw, "wake", "", false);
   if (wake) {
     allow(wake, "wake.", ["files"]);
