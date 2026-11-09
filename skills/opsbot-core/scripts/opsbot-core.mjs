@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "258b170" : "dev";
+    VERSION = true ? "9e351d9" : "dev";
   }
 });
 
@@ -2263,7 +2263,7 @@ function validateSettings(raw) {
     if (loop.permission_mode !== void 0 && !PM.includes(loop.permission_mode)) problems.push(`loop.permission_mode must be one of ${PM.join(", ")}`);
     const ac = loop.autocompact;
     if (ac !== void 0 && !(typeof ac === "string" && ac !== "") && !(typeof ac === "number" && ac > 0)) {
-      problems.push('loop.autocompact must be a window such as "300k" or a number');
+      problems.push('loop.autocompact must be a window such as "750k" or a number');
     }
   }
   const cadence = obj(raw, "cadence", "", false);
@@ -2369,7 +2369,7 @@ function withDefaults(raw) {
     gate_word: pick(raw.gate_word, null),
     loop: {
       prompt: loop.prompt,
-      autocompact: loop.autocompact === void 0 ? null : String(loop.autocompact),
+      autocompact: loop.autocompact === void 0 ? DEFAULT_AUTOCOMPACT : String(loop.autocompact),
       model: loop.model === void 0 ? null : String(loop.model),
       permission_mode: loop.permission_mode === void 0 ? "auto" : String(loop.permission_mode),
       mode: LOOP_MODES.includes(loop.mode) ? loop.mode : "strategist"
@@ -2419,7 +2419,7 @@ function trySettings(root) {
   const p = join3(root, SETTINGS_FILE);
   return existsSync4(p) ? tryText(readFileSync2(p, "utf8")) : null;
 }
-var SETTINGS_FILE, LOOP_MODES, MODE_MODEL, DEFAULT_CADENCE, DEFAULT_LIVENESS, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR;
+var SETTINGS_FILE, LOOP_MODES, DEFAULT_AUTOCOMPACT, MODE_MODEL, DEFAULT_CADENCE, DEFAULT_LIVENESS, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR;
 var init_settings = __esm({
   "src/opsbot-core/settings.ts"() {
     "use strict";
@@ -2427,6 +2427,7 @@ var init_settings = __esm({
     init_repo();
     SETTINGS_FILE = "opsbot.json";
     LOOP_MODES = ["strategist", "dispatcher"];
+    DEFAULT_AUTOCOMPACT = "750k";
     MODE_MODEL = { strategist: "fable", dispatcher: "opus" };
     DEFAULT_CADENCE = {
       hot: 180,

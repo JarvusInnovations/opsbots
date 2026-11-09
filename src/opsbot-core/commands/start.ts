@@ -25,7 +25,7 @@ import { trySettings } from "../settings.js";
 
 const USAGE = "start [--continue] [--dry-run] [-- <extra claude args>]";
 
-/** "300k" → 300000, "1m" → 1000000, a bare number as is; null when unset or unreadable. */
+/** "750k" → 750000, "1m" → 1000000, a bare number as is; null when unset or unreadable. */
 export function autocompactTokens(v: string | null): number | null {
   if (!v) return null;
   const m = String(v).trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*([km]?)$/);
