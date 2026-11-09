@@ -27,7 +27,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs, setExit, usageError } from "../args.js";
 import { skillDir } from "../invocation.js";
-import { readEvents, sessionLogSection } from "../transcript.js";
+import { readEvents, sessionLogSection, sessionLogSectionLib } from "../transcript.js";
 import { WAKE_RULES, wakeFiles, wakeLines } from "../wake.js";
 import { gitPath } from "../repo.js";
 import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
@@ -162,7 +162,7 @@ export function kitSections(): { title: string; body: string }[] {
     });
 }
 
-export function buildPack(root: string, s: Settings, settingsText: string | null, transcript?: string): string {
+export function buildPack(root: string, s: Settings, settingsText: string | null, transcript?: string, sessionLog?: string | null): string {
   const now = nowMs();
   const head = `═══ Cold start, ${nowIso()}. Read all of this before acting. Until you have, what you remember is untrusted.\n`;
 
@@ -178,7 +178,7 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
 
   const kit = kitSections().map((k, i) => `═══ 1.${i + 1} ${k.title} (the kit's; updates with the skill)\n${k.body}`);
   if (transcript) {
-    const body = sessionLogSection(transcript);
+    const body = sessionLog ?? sessionLogSection(transcript);
     if (body) kit.push(`═══ 1.${kit.length + 1} Before this start\n${capSection(body, SESSION_LOG_CAP)}`);
   }
   if (wakeFiles(s).length) {
@@ -245,7 +245,9 @@ export async function coldStartCommand(args: string[]): Promise<string> {
   if (!s) {
     return `cold-start: ${SETTINGS_FILE} is missing or invalid at HEAD, so the pack cannot be built. Say so to the operator, and run \`settings validate\`.`;
   }
-  const pack = buildPack(root, s, text, transcript);
+  // The library's section when it can read the log; the kit's own reader otherwise.
+  const libSection = transcript ? await sessionLogSectionLib(transcript, { loopPrompt: s.loop.prompt }) : null;
+  const pack = buildPack(root, s, text, transcript, libSection);
   if (!flags.write) return pack.replace(/\n$/, "");
   const { pack: packFile, pending } = packPaths(s.name);
   mkdirSync(cacheDir(s.name), { recursive: true });
