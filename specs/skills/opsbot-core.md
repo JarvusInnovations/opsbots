@@ -57,6 +57,17 @@ key named `//` is a comment and is allowed at any level, since JSON has no comme
 When `.claude/settings.json` sets `autoCompactWindow`, `settings validate` refuses it
 unless it equals `loop.autocompact` (one value, one place).
 
+## Session drift
+
+`start` sets the model and the compaction window when it launches the session, from
+`loop.mode` (or `loop.model` and `loop.autocompact`). A session started any other way has
+neither. `cycle begin` runs inside the session, so it checks both: the window in its own
+environment (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`) and the model on the last reply in the session
+log. When either differs it prints a `session` field naming the difference and the line that
+fixes it at the next restart (`start --continue`), once per session and difference; later
+cycles print nothing, so a quiet cycle stays small. The bot cannot change either from inside:
+it tells its operator once. Outside a session (`CLAUDECODE` unset) nothing is checked.
+
 ## Commands
 
 | Command | Does | Exit |

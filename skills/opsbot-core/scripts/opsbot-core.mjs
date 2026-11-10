@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "cee4efc" : "dev";
+    VERSION = true ? "f0292c5" : "dev";
   }
 });
 
@@ -7973,12 +7973,20 @@ function readEvents(path, maxBytes = TAIL_BYTES) {
       if (v && typeof v === "object" && typeof v.type === "string") {
         const e = { type: v.type, timestamp: String(v.timestamp ?? ""), content: v.message?.content };
         if (typeof v.subtype === "string") e.subtype = v.subtype;
+        if (typeof v.message?.model === "string") e.model = v.message.model;
         out.push(e);
       }
     } catch {
     }
   }
   return out;
+}
+function lastModel(evs) {
+  for (let i = evs.length - 1; i >= 0; i--) {
+    const e = evs[i];
+    if (e.type === "assistant" && e.model && e.model !== "<synthetic>") return e.model;
+  }
+  return null;
 }
 function lastCompaction(evs) {
   for (let i = evs.length - 1; i >= 0; i--) {
@@ -8491,6 +8499,123 @@ var init_coldstart = __esm({
   }
 });
 
+// src/opsbot-core/commands/start.ts
+import { spawnSync as spawnSync2 } from "node:child_process";
+function autocompactTokens(v) {
+  if (!v) return null;
+  const m = String(v).trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*([km]?)$/);
+  if (!m) return null;
+  const n = Number(m[1]) * (m[2] === "m" ? 1e6 : m[2] === "k" ? 1e3 : 1);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+}
+function startArgv(s, opts) {
+  const argv = ["claude", "--permission-mode", s.loop.permission_mode];
+  const model = s.loop.model ?? (s.loop.mode ? MODE_MODEL[s.loop.mode] : null);
+  if (model) argv.push("--model", model);
+  const window = autocompactTokens(s.loop.autocompact);
+  argv.push("--settings", JSON.stringify(window ? { autoCompactEnabled: true, env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) } } : { autoCompactEnabled: true }));
+  if (opts.cont) argv.push("--continue");
+  argv.push(...opts.extra);
+  argv.push(s.loop.prompt);
+  return argv;
+}
+function startCommand(args) {
+  const sep3 = args.indexOf("--");
+  const own = sep3 >= 0 ? args.slice(0, sep3) : args;
+  const extra = sep3 >= 0 ? args.slice(sep3 + 1) : [];
+  const { flags } = parseArgs(own, { bool: ["continue", "dry-run"] }, USAGE);
+  setExit(0);
+  const root = findRoot();
+  if (!root) {
+    setExit(1);
+    return { error: "not inside a git checkout", help: ["Run from the bot's repo"] };
+  }
+  const s = trySettings(root);
+  if (!s) {
+    setExit(1);
+    return { error: "opsbot.json is missing or invalid", help: ["Run `settings validate`"] };
+  }
+  const argv = startArgv(s, { cont: flags["continue"] === true, extra });
+  if (flags["dry-run"]) return { start: "would run", cwd: root, argv };
+  const window = autocompactTokens(s.loop.autocompact);
+  const env = window ? { ...process.env, CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) } : process.env;
+  const r = spawnSync2(argv[0], argv.slice(1), { cwd: root, stdio: "inherit", env });
+  setExit(r.status ?? 1);
+  return r.error ? encode2({ error: `could not start claude: ${r.error.message}`, help: ["Is `claude` on PATH for this user?"] }) : "";
+}
+var USAGE;
+var init_start = __esm({
+  "src/opsbot-core/commands/start.ts"() {
+    "use strict";
+    init_settings();
+    init_dist3();
+    init_args();
+    init_repo();
+    init_settings();
+    USAGE = "start [--continue] [--dry-run] [-- <extra claude args>]";
+  }
+});
+
+// src/opsbot-core/drift.ts
+import { readFileSync as readFileSync7, writeFileSync as writeFileSync4 } from "node:fs";
+function modelMatches(want, have) {
+  const w = cls(want);
+  const h = cls(have);
+  return h === w || h.includes(w) || w.includes(h);
+}
+function sessionDrift(s, env, model) {
+  if (!env.CLAUDECODE) return [];
+  const out = [];
+  const want = autocompactTokens(s.loop.autocompact);
+  const have = env[WINDOW_ENV] ? autocompactTokens(env[WINDOW_ENV]) : null;
+  if (want !== null && have !== want) {
+    out.push(`compaction window: this session has ${have ?? "none set"}, the ${s.loop.mode} loop calls for ${want}`);
+  }
+  const wantModel = s.loop.model ?? MODE_MODEL[s.loop.mode];
+  if (model && !modelMatches(wantModel, model)) {
+    out.push(`model: this session last replied as ${model}, the ${s.loop.mode} loop calls for ${wantModel}`);
+  }
+  return out;
+}
+function driftReport(root, sessionId, lines, startLine) {
+  const marker = gitPath(root, "opsbot-session-drift");
+  const sig = `${sessionId ?? "?"}
+${lines.join("\n")}
+`;
+  let prev2 = "";
+  try {
+    prev2 = readFileSync7(marker, "utf8");
+  } catch {
+  }
+  if (lines.length === 0) {
+    if (prev2) try {
+      writeFileSync4(marker, "");
+    } catch {
+    }
+    return [];
+  }
+  if (prev2 === sig) return [];
+  try {
+    writeFileSync4(marker, sig);
+  } catch {
+  }
+  return [
+    ...lines,
+    `The session was not started by \`start\`, or the mode changed since. You cannot change this from inside. Tell your operator once, with the line that fixes it at the next restart: ${startLine}`
+  ];
+}
+var WINDOW_ENV, cls;
+var init_drift = __esm({
+  "src/opsbot-core/drift.ts"() {
+    "use strict";
+    init_start();
+    init_repo();
+    init_settings();
+    WINDOW_ENV = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
+    cls = (m) => m.replace(/\[.*\]$/, "").trim().toLowerCase();
+  }
+});
+
 // src/opsbot-core/commands/cycle.ts
 import { existsSync as existsSync11, rmSync as rmSync4 } from "node:fs";
 function next2(root, s) {
@@ -8502,6 +8627,11 @@ function wakeReport(root, s, boundByNext) {
   const evs = ptr ? readEvents(ptr.transcript_path) : [];
   const until = boundByNext ? nextDelay(s, readCycleLog(root), nowMs()).seconds * 1e3 : null;
   return wakeLines(s, evs.length ? evs : null, nowMs(), until);
+}
+function driftLines(root, s) {
+  const ptr = sessionPointer(root);
+  const evs = ptr ? readEvents(ptr.transcript_path) : [];
+  return driftReport(root, ptr?.session_id ?? null, sessionDrift(s, process.env, lastModel(evs)), `\`${cliInvocation()} start --continue\``);
 }
 function cycleCommand(args) {
   const [sub, ...rest] = args;
@@ -8591,6 +8721,8 @@ function cycleBegin() {
     const out = { cycle: `${r.line}${why ? ` \xB7 not pushed: ${why}` : ""} \xB7 next ${next2(root, settings)}` };
     const wake2 = wakeReport(root, settings, true);
     if (wake2.length) out.wake = wake2;
+    const drift2 = driftLines(root, settings);
+    if (drift2.length) out.session = drift2;
     return out;
   }
   setExit(r.code);
@@ -8602,6 +8734,8 @@ function cycleBegin() {
   };
   const wake = wakeReport(root, settings, false);
   if (wake.length) held.wake = wake;
+  const drift = driftLines(root, settings);
+  if (drift.length) held.session = drift;
   return held;
 }
 function cycleEnd(args) {
@@ -8711,6 +8845,7 @@ var init_cycle = __esm({
     init_check();
     init_coldstart();
     init_transcript();
+    init_drift();
     init_wake();
   }
 });
@@ -8773,7 +8908,7 @@ var init_outage = __esm({
 });
 
 // src/opsbot-core/runtime.ts
-import { appendFileSync as appendFileSync2, readFileSync as readFileSync7 } from "node:fs";
+import { appendFileSync as appendFileSync2, readFileSync as readFileSync8 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
 import { join as join17 } from "node:path";
 function normStatus(s) {
@@ -8836,7 +8971,7 @@ ${r.stdout}`) };
 function fakeAdapter(file) {
   const state = () => {
     try {
-      return JSON.parse(readFileSync7(file, "utf8"));
+      return JSON.parse(readFileSync8(file, "utf8"));
     } catch {
       return {};
     }
@@ -8895,7 +9030,7 @@ ${r.stdout}`) };
 });
 
 // src/opsbot-core/commands/liveness.ts
-import { existsSync as existsSync12, readFileSync as readFileSync8, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync12, readFileSync as readFileSync9, writeFileSync as writeFileSync5 } from "node:fs";
 function watchdogCommand(args) {
   const { flags } = parseArgs(args, { bool: ["dry-run"] }, "watchdog [--dry-run]");
   const dry = flags["dry-run"] === true;
@@ -8920,7 +9055,7 @@ function watchdogCommand(args) {
     return { watchdog: `alive \xB7 last cycle ${last}, ${Math.floor(gap / 6e4)} min ago` };
   }
   const started = last ?? "never";
-  if (existsSync12(told) && readFileSync8(told, "utf8").split("\n")[0] === started) {
+  if (existsSync12(told) && readFileSync9(told, "utf8").split("\n")[0] === started) {
     return { watchdog: `stopped since ${started} \xB7 the operator already told` };
   }
   const seen = [];
@@ -8959,7 +9094,7 @@ function watchdogCommand(args) {
     setExit(1);
     return { watchdog: `stopped since ${started} \xB7 cannot tell the operator: every escalation script failed`, escalations: results };
   }
-  writeFileSync4(told, `${started}
+  writeFileSync5(told, `${started}
 `);
   if (blocked) {
     return { watchdog: `stopped since ${started} \xB7 the operator told \xB7 outage not recorded while ${blocked}`, escalations: results };
@@ -8997,7 +9132,7 @@ function nudgeCommand(args) {
     return { nudge: `nothing \xB7 last cycle ${last}` };
   }
   if (existsSync12(marker)) {
-    const [prev2, why] = readFileSync8(marker, "utf8").split("\n");
+    const [prev2, why] = readFileSync9(marker, "utf8").split("\n");
     if (prev2 && /^\d+$/.test(prev2) && now - Number(prev2) * 1e3 < cooldown * 6e4) {
       const ago = Math.floor((now - Number(prev2) * 1e3) / 6e4);
       return { nudge: wake ? `nothing \xB7 woke ${ago} min ago${why ? ` for: ${why}` : ""}` : `nothing \xB7 nudged ${ago} min ago and no cycle since` };
@@ -9035,11 +9170,11 @@ ${reason}
 `;
   const r = rt.prompt(agent, line);
   if (!r.ok) {
-    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") writeFileSync4(marker, stamp);
+    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") writeFileSync5(marker, stamp);
     setExit(1);
     return { nudge: `cannot \xB7 ${rt.name} prompt ${agent}: ${r.code}: ${r.message}` };
   }
-  writeFileSync4(marker, stamp);
+  writeFileSync5(marker, stamp);
   return { nudge: `${wake ? `woke ${agent}${reason ? ` for: ${reason}` : ""}` : `nudged ${agent}: ${line}`}${via}`, at: nowIso() };
 }
 var init_liveness = __esm({
@@ -9058,7 +9193,7 @@ var init_liveness = __esm({
 });
 
 // src/opsbot-core/commands/infra.ts
-import { existsSync as existsSync13, mkdirSync as mkdirSync4, readFileSync as readFileSync9, readdirSync as readdirSync3, rmSync as rmSync5, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync13, mkdirSync as mkdirSync4, readFileSync as readFileSync10, readdirSync as readdirSync3, rmSync as rmSync5, writeFileSync as writeFileSync6 } from "node:fs";
 import { homedir as homedir11 } from "node:os";
 import { join as join18 } from "node:path";
 function unitDir() {
@@ -9077,7 +9212,7 @@ function template(name) {
       "Reinstall the skill: npx skills add JarvusInnovations/opsbots --skill opsbot-core"
     ]);
   }
-  return readFileSync9(p, "utf8");
+  return readFileSync10(p, "utf8");
 }
 function fill(t, vars) {
   return t.replace(/@([A-Z_]+)@/g, (m, k) => k in vars ? vars[k] : m);
@@ -9153,7 +9288,7 @@ function infraCommand(args) {
     const want = new Set(units.map((u) => u.file));
     const rows = units.map((u) => {
       const p = join18(dir, u.file);
-      const state = !existsSync13(p) ? "missing" : samePathless(readFileSync9(p, "utf8"), u.content) ? "current" : "stale";
+      const state = !existsSync13(p) ? "missing" : samePathless(readFileSync10(p, "utf8"), u.content) ? "current" : "stale";
       let active = "-";
       if (u.enable && state !== "missing") {
         const r = systemctl(["is-active", u.file]);
@@ -9195,7 +9330,7 @@ function infraCommand(args) {
       systemctl(["disable", "--now", ...stale]);
       for (const f of stale) rmSync5(join18(dir, f), { force: true });
     }
-    for (const u of units) writeFileSync5(join18(dir, u.file), u.content);
+    for (const u of units) writeFileSync6(join18(dir, u.file), u.content);
     const steps = [];
     const reload2 = systemctl(["daemon-reload"]);
     steps.push({ step: "daemon-reload", ok: reload2.ok, detail: firstLine(reload2.out) });
@@ -9239,7 +9374,7 @@ var init_infra = __esm({
 });
 
 // src/opsbot-core/commands/hook.ts
-import { existsSync as existsSync14, mkdirSync as mkdirSync5, readFileSync as readFileSync10, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync14, mkdirSync as mkdirSync5, readFileSync as readFileSync11, writeFileSync as writeFileSync7 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
 import { dirname as dirname9, join as join19, relative as relative2 } from "node:path";
 function settingsPath(scope, dir) {
@@ -9257,14 +9392,14 @@ function hookBase(scope, dir) {
 function readSettings(p) {
   if (!existsSync14(p)) return {};
   try {
-    return JSON.parse(readFileSync10(p, "utf8"));
+    return JSON.parse(readFileSync11(p, "utf8"));
   } catch {
     throw new AxiError(`${p} is not valid JSON; not touching it`, "CANNOT_RUN", ["Fix the file by hand, then run hook install again"]);
   }
 }
 function writeSettings(p, s) {
   mkdirSync5(dirname9(p), { recursive: true });
-  writeFileSync6(p, `${JSON.stringify(s, null, 2)}
+  writeFileSync7(p, `${JSON.stringify(s, null, 2)}
 `);
 }
 function upsertPreTool(settings, command) {
@@ -9368,65 +9503,8 @@ var init_hook = __esm({
   }
 });
 
-// src/opsbot-core/commands/start.ts
-import { spawnSync as spawnSync2 } from "node:child_process";
-function autocompactTokens(v) {
-  if (!v) return null;
-  const m = String(v).trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*([km]?)$/);
-  if (!m) return null;
-  const n = Number(m[1]) * (m[2] === "m" ? 1e6 : m[2] === "k" ? 1e3 : 1);
-  return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
-}
-function startArgv(s, opts) {
-  const argv = ["claude", "--permission-mode", s.loop.permission_mode];
-  const model = s.loop.model ?? (s.loop.mode ? MODE_MODEL[s.loop.mode] : null);
-  if (model) argv.push("--model", model);
-  const window = autocompactTokens(s.loop.autocompact);
-  argv.push("--settings", JSON.stringify(window ? { autoCompactEnabled: true, env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) } } : { autoCompactEnabled: true }));
-  if (opts.cont) argv.push("--continue");
-  argv.push(...opts.extra);
-  argv.push(s.loop.prompt);
-  return argv;
-}
-function startCommand(args) {
-  const sep3 = args.indexOf("--");
-  const own = sep3 >= 0 ? args.slice(0, sep3) : args;
-  const extra = sep3 >= 0 ? args.slice(sep3 + 1) : [];
-  const { flags } = parseArgs(own, { bool: ["continue", "dry-run"] }, USAGE);
-  setExit(0);
-  const root = findRoot();
-  if (!root) {
-    setExit(1);
-    return { error: "not inside a git checkout", help: ["Run from the bot's repo"] };
-  }
-  const s = trySettings(root);
-  if (!s) {
-    setExit(1);
-    return { error: "opsbot.json is missing or invalid", help: ["Run `settings validate`"] };
-  }
-  const argv = startArgv(s, { cont: flags["continue"] === true, extra });
-  if (flags["dry-run"]) return { start: "would run", cwd: root, argv };
-  const window = autocompactTokens(s.loop.autocompact);
-  const env = window ? { ...process.env, CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) } : process.env;
-  const r = spawnSync2(argv[0], argv.slice(1), { cwd: root, stdio: "inherit", env });
-  setExit(r.status ?? 1);
-  return r.error ? encode2({ error: `could not start claude: ${r.error.message}`, help: ["Is `claude` on PATH for this user?"] }) : "";
-}
-var USAGE;
-var init_start = __esm({
-  "src/opsbot-core/commands/start.ts"() {
-    "use strict";
-    init_settings();
-    init_dist3();
-    init_args();
-    init_repo();
-    init_settings();
-    USAGE = "start [--continue] [--dry-run] [-- <extra claude args>]";
-  }
-});
-
 // src/opsbot-core/commands/simple.ts
-import { existsSync as existsSync15, readFileSync as readFileSync11 } from "node:fs";
+import { existsSync as existsSync15, readFileSync as readFileSync12 } from "node:fs";
 import { join as join20 } from "node:path";
 function nextDelayCommand(args) {
   parseArgs(args, {}, "next-delay");
@@ -9555,7 +9633,7 @@ function settingsCommand(args) {
     where = `${SETTINGS_FILE} at HEAD`;
   } else {
     const p = join20(root, SETTINGS_FILE);
-    text = existsSync15(p) ? readFileSync11(p, "utf8") : null;
+    text = existsSync15(p) ? readFileSync12(p, "utf8") : null;
     where = SETTINGS_FILE;
   }
   if (text === null) {
@@ -9567,7 +9645,7 @@ function settingsCommand(args) {
   const claude = join20(root, ".claude", "settings.json");
   if (raw && existsSync15(claude)) {
     try {
-      const cs = JSON.parse(readFileSync11(claude, "utf8"));
+      const cs = JSON.parse(readFileSync12(claude, "utf8"));
       const loop = raw.loop ?? {};
       if (cs && cs.autoCompactWindow !== void 0 && String(cs.autoCompactWindow) !== String(loop.autocompact ?? "")) {
         problems.push(
