@@ -16,7 +16,7 @@
 #   --no-herdr       skip herdr
 set -euo pipefail
 
-DRY=0; HERDR=1; NODE=""; TOOLS="gh-axi gws-axi slack-axi gitsheets-axi agent-recall-axi"
+DRY=0; HERDR=1; NODE=""; TOOLS="gh-axi gws-axi slack-axi gitsheets-axi agent-recall-axi chrome-devtools-axi"
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
