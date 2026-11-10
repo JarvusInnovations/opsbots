@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-host/version.ts"() {
     "use strict";
-    VERSION = true ? "980f11c" : "dev";
+    VERSION = true ? "5dc489e" : "dev";
   }
 });
 
@@ -2207,7 +2207,7 @@ var init_status = __esm({
     init_args();
     init_invocation();
     init_host();
-    TOOLS = ["claude", "herdr", "gh-axi", "gws-axi", "slack-axi", "gitsheets-axi", "chrome-devtools-axi"];
+    TOOLS = ["claude", "herdr", "gh-axi", "gws-axi", "slack-axi", "gitsheets-axi", "agent-recall-axi", "chrome-devtools-axi"];
   }
 });
 

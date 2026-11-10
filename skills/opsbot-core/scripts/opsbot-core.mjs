@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "980f11c" : "dev";
+    VERSION = true ? "5dc489e" : "dev";
   }
 });
 
