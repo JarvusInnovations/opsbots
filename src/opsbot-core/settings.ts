@@ -18,10 +18,15 @@ export const SETTINGS_FILE = "opsbot.json";
 
 /** specs/principles.md#the-loops-class-follows-its-work-strategist-or-dispatcher */
 export const LOOP_MODES = ["strategist", "dispatcher"] as const;
-/** Compact with room to spare under a 1M window, and never at a fraction of it: a smaller window
- * buys nothing a warm cache does not already give, and costs more compactions. Chris, 2026-11-09. */
-export const DEFAULT_AUTOCOMPACT = "750k";
 export type LoopMode = (typeof LOOP_MODES)[number];
+/**
+ * The compaction window when `loop.autocompact` is unset. Every call reads the whole window from
+ * cache, so the window is priced per call. A strategist uses its context on most turns: 750k,
+ * with room to spare under 1M. A dispatcher mostly re-reads a context it does not use: 300k.
+ * Measured on a support bot (floor 75k after a compaction, 2k of growth a call): 300k costs half
+ * of a 715k window per call and about a fifth more than 200k, with half of 200k's compactions.
+ */
+export const MODE_AUTOCOMPACT: Record<LoopMode, string> = { strategist: "750k", dispatcher: "300k" };
 /** The model `start` passes when `loop.model` is not set. */
 export const MODE_MODEL: Record<LoopMode, string> = { strategist: "fable", dispatcher: "opus" };
 
@@ -262,6 +267,8 @@ export function withDefaults(raw: Json): Settings {
   const lv = (raw.liveness ?? {}) as Json;
   const rt = (raw.runtime ?? {}) as Json;
   const pick = <T>(v: unknown, d: T): T => (v === undefined ? d : (v as T));
+  const mode: LoopMode = LOOP_MODES.includes(loop.mode as LoopMode) ? (loop.mode as LoopMode) : "strategist";
+  const wakeList = Array.isArray((raw.wake as Json | undefined)?.files) ? ((raw.wake as Json).files as string[]) : [];
   const cadence: Cadence = {
     hot: pick(cad.hot, DEFAULT_CADENCE.hot),
     warm: pick(cad.warm, DEFAULT_CADENCE.warm),
@@ -279,6 +286,13 @@ export function withDefaults(raw: Json): Settings {
       end: pick(nh.end, DEFAULT_CADENCE.night_hours.end),
     },
   };
+  // A dispatcher with a live wake (wake.files) is woken by its streams, so its timer between
+  // arrivals only keeps the cache warm: the quiet delays default to the cap. Without wake files
+  // the timer is still how it notices anything, and the table stands.
+  if (mode === "dispatcher" && wakeList.length > 0) {
+    if (cad.quiet_working === undefined) cadence.quiet_working = cadence.cap;
+    if (cad.quiet === undefined) cadence.quiet = cadence.cap;
+  }
   const liveness = Object.fromEntries(
     LIVENESS_KEYS.map((k) => [k, pick(lv[k], DEFAULT_LIVENESS[k])]),
   ) as unknown as Liveness;
@@ -293,10 +307,10 @@ export function withDefaults(raw: Json): Settings {
     gate_word: pick(raw.gate_word, null),
     loop: {
       prompt: loop.prompt as string,
-      autocompact: loop.autocompact === undefined ? DEFAULT_AUTOCOMPACT : String(loop.autocompact),
+      autocompact: loop.autocompact === undefined ? MODE_AUTOCOMPACT[mode] : String(loop.autocompact),
       model: loop.model === undefined ? null : String(loop.model),
       permission_mode: loop.permission_mode === undefined ? "auto" : String(loop.permission_mode),
-      mode: LOOP_MODES.includes(loop.mode as LoopMode) ? (loop.mode as LoopMode) : "strategist",
+      mode,
     },
     cadence,
     lock_max_minutes: pick(raw.lock_max_minutes, 60),
@@ -304,7 +318,7 @@ export function withDefaults(raw: Json): Settings {
     runtime: { adapter: "herdr", agent: rt.agent as string },
     streams,
     repo_sync: pick(raw.repo_sync, "pull-on-clean"),
-    wake: { files: Array.isArray((raw.wake as Json | undefined)?.files) ? ((raw.wake as Json).files as string[]) : [] },
+    wake: { files: wakeList },
   };
 }
 

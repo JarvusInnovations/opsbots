@@ -16,7 +16,8 @@ these is true:
 
 **The brief names what to read instead of pasting it:** the record entries by id, and the
 session and event ids, which the subagent opens itself with `npx -y agent-recall-axi show
-<id>` or `find`. Say what you need back: options, a recommendation and its reasons, the
+<id>` or `find`. Name your rule card and the recipes or protocols nearest the question too:
+the subagent starts without your rules. Say what you need back: options, a recommendation and its reasons, the
 risks, what to ask the operator. It returns data and does not send, post, commit or merge.
 
 **Then you act:** record its plan or recommendation (a decision, a proposal, or a request to

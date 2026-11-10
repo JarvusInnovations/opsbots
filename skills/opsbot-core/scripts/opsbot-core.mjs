@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "62ad604" : "dev";
+    VERSION = true ? "1e0f74f" : "dev";
   }
 });
 
@@ -2338,6 +2338,8 @@ function withDefaults(raw) {
   const lv = raw.liveness ?? {};
   const rt = raw.runtime ?? {};
   const pick = (v, d) => v === void 0 ? d : v;
+  const mode = LOOP_MODES.includes(loop.mode) ? loop.mode : "strategist";
+  const wakeList = Array.isArray(raw.wake?.files) ? raw.wake.files : [];
   const cadence = {
     hot: pick(cad.hot, DEFAULT_CADENCE.hot),
     warm: pick(cad.warm, DEFAULT_CADENCE.warm),
@@ -2355,6 +2357,10 @@ function withDefaults(raw) {
       end: pick(nh.end, DEFAULT_CADENCE.night_hours.end)
     }
   };
+  if (mode === "dispatcher" && wakeList.length > 0) {
+    if (cad.quiet_working === void 0) cadence.quiet_working = cadence.cap;
+    if (cad.quiet === void 0) cadence.quiet = cadence.cap;
+  }
   const liveness = Object.fromEntries(
     LIVENESS_KEYS.map((k) => [k, pick(lv[k], DEFAULT_LIVENESS[k])])
   );
@@ -2369,10 +2375,10 @@ function withDefaults(raw) {
     gate_word: pick(raw.gate_word, null),
     loop: {
       prompt: loop.prompt,
-      autocompact: loop.autocompact === void 0 ? DEFAULT_AUTOCOMPACT : String(loop.autocompact),
+      autocompact: loop.autocompact === void 0 ? MODE_AUTOCOMPACT[mode] : String(loop.autocompact),
       model: loop.model === void 0 ? null : String(loop.model),
       permission_mode: loop.permission_mode === void 0 ? "auto" : String(loop.permission_mode),
-      mode: LOOP_MODES.includes(loop.mode) ? loop.mode : "strategist"
+      mode
     },
     cadence,
     lock_max_minutes: pick(raw.lock_max_minutes, 60),
@@ -2380,7 +2386,7 @@ function withDefaults(raw) {
     runtime: { adapter: "herdr", agent: rt.agent },
     streams,
     repo_sync: pick(raw.repo_sync, "pull-on-clean"),
-    wake: { files: Array.isArray(raw.wake?.files) ? raw.wake.files : [] }
+    wake: { files: wakeList }
   };
 }
 function parseSettingsText(text, where) {
@@ -2419,7 +2425,7 @@ function trySettings(root) {
   const p = join3(root, SETTINGS_FILE);
   return existsSync4(p) ? tryText(readFileSync2(p, "utf8")) : null;
 }
-var SETTINGS_FILE, LOOP_MODES, DEFAULT_AUTOCOMPACT, MODE_MODEL, DEFAULT_CADENCE, DEFAULT_LIVENESS, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR;
+var SETTINGS_FILE, LOOP_MODES, MODE_AUTOCOMPACT, MODE_MODEL, DEFAULT_CADENCE, DEFAULT_LIVENESS, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR;
 var init_settings = __esm({
   "src/opsbot-core/settings.ts"() {
     "use strict";
@@ -2427,7 +2433,7 @@ var init_settings = __esm({
     init_repo();
     SETTINGS_FILE = "opsbot.json";
     LOOP_MODES = ["strategist", "dispatcher"];
-    DEFAULT_AUTOCOMPACT = "750k";
+    MODE_AUTOCOMPACT = { strategist: "750k", dispatcher: "300k" };
     MODE_MODEL = { strategist: "fable", dispatcher: "opus" };
     DEFAULT_CADENCE = {
       hot: 180,
