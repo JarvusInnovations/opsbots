@@ -90,6 +90,10 @@ their own message. You never write Slack's own dialect by hand.
 - `- ` or `1. ` list items, one per line, a blank line before and after; the renderer
   makes them native lists. Never steps run together in a sentence.
 - `[what it is](url)` for links; never a bare URL longer than the words around it.
+- Anything you mention that has a URL is a link with words for the text: a record, a pull
+  request, a mail thread, a file, an entry in a team tool. Never a bare id, path or record
+  name: it means nothing to the person reading. Add the id in backticks after the link only
+  when they will need to copy it.
 - `>` to quote the one line being answered when a thread has moved on.
 - `#` headings render in bot mode; in human mode they become a bold line. Use one at most,
   and only on a post long enough to need it.

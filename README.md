@@ -19,6 +19,14 @@ npx skills add JarvusInnovations/opsbots --skill opsbot-core   # in a bot's repo
 npx skills add JarvusInnovations/opsbots --skill mothership    # in a mothership
 ```
 
+Both commands install the latest release: `main` is the default branch and only the
+release PR from `develop` merges into it. `npx skills update <skill> -p -y` in a bot's repo
+moves it to the next release, on purpose. To take an unreleased fix early, name the branch:
+`npx skills add JarvusInnovations/opsbots#develop --skill opsbot-core`.
+
+Contributions go to `develop`. A pull request opened against `main` is moved to `develop`
+by a workflow, and a check on `main` refuses any head but `develop` or `hotfix/*`.
+
 A repo becomes a mothership by installing that one skill. There can be many motherships;
 each tracks its own fleet. This kit is the product; a mothership is an instance.
 

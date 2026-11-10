@@ -41,7 +41,8 @@ import {
 } from "../state.js";
 import { runCheck } from "./check.js";
 import { sessionPointer } from "./coldstart.js";
-import { readEvents } from "../transcript.js";
+import { lastModel, readEvents } from "../transcript.js";
+import { driftReport, sessionDrift } from "../drift.js";
 import { wakeFiles, wakeLines } from "../wake.js";
 import { existsSync, rmSync } from "node:fs";
 
@@ -59,6 +60,13 @@ function wakeReport(root: string, s: Settings, boundByNext: boolean): string[] {
   const evs = ptr ? readEvents(ptr.transcript_path) : [];
   const until = boundByNext ? nextDelay(s, readCycleLog(root), nowMs()).seconds * 1000 : null;
   return wakeLines(s, evs.length ? evs : null, nowMs(), until);
+}
+
+/** The session-drift lines for `cycle begin`: shown once per session and drift, else empty. */
+function driftLines(root: string, s: Settings): string[] {
+  const ptr = sessionPointer(root);
+  const evs = ptr ? readEvents(ptr.transcript_path) : [];
+  return driftReport(root, ptr?.session_id ?? null, sessionDrift(s, process.env, lastModel(evs)), `\`${cliInvocation()} start --continue\``);
 }
 
 export function cycleCommand(args: string[]): Record<string, unknown> {
@@ -162,6 +170,8 @@ function cycleBegin(): Record<string, unknown> {
     const out: Record<string, unknown> = { cycle: `${r.line}${why ? ` · not pushed: ${why}` : ""} · next ${next(root, settings)}` };
     const wake = wakeReport(root, settings, true);
     if (wake.length) out.wake = wake;
+    const drift = driftLines(root, settings);
+    if (drift.length) out.session = drift;
     return out;
   }
   setExit(r.code);
@@ -173,6 +183,8 @@ function cycleBegin(): Record<string, unknown> {
   };
   const wake = wakeReport(root, settings, false);
   if (wake.length) held.wake = wake;
+  const drift = driftLines(root, settings);
+  if (drift.length) held.session = drift;
   return held;
 }
 
