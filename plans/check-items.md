@@ -4,6 +4,7 @@ done: 2026-11-10
 depends: [opsbot-core]
 specs:
   - specs/skills/opsbot-core.md
+pr: 49
 ---
 
 # Check items: several seen keys, quiet items, extra commit paths
