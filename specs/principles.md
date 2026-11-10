@@ -195,12 +195,23 @@ instead of pasting it: the record entries, and the session and event ids the sub
 itself with `agent-recall-axi`. Fable returns a plan or a recommendation as data; the
 dispatcher records it, acts within its gate, and asks the operator for anything new.
 
+The brief also names the bot's rule card and the recipes or protocols nearest the question:
+the subagent starts without the bot's rules and should not have to rediscover them.
+
+The mode sets three defaults, each overridable in `opsbot.json`: the loop's model class; the
+compaction window (750k for a strategist, 300k for a dispatcher); and, for a dispatcher that
+has a live wake, quiet delays at the cap, so the timer only keeps the cache warm. The window
+matters because every call reads the whole context from cache: a loop's cost is its calls
+times its context size, and the model class only sets the rate.
+
 The mode is revisited, not fixed: a month of logs is the evidence for switching either way.
 
 > Why: one week of two bots' logs. A support coordinator woke 863 times, found something new
 > in 10 of 446 cycles and heard from its operator three times; a project lead got 89 operator
-> messages, 397 agent messages and 178 task notifications. Same kit, opposite work. Decided
-> by Chris, 2026-11-09.
+> messages, 397 agent messages and 178 task notifications. Same kit, opposite work. The
+> coordinator's log also priced the window: a 75k floor after each compaction and 2k of growth
+> a call, so a 300k window costs half of a 715k one per call, a fifth more than 200k, with
+> half of 200k's compactions. Decided by Chris, 2026-11-09.
 
 ## A character, lightly worn
 

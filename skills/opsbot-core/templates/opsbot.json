@@ -6,14 +6,13 @@
   "rule_card": "protocols/rule-card.md",
   "gate_word": "GOAHEAD",
   "loop": {
-    "//": "prompt is sent verbatim by the nudge; include any cold-cache suffix your setup uses. autocompact is the one place the compaction window is set.",
+    "//": "prompt is sent verbatim by the nudge; include any cold-cache suffix your setup uses. mode (strategist or dispatcher) picks the model and the compaction window; set loop.model or loop.autocompact only to override it.",
     "prompt": "/loop examplebot cycle. Follow the opsbot-core skill: start with `cycle begin`.",
-    "model": "fable",
-    "permission_mode": "auto",
-    "autocompact": "750k"
+    "mode": "strategist",
+    "permission_mode": "auto"
   },
   "cadence": {
-    "//": "Seconds. None may exceed cap; cap stays under the one-hour cache. Hours are in timezone; days are ISO weekdays (1 = Monday).",
+    "//": "Seconds. None may exceed cap; cap stays under the one-hour cache. Hours are in timezone; days are ISO weekdays (1 = Monday). A dispatcher with wake.files can drop quiet_working and quiet: they then default to the cap, since its streams wake it.",
     "hot": 180,
     "warm": 600,
     "quiet_working": 600,
