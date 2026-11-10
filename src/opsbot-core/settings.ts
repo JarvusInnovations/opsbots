@@ -16,6 +16,20 @@ import { isValidTimeZone, showHead } from "./repo.js";
 
 export const SETTINGS_FILE = "opsbot.json";
 
+/** specs/principles.md#the-loops-class-follows-its-work-strategist-or-dispatcher */
+export const LOOP_MODES = ["strategist", "dispatcher"] as const;
+export type LoopMode = (typeof LOOP_MODES)[number];
+/**
+ * The compaction window when `loop.autocompact` is unset. Every call reads the whole window from
+ * cache, so the window is priced per call. A strategist uses its context on most turns: 750k,
+ * with room to spare under 1M. A dispatcher mostly re-reads a context it does not use: 300k.
+ * Measured on a support bot (floor 75k after a compaction, 2k of growth a call): 300k costs half
+ * of a 715k window per call and about a fifth more than 200k, with half of 200k's compactions.
+ */
+export const MODE_AUTOCOMPACT: Record<LoopMode, string> = { strategist: "750k", dispatcher: "300k" };
+/** The model `start` passes when `loop.model` is not set. */
+export const MODE_MODEL: Record<LoopMode, string> = { strategist: "fable", dispatcher: "opus" };
+
 export interface Cadence {
   hot: number;
   warm: number;
@@ -41,7 +55,7 @@ export interface Settings {
   timezone: string;
   rule_card: string | null;
   gate_word: string | null;
-  loop: { prompt: string; autocompact: string | null; model: string | null; permission_mode: string };
+  loop: { prompt: string; autocompact: string | null; model: string | null; permission_mode: string; mode: LoopMode };
   cadence: Cadence;
   lock_max_minutes: number;
   liveness: Liveness;
@@ -163,14 +177,15 @@ export function validateSettings(raw: unknown): string[] {
 
   const loop = obj(raw, "loop", "", true);
   if (loop) {
-    allow(loop, "loop.", ["prompt", "autocompact", "model", "permission_mode"]);
+    allow(loop, "loop.", ["prompt", "autocompact", "model", "permission_mode", "mode"]);
+    if (loop.mode !== undefined && !LOOP_MODES.includes(loop.mode as LoopMode)) problems.push(`loop.mode must be one of ${LOOP_MODES.join(", ")}`);
     str(loop, "prompt", "loop.", true);
     if (loop.model !== undefined && (typeof loop.model !== "string" || loop.model === "")) problems.push("loop.model must be a non-empty string (a Claude Code model name or alias)");
     const PM = ["auto", "default", "acceptEdits", "plan"];
     if (loop.permission_mode !== undefined && !PM.includes(loop.permission_mode as string)) problems.push(`loop.permission_mode must be one of ${PM.join(", ")}`);
     const ac = loop.autocompact;
     if (ac !== undefined && !(typeof ac === "string" && ac !== "") && !(typeof ac === "number" && ac > 0)) {
-      problems.push("loop.autocompact must be a window such as \"300k\" or a number");
+      problems.push("loop.autocompact must be a window such as \"750k\" or a number");
     }
   }
 
@@ -252,6 +267,8 @@ export function withDefaults(raw: Json): Settings {
   const lv = (raw.liveness ?? {}) as Json;
   const rt = (raw.runtime ?? {}) as Json;
   const pick = <T>(v: unknown, d: T): T => (v === undefined ? d : (v as T));
+  const mode: LoopMode = LOOP_MODES.includes(loop.mode as LoopMode) ? (loop.mode as LoopMode) : "strategist";
+  const wakeList = Array.isArray((raw.wake as Json | undefined)?.files) ? ((raw.wake as Json).files as string[]) : [];
   const cadence: Cadence = {
     hot: pick(cad.hot, DEFAULT_CADENCE.hot),
     warm: pick(cad.warm, DEFAULT_CADENCE.warm),
@@ -269,6 +286,13 @@ export function withDefaults(raw: Json): Settings {
       end: pick(nh.end, DEFAULT_CADENCE.night_hours.end),
     },
   };
+  // A dispatcher with a live wake (wake.files) is woken by its streams, so its timer between
+  // arrivals only keeps the cache warm: the quiet delays default to the cap. Without wake files
+  // the timer is still how it notices anything, and the table stands.
+  if (mode === "dispatcher" && wakeList.length > 0) {
+    if (cad.quiet_working === undefined) cadence.quiet_working = cadence.cap;
+    if (cad.quiet === undefined) cadence.quiet = cadence.cap;
+  }
   const liveness = Object.fromEntries(
     LIVENESS_KEYS.map((k) => [k, pick(lv[k], DEFAULT_LIVENESS[k])]),
   ) as unknown as Liveness;
@@ -283,9 +307,10 @@ export function withDefaults(raw: Json): Settings {
     gate_word: pick(raw.gate_word, null),
     loop: {
       prompt: loop.prompt as string,
-      autocompact: loop.autocompact === undefined ? null : String(loop.autocompact),
+      autocompact: loop.autocompact === undefined ? MODE_AUTOCOMPACT[mode] : String(loop.autocompact),
       model: loop.model === undefined ? null : String(loop.model),
       permission_mode: loop.permission_mode === undefined ? "auto" : String(loop.permission_mode),
+      mode,
     },
     cadence,
     lock_max_minutes: pick(raw.lock_max_minutes, 60),
@@ -293,7 +318,7 @@ export function withDefaults(raw: Json): Settings {
     runtime: { adapter: "herdr", agent: rt.agent as string },
     streams,
     repo_sync: pick(raw.repo_sync, "pull-on-clean"),
-    wake: { files: Array.isArray((raw.wake as Json | undefined)?.files) ? ((raw.wake as Json).files as string[]) : [] },
+    wake: { files: wakeList },
   };
 }
 

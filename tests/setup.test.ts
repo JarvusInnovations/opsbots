@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { withDefaults } from "../src/opsbot-core/settings";
 import { BASE_SETTINGS, cli, makeBot, makeExecutable, setSettings, type Bot } from "./helpers";
 
 let bot: Bot;
@@ -116,11 +117,69 @@ describe("start", () => {
       expect(r.out).toContain("would run");
       expect(r.out).toContain('"--permission-mode",auto');
       expect(r.out).toContain('"--model",fable');
-      expect(r.out).toContain('"--autocompact",300k');
+      expect(r.out).not.toContain('"--autocompact"');
       expect(r.out).toContain('autoCompactEnabled');
+      expect(r.out).toContain('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+      expect(r.out).toContain('300000');
       expect(r.out).toContain('"--effort",high,/loop go');
       const c = cli(bot, ["start", "--continue", "--dry-run"]);
       expect(c.out).toContain('"--continue"');
+    } finally { bot.cleanup(); }
+  });
+
+  test("with no loop.autocompact, the window follows the mode: 750k strategist, 300k dispatcher", () => {
+    const bot = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "/loop go" } } });
+    const disp = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "/loop go", mode: "dispatcher" } } });
+    const pinned = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "/loop go", mode: "dispatcher", autocompact: "500k" } } });
+    try {
+      expect(cli(bot, ["start", "--dry-run"]).out).toContain('750000');
+      expect(cli(disp, ["start", "--dry-run"]).out).toContain('300000');
+      expect(cli(pinned, ["start", "--dry-run"]).out).toContain('500000');
+    } finally { bot.cleanup(); disp.cleanup(); pinned.cleanup(); }
+  });
+
+  test("a dispatcher with a live wake keeps quiet delays at the cap; without one, and with explicit values, the table stands", () => {
+    const base = { name: "x", mark: "x", runtime: { adapter: "herdr", agent: "x" } };
+    const d = (extra: Record<string, unknown>) => withDefaults({ ...base, loop: { prompt: "p", mode: "dispatcher" }, ...extra }).cadence;
+    expect(d({ wake: { files: ["~/f"] } }).quiet_working).toBe(2700);
+    expect(d({ wake: { files: ["~/f"] } }).quiet).toBe(2700);
+    expect(d({}).quiet_working).toBe(600);
+    expect(d({ wake: { files: ["~/f"] }, cadence: { quiet_working: 900 } }).quiet_working).toBe(900);
+    expect(d({ wake: { files: ["~/f"] }, cadence: { cap: 1800 } }).quiet).toBe(1800);
+    expect(withDefaults({ ...base, loop: { prompt: "p" }, wake: { files: ["~/f"] } }).cadence.quiet_working).toBe(600);
+  });
+
+  test("loop.mode picks the model when loop.model is unset; loop.model still wins", () => {
+    const disp = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "/loop go", mode: "dispatcher" } } });
+    const strat = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "/loop go" } } });
+    const pinned = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "/loop go", mode: "dispatcher", model: "sonnet" } } });
+    try {
+      expect(cli(disp, ["start", "--dry-run"]).out).toContain('"--model",opus');
+      expect(cli(strat, ["start", "--dry-run"]).out).toContain('"--model",fable');
+      expect(cli(pinned, ["start", "--dry-run"]).out).toContain('"--model",sonnet');
+    } finally { disp.cleanup(); strat.cleanup(); pinned.cleanup(); }
+  });
+
+  test("the pack carries exactly the loop mode's section", () => {
+    const disp = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "p", mode: "dispatcher" } } });
+    const strat = makeBot();
+    try {
+      const d = cli(disp, ["cold-start"]).out;
+      expect(d).toContain("Your loop mode: dispatcher");
+      expect(d).toContain("Call a Fable-class subagent");
+      expect(d).not.toContain("Your loop mode: strategist");
+      const s = cli(strat, ["cold-start"]).out;
+      expect(s).toContain("Your loop mode: strategist");
+      expect(s).not.toContain("Your loop mode: dispatcher");
+    } finally { disp.cleanup(); strat.cleanup(); }
+  });
+
+  test("settings validate rejects an unknown loop.mode", () => {
+    const bot = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "p", mode: "boss" } } });
+    try {
+      const r = cli(bot, ["settings", "validate"]);
+      expect(r.code).not.toBe(0);
+      expect(r.out).toContain("loop.mode must be one of strategist, dispatcher");
     } finally { bot.cleanup(); }
   });
 

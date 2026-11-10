@@ -5,7 +5,7 @@
  * statements (its own claims, to be checked against the record). Nothing here is
  * summarized by a model; the pack is what the model reads.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 
 export interface Ev { type: string; subtype?: string; timestamp: string; content: unknown }
 interface Part { type: string; text?: string; name?: string; id?: string; input?: unknown; tool_use_id?: string; content?: unknown }
@@ -13,10 +13,31 @@ interface Part { type: string; text?: string; name?: string; id?: string; input?
 export const COMPACTION_MARK = "This session is being continued from a previous conversation";
 const MIDTURN_MARK = "The user sent a new message while you were working:";
 
-export function readEvents(path: string): Ev[] {
-  if (!existsSync(path)) return [];
+/** How much of the log's end the liveness readers load. A session log grows without bound (one
+ * bot's passed 600 MB in six weeks), Node cannot hold a file past about 512 MB as one string, and
+ * every question asked here is about the last minutes: did the turn end, is a monitor armed. */
+export const TAIL_BYTES = 16 * 1024 * 1024;
+
+/**
+ * The log's events, oldest first. Reads at most `maxBytes` from the end of the file (the first,
+ * partial line of a cut read is dropped); never throws: an unreadable log is no events.
+ */
+export function readEvents(path: string, maxBytes: number = TAIL_BYTES): Ev[] {
+  let text: string;
+  try {
+    if (!existsSync(path)) return [];
+    const size = statSync(path).size;
+    if (size <= maxBytes) text = readFileSync(path, "utf8");
+    else {
+      const buf = Buffer.allocUnsafe(maxBytes);
+      const fd = openSync(path, "r");
+      try { readSync(fd, buf, 0, maxBytes, size - maxBytes); } finally { closeSync(fd); }
+      text = buf.toString("utf8");
+      text = text.slice(text.indexOf("\n") + 1);
+    }
+  } catch { return []; }
   const out: Ev[] = [];
-  for (const line of readFileSync(path, "utf8").split("\n")) {
+  for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     try {
       const v = JSON.parse(line);
@@ -170,7 +191,7 @@ export function sessionLogSection(path: string, opts: { calls?: number; statemen
 }
 
 /**
- * The pack section read through agent-session-axi (the published session-log library): its
+ * The pack section read through agent-recall-axi (the published session-log library): its
  * reader knows the log's structure (compaction boundaries, queued mid-turn messages, hook
  * output, subagent logs) where the reader above keys on rendered text. Three layers, each with
  * its own share so one long operator message cannot crowd out the bot's last actions: the
@@ -183,7 +204,7 @@ export async function sessionLogSectionLib(
   opts: { humanBudget?: number; calls?: number; statements?: number; loopPrompt?: string } = {},
 ): Promise<string | null> {
   try {
-    const lib = await import("agent-session-axi");
+    const lib = await import("agent-recall-axi");
     const session = await lib.openSession(path);
     // Every H-class message of the window, minus the loop prompt (the nudge and the bot's own
     // wakeups type it; it is not the operator speaking), then newest first, whole, to the budget.
@@ -210,10 +231,10 @@ export async function sessionLogSectionLib(
     };
     const s8 = id(hm.messages[0] ?? calls[0] ?? said[0] ?? { id: { session: "", seq: 0 } }).split(":")[0];
     const lines: string[] = [];
-    lines.push(`From your own session log (since the last compaction; ${path}), read by agent-session-axi. Three layers, different standing:`);
+    lines.push(`From your own session log (since the last compaction; ${path}), read by agent-recall-axi. Three layers, different standing:`);
     lines.push(`• The operator's words, verbatim: the highest authority here.${hm.messages.length === 0 ? " (none in this window)" : ""}`);
     if (hm.omitted > 0) {
-      lines.push(`  ${hm.omitted} earlier message${hm.omitted === 1 ? "" : "s"} not shown here; read them before acting on anything they may have said: npx -y agent-session-axi human ${path} --window last${hm.continueTo ? ` --to ${lib.formatId(hm.continueTo)}` : ""} --budget 0`);
+      lines.push(`  ${hm.omitted} earlier message${hm.omitted === 1 ? "" : "s"} not shown here; read them before acting on anything they may have said: npx -y agent-recall-axi human ${path} --window last${hm.continueTo ? ` --to ${lib.formatId(hm.continueTo)}` : ""} --budget 0`);
     }
     for (const m of hm.messages) lines.push(`  ${String(m.t).slice(11, 16)}Z ${id(m)} » ${one(String(m.text ?? ""))}`);
     lines.push(`• Your last ${calls.length} tool calls, as data (what ran, how it came back):`);
@@ -224,7 +245,7 @@ export async function sessionLogSectionLib(
     }
     lines.push("• Your last statements, as your own claims (check them against the record and the results above):");
     for (const a of said) lines.push(`  ${String(a.t).slice(11, 16)}Z “${one(String(a.text ?? "")).slice(0, 240)}”`);
-    lines.push(`  Zoom on any id: npx -y agent-session-axi show <id> (session ${s8}).`);
+    lines.push(`  Zoom on any id: npx -y agent-recall-axi show <id> (session ${s8}).`);
     return lines.join("\n");
   } catch {
     return null;

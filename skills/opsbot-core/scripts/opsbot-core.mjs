@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "5d2564c" : "dev";
+    VERSION = true ? "cee4efc" : "dev";
   }
 });
 
@@ -2255,14 +2255,15 @@ function validateSettings(raw) {
   }
   const loop = obj(raw, "loop", "", true);
   if (loop) {
-    allow(loop, "loop.", ["prompt", "autocompact", "model", "permission_mode"]);
+    allow(loop, "loop.", ["prompt", "autocompact", "model", "permission_mode", "mode"]);
+    if (loop.mode !== void 0 && !LOOP_MODES.includes(loop.mode)) problems.push(`loop.mode must be one of ${LOOP_MODES.join(", ")}`);
     str2(loop, "prompt", "loop.", true);
     if (loop.model !== void 0 && (typeof loop.model !== "string" || loop.model === "")) problems.push("loop.model must be a non-empty string (a Claude Code model name or alias)");
     const PM = ["auto", "default", "acceptEdits", "plan"];
     if (loop.permission_mode !== void 0 && !PM.includes(loop.permission_mode)) problems.push(`loop.permission_mode must be one of ${PM.join(", ")}`);
     const ac = loop.autocompact;
     if (ac !== void 0 && !(typeof ac === "string" && ac !== "") && !(typeof ac === "number" && ac > 0)) {
-      problems.push('loop.autocompact must be a window such as "300k" or a number');
+      problems.push('loop.autocompact must be a window such as "750k" or a number');
     }
   }
   const cadence = obj(raw, "cadence", "", false);
@@ -2337,6 +2338,8 @@ function withDefaults(raw) {
   const lv = raw.liveness ?? {};
   const rt = raw.runtime ?? {};
   const pick = (v, d) => v === void 0 ? d : v;
+  const mode = LOOP_MODES.includes(loop.mode) ? loop.mode : "strategist";
+  const wakeList = Array.isArray(raw.wake?.files) ? raw.wake.files : [];
   const cadence = {
     hot: pick(cad.hot, DEFAULT_CADENCE.hot),
     warm: pick(cad.warm, DEFAULT_CADENCE.warm),
@@ -2354,6 +2357,10 @@ function withDefaults(raw) {
       end: pick(nh.end, DEFAULT_CADENCE.night_hours.end)
     }
   };
+  if (mode === "dispatcher" && wakeList.length > 0) {
+    if (cad.quiet_working === void 0) cadence.quiet_working = cadence.cap;
+    if (cad.quiet === void 0) cadence.quiet = cadence.cap;
+  }
   const liveness = Object.fromEntries(
     LIVENESS_KEYS.map((k) => [k, pick(lv[k], DEFAULT_LIVENESS[k])])
   );
@@ -2368,9 +2375,10 @@ function withDefaults(raw) {
     gate_word: pick(raw.gate_word, null),
     loop: {
       prompt: loop.prompt,
-      autocompact: loop.autocompact === void 0 ? null : String(loop.autocompact),
+      autocompact: loop.autocompact === void 0 ? MODE_AUTOCOMPACT[mode] : String(loop.autocompact),
       model: loop.model === void 0 ? null : String(loop.model),
-      permission_mode: loop.permission_mode === void 0 ? "auto" : String(loop.permission_mode)
+      permission_mode: loop.permission_mode === void 0 ? "auto" : String(loop.permission_mode),
+      mode
     },
     cadence,
     lock_max_minutes: pick(raw.lock_max_minutes, 60),
@@ -2378,7 +2386,7 @@ function withDefaults(raw) {
     runtime: { adapter: "herdr", agent: rt.agent },
     streams,
     repo_sync: pick(raw.repo_sync, "pull-on-clean"),
-    wake: { files: Array.isArray(raw.wake?.files) ? raw.wake.files : [] }
+    wake: { files: wakeList }
   };
 }
 function parseSettingsText(text, where) {
@@ -2417,13 +2425,16 @@ function trySettings(root) {
   const p = join3(root, SETTINGS_FILE);
   return existsSync4(p) ? tryText(readFileSync2(p, "utf8")) : null;
 }
-var SETTINGS_FILE, DEFAULT_CADENCE, DEFAULT_LIVENESS, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR;
+var SETTINGS_FILE, LOOP_MODES, MODE_AUTOCOMPACT, MODE_MODEL, DEFAULT_CADENCE, DEFAULT_LIVENESS, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR;
 var init_settings = __esm({
   "src/opsbot-core/settings.ts"() {
     "use strict";
     init_dist2();
     init_repo();
     SETTINGS_FILE = "opsbot.json";
+    LOOP_MODES = ["strategist", "dispatcher"];
+    MODE_AUTOCOMPACT = { strategist: "750k", dispatcher: "300k" };
+    MODE_MODEL = { strategist: "fable", dispatcher: "opus" };
     DEFAULT_CADENCE = {
       hot: 180,
       warm: 600,
@@ -3039,10 +3050,10 @@ var init_check = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/errors.js
+// node_modules/agent-recall-axi/dist/src/lib/errors.js
 var ERROR_CODES, AgentSessionError;
 var init_errors2 = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/errors.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/errors.js"() {
     ERROR_CODES = ["USAGE", "VALIDATION_ERROR", "NOT_FOUND", "AMBIGUOUS_SESSION", "NO_SESSIONS", "UNREADABLE", "INTERNAL_ERROR"];
     AgentSessionError = class extends Error {
       code;
@@ -3060,13 +3071,13 @@ var init_errors2 = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/model.js
+// node_modules/agent-recall-axi/dist/src/lib/model.js
 function isKind(value) {
   return KINDS.includes(value);
 }
 var KINDS, AUTHORITY, HIDDEN_BY_DEFAULT, DEFAULT_KINDS;
 var init_model = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/model.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/model.js"() {
     KINDS = [
       "human",
       "human.queued",
@@ -3104,7 +3115,7 @@ var init_model = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/output/truncate.js
+// node_modules/agent-recall-axi/dist/src/output/truncate.js
 function spans(text, opts) {
   const out = [];
   const res = [URL_RE, ID_RE, ...opts.paths ? [PATH_RE] : []];
@@ -3173,7 +3184,7 @@ function targetCut(ev, cap) {
 }
 var ROW_MARK, URL_RE, ID_RE, PATH_RE, DETAIL_CAP;
 var init_truncate = __esm({
-  "node_modules/agent-session-axi/dist/src/output/truncate.js"() {
+  "node_modules/agent-recall-axi/dist/src/output/truncate.js"() {
     ROW_MARK = "\u2026";
     URL_RE = /[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s<>"'`]+/g;
     ID_RE = /(?<![0-9a-f])[0-9a-f]{8}:[1-9][0-9]*(?:\.[1-9][0-9]*)?(?![0-9])/g;
@@ -3182,7 +3193,7 @@ var init_truncate = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/reader.js
+// node_modules/agent-recall-axi/dist/src/lib/reader.js
 import { open } from "node:fs/promises";
 async function* readLines(path, opts = {}) {
   const blockSize = opts.blockSize ?? BLOCK_SIZE;
@@ -3311,13 +3322,13 @@ async function countNewlinesBetween(path, startOffset, endOffset, blockSize = BL
 }
 var BLOCK_SIZE, NL;
 var init_reader = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/reader.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/reader.js"() {
     BLOCK_SIZE = 1 << 20;
     NL = 10;
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/adapters/claude-code/classify.js
+// node_modules/agent-recall-axi/dist/src/lib/adapters/claude-code/classify.js
 import { basename as basename3, join as join6 } from "node:path";
 import { existsSync as existsSync8 } from "node:fs";
 function isSilentType(type) {
@@ -3861,7 +3872,7 @@ function link(ev, ctx) {
 }
 var SILENT_TYPES, MESSAGE_TYPES, PATH_KEYS, SUBAGENT_TOOLS, QUESTION_TOOL, isObj2, str, SKILL_PREFIX, CONTINUED_PREFIX, REMINDER_ONLY, HARNESS_WRAPPER, HOOK_WRAPPER, SLASH_ONLY, IMAGE_ONLY, POINTER_RE, SIZE_MULT;
 var init_classify = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/adapters/claude-code/classify.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/adapters/claude-code/classify.js"() {
     init_model();
     SILENT_TYPES = /* @__PURE__ */ new Set([
       "ai-title",
@@ -3901,7 +3912,7 @@ var init_classify = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/adapters/claude-code/detect.js
+// node_modules/agent-recall-axi/dist/src/lib/adapters/claude-code/detect.js
 async function detect(path) {
   if (!path.endsWith(".jsonl"))
     return false;
@@ -3923,12 +3934,12 @@ async function detect(path) {
   return !sawLine;
 }
 var init_detect = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/adapters/claude-code/detect.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/adapters/claude-code/detect.js"() {
     init_reader();
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/adapters/claude-code/sessions.js
+// node_modules/agent-recall-axi/dist/src/lib/adapters/claude-code/sessions.js
 import { createHash } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import { basename as basename4, dirname as dirname4, join as join7 } from "node:path";
@@ -4101,13 +4112,13 @@ async function readSessionsIndex(projectDir) {
 }
 var ADAPTER_ID;
 var init_sessions = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/adapters/claude-code/sessions.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/adapters/claude-code/sessions.js"() {
     init_reader();
     ADAPTER_ID = "claude-code";
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/adapters/claude-code/index.js
+// node_modules/agent-recall-axi/dist/src/lib/adapters/claude-code/index.js
 function parseLine(line) {
   const entry = { seq: line.seq, offset: line.offset };
   if (!line.text.trim())
@@ -4141,7 +4152,7 @@ function parseLine(line) {
 }
 var claudeCode;
 var init_claude_code = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/adapters/claude-code/index.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/adapters/claude-code/index.js"() {
     init_reader();
     init_classify();
     init_detect();
@@ -4172,7 +4183,7 @@ var init_claude_code = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/scope.js
+// node_modules/agent-recall-axi/dist/src/lib/scope.js
 import { stat as stat2 } from "node:fs/promises";
 import { homedir as homedir4 } from "node:os";
 import { dirname as dirname5, join as join8, resolve as resolve3 } from "node:path";
@@ -4256,7 +4267,7 @@ async function resolveScope(scope = {}) {
 }
 var NO_SESSIONS_HINTS;
 var init_scope = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/scope.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/scope.js"() {
     init_errors2();
     init_claude_code();
     init_sessions();
@@ -4267,7 +4278,7 @@ var init_scope = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/invocation.js
+// node_modules/agent-recall-axi/dist/src/invocation.js
 import { accessSync as accessSync3, constants as constants3, realpathSync as realpathSync3, statSync as statSync3 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
 import { basename as basename5, delimiter, dirname as dirname6, join as join9 } from "node:path";
@@ -4325,29 +4336,29 @@ function cliInvocation2(entrypoint = process.argv[1], pathVar = process.env.PATH
 }
 var NAME, BUNDLE_FILE, BIN;
 var init_invocation2 = __esm({
-  "node_modules/agent-session-axi/dist/src/invocation.js"() {
-    NAME = "agent-session-axi";
+  "node_modules/agent-recall-axi/dist/src/invocation.js"() {
+    NAME = "agent-recall-axi";
     BUNDLE_FILE = `${NAME}.mjs`;
     BIN = cliInvocation2();
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/adapters/adapter.js
+// node_modules/agent-recall-axi/dist/src/lib/adapters/adapter.js
 function newContext(session) {
   return { session, pending: /* @__PURE__ */ new Map(), tools: /* @__PURE__ */ new Map() };
 }
 var init_adapter = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/adapters/adapter.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/adapters/adapter.js"() {
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/window-state.js
+// node_modules/agent-recall-axi/dist/src/lib/window-state.js
 function unlinkedSummary(ev) {
   return ev.kind === "summary" && !(ev.meta !== void 0 && "compaction" in ev.meta);
 }
 var WindowCounter;
 var init_window_state = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/window-state.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/window-state.js"() {
     WindowCounter = class {
       index;
       seen;
@@ -4381,7 +4392,7 @@ var init_window_state = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/version.js
+// node_modules/agent-recall-axi/dist/src/version.js
 import { readFileSync as readFileSync4 } from "node:fs";
 import { dirname as dirname7, join as join10 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
@@ -4399,12 +4410,12 @@ function readVersion() {
 }
 var VERSION2;
 var init_version2 = __esm({
-  "node_modules/agent-session-axi/dist/src/version.js"() {
-    VERSION2 = typeof __AGENT_SESSION_AXI_VERSION__ === "string" ? __AGENT_SESSION_AXI_VERSION__ : readVersion();
+  "node_modules/agent-recall-axi/dist/src/version.js"() {
+    VERSION2 = typeof __AGENT_RECALL_AXI_VERSION__ === "string" ? __AGENT_RECALL_AXI_VERSION__ : readVersion();
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/cache/store.js
+// node_modules/agent-recall-axi/dist/src/lib/cache/store.js
 import { createHash as createHash2 } from "node:crypto";
 import { lstat, mkdir, open as open2, readFile, rename, rm, stat as stat3, writeFile } from "node:fs/promises";
 import { homedir as homedir6 } from "node:os";
@@ -4414,7 +4425,7 @@ function cacheDir(opts = {}) {
     return opts.dir;
   const env = opts.env ?? process.env;
   const base = env.XDG_CACHE_HOME && env.XDG_CACHE_HOME.length ? env.XDG_CACHE_HOME : join11(homedir6(), ".cache");
-  return join11(base, "agent-session-axi");
+  return join11(base, "agent-recall-axi");
 }
 function recordName(path) {
   return `${sha(path).slice(0, 32)}.json`;
@@ -4547,14 +4558,14 @@ async function checkRewrite(path, opts = {}) {
 }
 var sha, DERIVED_DIRS;
 var init_store = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/cache/store.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/cache/store.js"() {
     init_reader();
     sha = (data) => createHash2("sha256").update(data).digest("hex");
     DERIVED_DIRS = ["index", "stats", "terms"];
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/cache/index.js
+// node_modules/agent-recall-axi/dist/src/lib/cache/index.js
 import { open as open3, readFile as readFile2, readdir as readdir2, rm as rm2, stat as stat4 } from "node:fs/promises";
 import { join as join12, sep } from "node:path";
 function emptyState() {
@@ -4919,7 +4930,7 @@ async function clearCache(opts = {}) {
 }
 var CHECKPOINT_EVERY, VERSION3, escapeTool, unescapeTool, SeededTools, opensTurn, KIND_INDEX, idText, CANONICAL_TS;
 var init_cache = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/cache/index.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/cache/index.js"() {
     init_adapter();
     init_claude_code();
     init_ids();
@@ -4968,7 +4979,7 @@ var init_cache = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/stats.js
+// node_modules/agent-recall-axi/dist/src/lib/stats.js
 var stats_exports = {};
 __export(stats_exports, {
   HEAD_TITLE_BYTES: () => HEAD_TITLE_BYTES,
@@ -5214,7 +5225,7 @@ async function cachedStats(session, opts = {}) {
 }
 var MIRROR_VERSION, KIND_INDEX2, cum, HEAD_TITLE_BYTES;
 var init_stats = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/stats.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/stats.js"() {
     init_sessions();
     init_reader();
     init_adapter();
@@ -5231,7 +5242,7 @@ var init_stats = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/session.js
+// node_modules/agent-recall-axi/dist/src/lib/session.js
 import { stat as stat6 } from "node:fs/promises";
 import { resolve as resolve4 } from "node:path";
 async function openSession(path) {
@@ -5299,7 +5310,7 @@ async function* listSessions2(scope = {}, opts = {}) {
   yield* listing.sessions;
 }
 var init_session = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/session.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/session.js"() {
     init_invocation2();
     init_errors2();
     init_stats();
@@ -5308,7 +5319,7 @@ var init_session = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/ids.js
+// node_modules/agent-recall-axi/dist/src/lib/ids.js
 import { constants as constants4 } from "node:fs";
 import { access, stat as stat7 } from "node:fs/promises";
 import { homedir as homedir7 } from "node:os";
@@ -5512,7 +5523,7 @@ async function resolveId(text, scope = {}, opts = {}) {
 }
 var ID_RE2, SEQ_RE, ID_GRAMMAR, SESSION_GRAMMAR, TITLE_HEAD;
 var init_ids = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/ids.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/ids.js"() {
     init_errors2();
     init_truncate();
     init_scope();
@@ -5527,7 +5538,7 @@ var init_ids = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/time.js
+// node_modules/agent-recall-axi/dist/src/lib/time.js
 function formatter(tz) {
   let f = formatterCache.get(tz);
   if (!f) {
@@ -5686,7 +5697,7 @@ function validDate(y, m, d) {
 }
 var WHEN_GRAMMAR, SPAN_GRAMMAR, formatterCache, DAY_MS, UNIT_MS;
 var init_time = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/time.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/time.js"() {
     init_errors2();
     WHEN_GRAMMAR = "<when> is an ISO instant (2026-04-20T14:00, optional zone), a date (2026-04-20), now, today, yesterday, \xB1Nd, \xB1Nw, \xB1Nh or \xB1Nm";
     SPAN_GRAMMAR = "<span> is a count and a unit: 90m, 24h, 7d, 2w, 1y";
@@ -5696,7 +5707,7 @@ var init_time = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/hold.js
+// node_modules/agent-recall-axi/dist/src/lib/hold.js
 function kindSet(kinds) {
   if (kinds === "all")
     return new Set(KINDS);
@@ -5764,7 +5775,7 @@ function inSpan(ev, span) {
 }
 var isEventId, HOLD_CAP;
 var init_hold = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/hold.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/hold.js"() {
     init_errors2();
     init_ids();
     init_model();
@@ -5775,7 +5786,7 @@ var init_hold = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/windows.js
+// node_modules/agent-recall-axi/dist/src/lib/windows.js
 function grammarFor(count2) {
   const k = count2 - 1;
   return `--window takes a 0-based window index (0..${k}), last, k.. (${k}.. runs to the end) or all`;
@@ -5968,7 +5979,7 @@ async function openingSummary(session, range) {
 }
 var WINDOW_GRAMMAR, total;
 var init_windows = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/windows.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/windows.js"() {
     init_errors2();
     init_ids();
     init_model();
@@ -5980,7 +5991,7 @@ var init_windows = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/events.js
+// node_modules/agent-recall-axi/dist/src/lib/events.js
 import { readFile as readFile4, realpath, stat as stat8 } from "node:fs/promises";
 import { join as join15, sep as sep2 } from "node:path";
 function windowStart(session, range) {
@@ -6464,7 +6475,7 @@ async function linkedResult(session, event, opts = {}) {
 }
 var TAIL_APPEND_INDEX, opensTurn2;
 var init_events = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/events.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/events.js"() {
     init_invocation2();
     init_errors2();
     init_ids();
@@ -6482,7 +6493,7 @@ var init_events = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/find.js
+// node_modules/agent-recall-axi/dist/src/lib/find.js
 import { open as open4 } from "node:fs/promises";
 import { StringDecoder } from "node:string_decoder";
 import { stat as stat9 } from "node:fs/promises";
@@ -7071,7 +7082,7 @@ async function findAcrossListing(scope, q, onHit) {
 }
 var WHY_ORDER, GLOB_CHARS, isEventId2, OPTIONAL_RUN_LIMIT, carriesTool, STREAM_CHUNK, HOLD_CAP2;
 var init_find = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/find.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/find.js"() {
     init_errors2();
     init_ids();
     init_events();
@@ -7091,7 +7102,7 @@ var init_find = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/turns.js
+// node_modules/agent-recall-axi/dist/src/lib/turns.js
 function close(o, next3) {
   const t = o.turn;
   t.ended = o.boundary ? "compaction" : next3 || o.lastWork === "assistant" ? "stop" : "open";
@@ -7157,7 +7168,7 @@ async function* turns(session, opts = {}, stats) {
 }
 var opensTurn3, WORK;
 var init_turns = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/turns.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/turns.js"() {
     init_ids();
     init_reader();
     init_claude_code();
@@ -7169,7 +7180,7 @@ var init_turns = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/human.js
+// node_modules/agent-recall-axi/dist/src/lib/human.js
 function budgetCut(all, budget) {
   if (budget === Infinity || all.length === 0)
     return { kept: all, omitted: 0 };
@@ -7212,7 +7223,7 @@ async function humanMessages(session, opts = {}) {
 }
 var DEFAULT_HUMAN_BUDGET, SUMMARY_CAP;
 var init_human = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/human.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/human.js"() {
     init_model();
     init_hold();
     init_events();
@@ -7222,7 +7233,7 @@ var init_human = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/tools.js
+// node_modules/agent-recall-axi/dist/src/lib/tools.js
 function toolFilter(opts) {
   const name = opts.name?.toLowerCase();
   const file = opts.file !== void 0 ? compileQuery({ file: opts.file }).file : void 0;
@@ -7290,7 +7301,7 @@ async function* toolCalls(session, opts = {}) {
     yield c.call;
 }
 var init_tools = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/tools.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/tools.js"() {
     init_hold();
     init_events();
     init_find();
@@ -7298,7 +7309,7 @@ var init_tools = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/output/resume-layout.js
+// node_modules/agent-recall-axi/dist/src/output/resume-layout.js
 function textCost(text) {
   return Buffer.byteLength(JSON.stringify(text), "utf8");
 }
@@ -7322,7 +7333,7 @@ function summaryDroppedCost(ev) {
 }
 var TARGET_CAP, HUMAN_ITEM, CLAIM_ITEM, SUMMARY_BLOCK, SUMMARY_DROPPED, TOOL_ROW, LAYER_KEYS;
 var init_resume_layout = __esm({
-  "node_modules/agent-session-axi/dist/src/output/resume-layout.js"() {
+  "node_modules/agent-recall-axi/dist/src/output/resume-layout.js"() {
     init_ids();
     init_model();
     init_truncate();
@@ -7336,7 +7347,7 @@ var init_resume_layout = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/resume.js
+// node_modules/agent-recall-axi/dist/src/lib/resume.js
 function invalid2(what, value, grammar) {
   return new AgentSessionError(`resume-pack ${what} ${String(value)} is not valid`, "VALIDATION_ERROR", [grammar]);
 }
@@ -7437,7 +7448,7 @@ async function buildResumePack(session, opts = {}) {
 }
 var DEFAULT_RESUME_BUDGET, DEFAULT_RESUME_TOOLS, DEFAULT_RESUME_CLAIMS, count, WINDOW_GRAMMAR2;
 var init_resume = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/resume.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/resume.js"() {
     init_errors2();
     init_model();
     init_cache();
@@ -7453,7 +7464,7 @@ var init_resume = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/home.js
+// node_modules/agent-recall-axi/dist/src/lib/home.js
 import { constants as constants5 } from "node:fs";
 import { access as access2, stat as stat10 } from "node:fs/promises";
 async function lastHumanOf(session, opts = {}) {
@@ -7539,7 +7550,7 @@ async function homeListing(scope, opts = {}) {
 }
 var LAST_HUMAN_BYTES, STATS_APPEND;
 var init_home2 = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/home.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/home.js"() {
     init_adapter();
     init_claude_code();
     init_sessions();
@@ -7552,7 +7563,7 @@ var init_home2 = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/recall.js
+// node_modules/agent-recall-axi/dist/src/lib/recall.js
 import { readFile as readFile5, stat as stat11 } from "node:fs/promises";
 function tokens(text) {
   return text.toLowerCase().match(WORD) ?? [];
@@ -7714,8 +7725,8 @@ async function recall(phrase, opts = {}) {
     throw new AgentSessionError("since and from both set the start; pass one", "USAGE", ["recall(phrase, { since }) or { from }"]);
   const bad = (opts.kinds ?? []).filter((k) => !SEARCHABLE.has(k));
   if (bad.length) {
-    throw new AgentSessionError(`recall searches what the human and the agent said and the calls it made; ${bad.join(", ")} ${bad.length === 1 ? "is" : "are"} not among them`, "VALIDATION_ERROR", [
-      `kinds recall takes: ${[...SEARCHABLE].join(", ")}`,
+    throw new AgentSessionError(`search covers what the human and the agent said and the calls it made; ${bad.join(", ")} ${bad.length === 1 ? "is" : "are"} not among them`, "VALIDATION_ERROR", [
+      `kinds search takes: ${[...SEARCHABLE].join(", ")}`,
       `Run \`${BIN} find "<phrase>" --all --kind <kinds>\` to search tool output and injected text`
     ]);
   }
@@ -7772,7 +7783,7 @@ async function recall(phrase, opts = {}) {
 }
 var RECALL_KINDS, SEARCHABLE, TERMS_VERSION, WORD, byToken, TermCollector, both;
 var init_recall = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/recall.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/recall.js"() {
     init_invocation2();
     init_errors2();
     init_claude_code();
@@ -7814,7 +7825,7 @@ var init_recall = __esm({
   }
 });
 
-// node_modules/agent-session-axi/dist/src/lib/index.js
+// node_modules/agent-recall-axi/dist/src/lib/index.js
 var lib_exports = {};
 __export(lib_exports, {
   AUTHORITY: () => AUTHORITY,
@@ -7904,7 +7915,7 @@ async function* listProjects2(scope = {}) {
     yield p;
 }
 var init_lib = __esm({
-  "node_modules/agent-session-axi/dist/src/lib/index.js"() {
+  "node_modules/agent-recall-axi/dist/src/lib/index.js"() {
     init_errors2();
     init_model();
     init_ids();
@@ -7933,11 +7944,29 @@ var init_lib = __esm({
 });
 
 // src/opsbot-core/transcript.ts
-import { existsSync as existsSync9, readFileSync as readFileSync5 } from "node:fs";
-function readEvents(path) {
-  if (!existsSync9(path)) return [];
+import { closeSync, existsSync as existsSync9, openSync, readFileSync as readFileSync5, readSync, statSync as statSync4 } from "node:fs";
+function readEvents(path, maxBytes = TAIL_BYTES) {
+  let text;
+  try {
+    if (!existsSync9(path)) return [];
+    const size = statSync4(path).size;
+    if (size <= maxBytes) text = readFileSync5(path, "utf8");
+    else {
+      const buf = Buffer.allocUnsafe(maxBytes);
+      const fd = openSync(path, "r");
+      try {
+        readSync(fd, buf, 0, maxBytes, size - maxBytes);
+      } finally {
+        closeSync(fd);
+      }
+      text = buf.toString("utf8");
+      text = text.slice(text.indexOf("\n") + 1);
+    }
+  } catch {
+    return [];
+  }
   const out = [];
-  for (const line of readFileSync5(path, "utf8").split("\n")) {
+  for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     try {
       const v = JSON.parse(line);
@@ -8086,10 +8115,10 @@ async function sessionLogSectionLib(path, opts = {}) {
     };
     const s8 = id(hm.messages[0] ?? calls[0] ?? said[0] ?? { id: { session: "", seq: 0 } }).split(":")[0];
     const lines = [];
-    lines.push(`From your own session log (since the last compaction; ${path}), read by agent-session-axi. Three layers, different standing:`);
+    lines.push(`From your own session log (since the last compaction; ${path}), read by agent-recall-axi. Three layers, different standing:`);
     lines.push(`\u2022 The operator's words, verbatim: the highest authority here.${hm.messages.length === 0 ? " (none in this window)" : ""}`);
     if (hm.omitted > 0) {
-      lines.push(`  ${hm.omitted} earlier message${hm.omitted === 1 ? "" : "s"} not shown here; read them before acting on anything they may have said: npx -y agent-session-axi human ${path} --window last${hm.continueTo ? ` --to ${lib.formatId(hm.continueTo)}` : ""} --budget 0`);
+      lines.push(`  ${hm.omitted} earlier message${hm.omitted === 1 ? "" : "s"} not shown here; read them before acting on anything they may have said: npx -y agent-recall-axi human ${path} --window last${hm.continueTo ? ` --to ${lib.formatId(hm.continueTo)}` : ""} --budget 0`);
     }
     for (const m of hm.messages) lines.push(`  ${String(m.t).slice(11, 16)}Z ${id(m)} \xBB ${one(String(m.text ?? ""))}`);
     lines.push(`\u2022 Your last ${calls.length} tool calls, as data (what ran, how it came back):`);
@@ -8100,18 +8129,19 @@ async function sessionLogSectionLib(path, opts = {}) {
     }
     lines.push("\u2022 Your last statements, as your own claims (check them against the record and the results above):");
     for (const a of said) lines.push(`  ${String(a.t).slice(11, 16)}Z \u201C${one(String(a.text ?? "")).slice(0, 240)}\u201D`);
-    lines.push(`  Zoom on any id: npx -y agent-session-axi show <id> (session ${s8}).`);
+    lines.push(`  Zoom on any id: npx -y agent-recall-axi show <id> (session ${s8}).`);
     return lines.join("\n");
   } catch {
     return null;
   }
 }
-var COMPACTION_MARK, MIDTURN_MARK, parts, partText, NOISE, clip, hhmm;
+var COMPACTION_MARK, MIDTURN_MARK, TAIL_BYTES, parts, partText, NOISE, clip, hhmm;
 var init_transcript = __esm({
   "src/opsbot-core/transcript.ts"() {
     "use strict";
     COMPACTION_MARK = "This session is being continued from a previous conversation";
     MIDTURN_MARK = "The user sent a new message while you were working:";
+    TAIL_BYTES = 16 * 1024 * 1024;
     parts = (c) => Array.isArray(c) ? c : [];
     partText = (c) => typeof c === "string" ? c : parts(c).map((p) => p.type === "text" ? p.text ?? "" : "").join("\n");
     NOISE = [/^<command-/, /^<local-command/, /hook success/, /^<bash-input>/, /^\[Request interrupted/];
@@ -8183,7 +8213,7 @@ var init_wake = __esm({
 });
 
 // src/opsbot-core/commands/coldstart.ts
-import { existsSync as existsSync10, mkdirSync as mkdirSync3, readdirSync as readdirSync2, readFileSync as readFileSync6, rmSync as rmSync3, statSync as statSync4, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync10, mkdirSync as mkdirSync3, readdirSync as readdirSync2, readFileSync as readFileSync6, rmSync as rmSync3, statSync as statSync5, writeFileSync as writeFileSync3 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
 import { join as join16, resolve as resolve6 } from "node:path";
 function cacheDir2(name) {
@@ -8278,10 +8308,13 @@ function logSummary(root, now) {
   }
   return out;
 }
-function kitSections() {
+function kitSections(mode) {
   const dir = process.env.OPSBOT_PACK_DIR || join16(skillDir(), "references", "pack");
   if (!existsSync10(dir)) return [];
-  return readdirSync2(dir).filter((f) => f.endsWith(".md")).sort().map((f) => {
+  return readdirSync2(dir).filter((f) => f.endsWith(".md")).filter((f) => {
+    const m = f.match(/^\d+[-_]mode-([a-z]+)\.md$/);
+    return !m || m[1] === (mode ?? "strategist");
+  }).sort().map((f) => {
     let text = readFileSync6(join16(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
     const m = text.match(/^#\s+(.+)$/m);
     const title = m ? m[1].trim() : f.replace(/^\d+[-_]/, "").replace(/\.md$/, "");
@@ -8301,7 +8334,7 @@ function buildPack(root, s, settingsText, transcript, sessionLog) {
 (the rule card is not committed at HEAD: say so to the operator)` : `\u2550\u2550\u2550 1. The rule card (${s.rule_card})
 ${text.replace(/\n+$/, "")}`;
   }
-  const kit = kitSections().map((k, i) => `\u2550\u2550\u2550 1.${i + 1} ${k.title} (the kit's; updates with the skill)
+  const kit = kitSections(s.loop.mode).map((k, i) => `\u2550\u2550\u2550 1.${i + 1} ${k.title} (the kit's; updates with the skill)
 ${k.body}`);
   if (transcript) {
     const body = sessionLog ?? sessionLogSection(transcript);
@@ -8409,7 +8442,7 @@ async function gateCommand(args) {
   if (!existsSync10(pending)) return { gate: "open" };
   let packSize = 0;
   try {
-    packSize = statSync4(pack).size;
+    packSize = statSync5(pack).size;
   } catch {
     packSize = 0;
   }
@@ -8985,6 +9018,7 @@ function nudgeCommand(args) {
       const log = found2.log ?? sessionPointer(root)?.transcript_path ?? null;
       const evs = log ? readEvents(log) : [];
       if (evs.length === 0) return { nudge: `nothing \xB7 ${agent} is working (mid-turn; no session log to check)` };
+      if (!evs.some((e) => e.type === "assistant")) return { nudge: `nothing \xB7 ${agent} is working (mid-turn; the session log's tail shows no turn)` };
       const t = turnEnded(evs);
       if (!t.ended) return { nudge: `nothing \xB7 ${agent} is working (mid-turn since ${t.since.slice(11, 16)}Z)` };
       via = ` \xB7 the runtime said working, but the session log shows the turn ended${t.at ? ` at ${t.at.slice(11, 16)}Z` : ""} (background work only)`;
@@ -9336,11 +9370,19 @@ var init_hook = __esm({
 
 // src/opsbot-core/commands/start.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
+function autocompactTokens(v) {
+  if (!v) return null;
+  const m = String(v).trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*([km]?)$/);
+  if (!m) return null;
+  const n = Number(m[1]) * (m[2] === "m" ? 1e6 : m[2] === "k" ? 1e3 : 1);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+}
 function startArgv(s, opts) {
   const argv = ["claude", "--permission-mode", s.loop.permission_mode];
-  if (s.loop.model) argv.push("--model", s.loop.model);
-  if (s.loop.autocompact) argv.push("--autocompact", s.loop.autocompact);
-  argv.push("--settings", JSON.stringify({ autoCompactEnabled: true }));
+  const model = s.loop.model ?? (s.loop.mode ? MODE_MODEL[s.loop.mode] : null);
+  if (model) argv.push("--model", model);
+  const window = autocompactTokens(s.loop.autocompact);
+  argv.push("--settings", JSON.stringify(window ? { autoCompactEnabled: true, env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) } } : { autoCompactEnabled: true }));
   if (opts.cont) argv.push("--continue");
   argv.push(...opts.extra);
   argv.push(s.loop.prompt);
@@ -9364,7 +9406,9 @@ function startCommand(args) {
   }
   const argv = startArgv(s, { cont: flags["continue"] === true, extra });
   if (flags["dry-run"]) return { start: "would run", cwd: root, argv };
-  const r = spawnSync2(argv[0], argv.slice(1), { cwd: root, stdio: "inherit" });
+  const window = autocompactTokens(s.loop.autocompact);
+  const env = window ? { ...process.env, CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) } : process.env;
+  const r = spawnSync2(argv[0], argv.slice(1), { cwd: root, stdio: "inherit", env });
   setExit(r.status ?? 1);
   return r.error ? encode2({ error: `could not start claude: ${r.error.message}`, help: ["Is `claude` on PATH for this user?"] }) : "";
 }
@@ -9372,6 +9416,7 @@ var USAGE;
 var init_start = __esm({
   "src/opsbot-core/commands/start.ts"() {
     "use strict";
+    init_settings();
     init_dist3();
     init_args();
     init_repo();

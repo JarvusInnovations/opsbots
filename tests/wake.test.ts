@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BASE_SETTINGS, cli, makeBot, writeStream, type Bot } from "./helpers";
 import { lastMonitorCall, readEvents, turnEnded } from "../src/opsbot-core/transcript";
@@ -62,6 +63,23 @@ describe("transcript: turn state and monitors", () => {
     midTurnLog(b);
     expect(turnEnded(readEvents(b))).toEqual({ ended: false, since: "2026-03-02T14:41:00Z" });
     expect(turnEnded([])).toEqual({ ended: true, at: null });
+  });
+
+  test("readEvents loads only the end of a long log and drops the cut line; an unreadable log is no events", () => {
+    const dir = mkdtempSync(join(tmpdir(), "opsbot-tail-"));
+    const p = join(dir, "long.jsonl");
+    const pad = "x".repeat(300);
+    const lines = Array.from({ length: 200 }, (_, i) => JSON.stringify({ type: "user", timestamp: `2026-03-02T14:00:${String(i % 60).padStart(2, "0")}Z`, message: { content: `${i} ${pad}` } }));
+    lines.push(JSON.stringify({ type: "assistant", timestamp: "2026-03-02T15:00:00Z", message: { content: [{ type: "text", text: "done" }] } }));
+    lines.push(JSON.stringify({ type: "system", subtype: "turn_duration", timestamp: "2026-03-02T15:00:01Z" }));
+    writeFileSync(p, lines.join("\n") + "\n");
+    const tail = readEvents(p, 2000);
+    expect(tail.length).toBeGreaterThan(2);
+    expect(tail.length).toBeLessThan(10);
+    expect(turnEnded(tail)).toEqual({ ended: true, at: "2026-03-02T15:00:01Z" });
+    expect(readEvents(p).length).toBe(202);
+    expect(readEvents(dir)).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
   });
 
   test("the last Monitor on a file is found with its deadline, and a later ending notice marks it ended", () => {
