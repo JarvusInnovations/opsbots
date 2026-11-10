@@ -4,6 +4,7 @@ done: 2026-11-10
 depends: [opsbot-host-bootstrap]
 specs:
   - specs/skills/opsbot-host.md
+pr: 54
 ---
 
 # opsbot-host: the whole skill on a fresh user
