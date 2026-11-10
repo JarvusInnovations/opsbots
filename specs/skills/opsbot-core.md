@@ -124,11 +124,34 @@ file, since a unit outlives any one commit.
 | `wake.d/` | every cold start | one section of the reground pack each (what is owed, open escalations, …); each capped to its share of the byte budget |
 | `escalate.d/` | when the core must reach the operator | receives the message on stdin; every script runs (a chat DM, a push notification); the core needs at least one or `watchdog` reports itself unable to escalate |
 
-The core ships nothing in these directories except test fixtures. A channel skill
+The core runs nothing from these directories that the bot's repo did not put there; it ships one adapter as a template to copy (`templates/heartbeat.d/50-peer-sessions`, below) and test fixtures. A channel skill
 installs its adapter into `heartbeat.d/` and its listener into `monitor.d/`; the record
 skill installs `wake.d/20-owed` and `cycle.d/end/20-due`; a bot's own script goes in
 the same way. `opsbot-core hooks list` shows what will run at each point and in what
 order.
+
+## Peer sessions
+
+A bot may hand a body of work to a long-lived peer session: a dev foreman beside a project
+lead keeps its own warm context of a codebase across days, which a subagent per task cannot.
+The bot gives instructions by message and learns what happened from the peer's session log,
+read as a stream. `templates/heartbeat.d/50-peer-sessions` is that adapter; a bot copies it
+into `opsbot.d/heartbeat.d/` and names its peers:
+
+```json
+"streams": { "peers": { "sessions": [
+  { "name": "dev", "session": "<session id>", "project": "<project dir name>" }
+] } }
+```
+
+Each `check` it reads every peer's log through `agent-recall-axi` since `OPSBOT_SINCE` and
+prints items: every message the operator typed to the peer, verbatim; the peer's own
+statements only when they change state (`state_pattern` replaces the default match: opened,
+merged, filed, blocked, waiting on, decided, handed off, failed); and one item when a newer
+session in the peer's `project` looks like its successor. Keys carry the event's stable id
+(`peer:<name>:<event id>`), so the window's overlap never repeats an item, and the id opens the
+whole entry with `agent-recall-axi show`. The adapter sends the peer nothing and never keeps
+its cache warm; both are the operator's call. A peer that cannot be read fails the input.
 
 ## Rules the commands enforce
 

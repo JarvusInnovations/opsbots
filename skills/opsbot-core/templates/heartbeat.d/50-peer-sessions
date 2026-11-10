@@ -1,0 +1,103 @@
+#!/usr/bin/env node
+// heartbeat.d: a peer session as a stream. Copy into the bot's opsbot.d/heartbeat.d/.
+//
+// A bot that hands work to a long-lived peer session (a dev foreman beside a project lead)
+// needs to know what happened there without asking it and without reading its log. This reads
+// each peer's session log through agent-recall-axi since the check's window and prints items:
+//
+//   - every message the operator typed to the peer, verbatim (the highest-authority record:
+//     the operator may have decided something there that this bot was not told);
+//   - the peer's own statements only when they change state (opened, merged, filed, blocked,
+//     waiting on someone, a decision, a hand-off), matched by streams.peers.state_pattern;
+//   - one item when a newer session in the peer's project looks like its successor.
+//
+// Nothing is sent to the peer and nothing keeps its cache warm: both are the operator's call.
+// Item keys carry the event's stable id, so the 30-minute overlap of OPSBOT_SINCE never repeats
+// an item. Exit 0 with no lines means nothing new; a failed read exits non-zero (degraded).
+//
+// OPSBOT_RECALL names another agent-recall-axi binary (a pinned copy, a test double).
+//
+// opsbot.json:
+//   "streams": { "peers": {
+//     "sessions": [ { "name": "dev", "session": "<session id>", "project": "<project dir name>" } ],
+//     "state_pattern": "<optional regex replacing the default>",
+//     "max_text": 1200
+//   } }
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const DEFAULT_STATE =
+  "(PR (open|opened|merged|closed)|[Mm]erged|[Rr]eleased|[Dd]eployed|[Ff]iled|not filed|[Bb]locked|" +
+  "next step|[Ff]ollow[- ]up|needs (a|an|your|his|her|their)|[Dd]ecision|[Dd]ecided|waiting on|" +
+  "refus|denied|compact|hand(ed|ing)? (you|off|back)|staged|dispatch|TODO|loose end|open question|failed|failing)";
+
+const cfg = JSON.parse(readFileSync(process.env.OPSBOT_CONFIG, "utf8"));
+const peers = cfg.streams?.peers ?? {};
+const sessions = Array.isArray(peers.sessions) ? peers.sessions : [];
+if (sessions.length === 0) process.exit(0);
+const since = process.env.OPSBOT_SINCE;
+const state = new RegExp(peers.state_pattern || DEFAULT_STATE);
+const maxText = Number(peers.max_text) > 0 ? Number(peers.max_text) : 1200;
+const self = String(process.env.OPSBOT_NAME ?? "").toLowerCase();
+
+const dir = mkdtempSync(join(tmpdir(), "opsbot-peers-"));
+let failed = false;
+
+/** Run agent-recall-axi (on PATH, else through npx) with --json-out, and return the parsed file. */
+function recall(args, tag) {
+  const out = join(dir, `${tag}.json`);
+  const full = [...args, `--json-out=${out}`];
+  let r = spawnSync(process.env.OPSBOT_RECALL || "agent-recall-axi", full, { encoding: "utf8" });
+  if (r.error && !process.env.OPSBOT_RECALL) r = spawnSync("npx", ["-y", "agent-recall-axi", ...full], { encoding: "utf8" });
+  if (r.error || r.status !== 0) {
+    console.error(`agent-recall-axi ${args.slice(0, 2).join(" ")}: ${r.error?.message ?? (r.stdout || r.stderr || "").trim().split("\n")[0]}`);
+    failed = true;
+    return null;
+  }
+  try { return JSON.parse(readFileSync(out, "utf8")); } catch (e) { console.error(`unreadable output for ${tag}: ${e.message}`); failed = true; return null; }
+}
+
+const clip = (s) => (s.length > maxText ? `${s.slice(0, maxText)}… (${s.length} chars; whole with: agent-recall-axi show <id> --full)` : s);
+const emit = (o) => console.log(JSON.stringify(o));
+
+sessions.forEach((p, i) => {
+  if (!p || typeof p.name !== "string" || typeof p.session !== "string") { console.error(`streams.peers.sessions[${i}] needs name and session`); failed = true; return; }
+  const args = ["events", p.session, "--all", "--kind", "human,human.queued,assistant", "--limit", "0"];
+  if (since) args.push("--from", since);
+  const got = recall(args, `events-${i}`);
+  for (const e of got?.events ?? []) {
+    const text = String(e.text ?? "").trim();
+    if (!text) continue;
+    const human = e.kind !== "assistant";
+    if (!human && !state.test(text)) continue;
+    emit({
+      key: `peer:${p.name}:${e.id}`,
+      at: e.t,
+      conv: `peer:${p.name}`,
+      kind: "peer",
+      from: human ? `operator to ${p.name}` : p.name,
+      text: clip(text),
+      event: e.id,
+    });
+  }
+  if (typeof p.project === "string" && p.project) {
+    const ls = recall(["sessions", "--project", p.project, "--limit", "5"], `sessions-${i}`);
+    const others = (ls?.sessions ?? []).filter((s) => !(self && String(s.title ?? "").toLowerCase().includes(self)));
+    const newest = others.sort((a, b) => String(a.last).localeCompare(String(b.last))).pop();
+    if (newest && !String(p.session).startsWith(String(newest.id).slice(0, 8)) && !String(newest.id).startsWith(String(p.session).slice(0, 8))) {
+      emit({
+        key: `peer:${p.name}:rollover:${newest.id}`,
+        at: newest.last,
+        conv: `peer:${p.name}`,
+        kind: "peer",
+        from: "peer-sessions",
+        text: `A newer session in ${p.project} is more recently active than ${p.name} (${p.session}): ${newest.id} ${newest.title ?? ""}. If it is ${p.name}'s successor, a person updates streams.peers.sessions in opsbot.json.`,
+      });
+    }
+  }
+});
+
+rmSync(dir, { recursive: true, force: true });
+process.exit(failed ? 1 : 0);

@@ -204,6 +204,12 @@ has a live wake, quiet delays at the cap, so the timer only keeps the cache warm
 matters because every call reads the whole context from cache: a loop's cost is its calls
 times its context size, and the model class only sets the rate.
 
+A peer session is topology, not a third mode. A project lead that offloads dev orchestration
+to a long-lived foreman session is still a strategist; a dispatcher could have a peer too. The
+kit's part is one stream adapter that reads the peer's session log
+([opsbot-core](skills/opsbot-core.md#peer-sessions)); it adds no settings block for peers
+until a second pairing shows what one would need.
+
 The mode is revisited, not fixed: a month of logs is the evidence for switching either way.
 
 > Why: one week of two bots' logs. A support coordinator woke 863 times, found something new
