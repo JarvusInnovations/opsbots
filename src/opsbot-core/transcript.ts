@@ -7,7 +7,7 @@
  */
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 
-export interface Ev { type: string; subtype?: string; timestamp: string; content: unknown }
+export interface Ev { type: string; subtype?: string; timestamp: string; content: unknown; model?: string }
 interface Part { type: string; text?: string; name?: string; id?: string; input?: unknown; tool_use_id?: string; content?: unknown }
 
 export const COMPACTION_MARK = "This session is being continued from a previous conversation";
@@ -44,11 +44,21 @@ export function readEvents(path: string, maxBytes: number = TAIL_BYTES): Ev[] {
       if (v && typeof v === "object" && typeof v.type === "string") {
         const e: Ev = { type: v.type, timestamp: String(v.timestamp ?? ""), content: v.message?.content };
         if (typeof v.subtype === "string") e.subtype = v.subtype;
+        if (typeof v.message?.model === "string") e.model = v.message.model;
         out.push(e);
       }
     } catch { /* not an event line */ }
   }
   return out;
+}
+
+/** The model of the session's last real reply (synthetic entries are the harness, not a model). */
+export function lastModel(evs: Ev[]): string | null {
+  for (let i = evs.length - 1; i >= 0; i--) {
+    const e = evs[i]!;
+    if (e.type === "assistant" && e.model && e.model !== "<synthetic>") return e.model;
+  }
+  return null;
 }
 
 const parts = (c: unknown): Part[] => (Array.isArray(c) ? (c as Part[]) : []);
