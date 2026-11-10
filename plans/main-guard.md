@@ -4,6 +4,7 @@ done: 2026-11-10
 depends: []
 specs:
   - specs/architecture.md
+pr: 44
 ---
 
 # Guard `main` so it can become the default branch
