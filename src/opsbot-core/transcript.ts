@@ -5,7 +5,7 @@
  * statements (its own claims, to be checked against the record). Nothing here is
  * summarized by a model; the pack is what the model reads.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 
 export interface Ev { type: string; subtype?: string; timestamp: string; content: unknown }
 interface Part { type: string; text?: string; name?: string; id?: string; input?: unknown; tool_use_id?: string; content?: unknown }
@@ -13,10 +13,31 @@ interface Part { type: string; text?: string; name?: string; id?: string; input?
 export const COMPACTION_MARK = "This session is being continued from a previous conversation";
 const MIDTURN_MARK = "The user sent a new message while you were working:";
 
-export function readEvents(path: string): Ev[] {
-  if (!existsSync(path)) return [];
+/** How much of the log's end the liveness readers load. A session log grows without bound (one
+ * bot's passed 600 MB in six weeks), Node cannot hold a file past about 512 MB as one string, and
+ * every question asked here is about the last minutes: did the turn end, is a monitor armed. */
+export const TAIL_BYTES = 16 * 1024 * 1024;
+
+/**
+ * The log's events, oldest first. Reads at most `maxBytes` from the end of the file (the first,
+ * partial line of a cut read is dropped); never throws: an unreadable log is no events.
+ */
+export function readEvents(path: string, maxBytes: number = TAIL_BYTES): Ev[] {
+  let text: string;
+  try {
+    if (!existsSync(path)) return [];
+    const size = statSync(path).size;
+    if (size <= maxBytes) text = readFileSync(path, "utf8");
+    else {
+      const buf = Buffer.allocUnsafe(maxBytes);
+      const fd = openSync(path, "r");
+      try { readSync(fd, buf, 0, maxBytes, size - maxBytes); } finally { closeSync(fd); }
+      text = buf.toString("utf8");
+      text = text.slice(text.indexOf("\n") + 1);
+    }
+  } catch { return []; }
   const out: Ev[] = [];
-  for (const line of readFileSync(path, "utf8").split("\n")) {
+  for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     try {
       const v = JSON.parse(line);

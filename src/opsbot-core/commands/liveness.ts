@@ -170,6 +170,8 @@ export function nudgeCommand(args: string[]): Record<string, unknown> {
       const log = found.log ?? sessionPointer(root)?.transcript_path ?? null;
       const evs = log ? readEvents(log) : [];
       if (evs.length === 0) return { nudge: `nothing · ${agent} is working (mid-turn; no session log to check)` };
+      // a log tail with no assistant entry in it (one enormous line) says nothing about the turn
+      if (!evs.some((e) => e.type === "assistant")) return { nudge: `nothing · ${agent} is working (mid-turn; the session log's tail shows no turn)` };
       const t = turnEnded(evs);
       if (!t.ended) return { nudge: `nothing · ${agent} is working (mid-turn since ${t.since.slice(11, 16)}Z)` };
       via = ` · the runtime said working, but the session log shows the turn ended${t.at ? ` at ${t.at.slice(11, 16)}Z` : ""} (background work only)`;
