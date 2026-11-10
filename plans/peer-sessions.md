@@ -5,6 +5,7 @@ depends: [pack-via-session-axi]
 specs:
   - specs/skills/opsbot-core.md
   - specs/principles.md
+pr: 46
 ---
 
 # Peer sessions: a session log as a stream
