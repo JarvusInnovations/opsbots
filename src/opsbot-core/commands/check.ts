@@ -20,7 +20,7 @@ import { AxiError } from "axi-sdk-js";
 import { parseArgs, setExit } from "../args.js";
 import { cliInvocation } from "../invocation.js";
 import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
-import { blockedBy, commitOnly, firstLine, hasHead, iso, nowMs, parseIso, requireRoot } from "../repo.js";
+import { blockedBy, changedCommitPaths, commitOnly, firstLine, hasHead, iso, nowMs, parseIso, requireRoot } from "../repo.js";
 import { loadSettings } from "../settings.js";
 import {
   appendJsonl,
@@ -43,6 +43,10 @@ export const CHECK_USAGE = "check [--no-commit]";
 export interface Item {
   input: string;
   key: string;
+  /** More seen keys this item stands for (a digest row for a group of events). */
+  keys?: string[];
+  /** Exactly false: record the keys as seen, never show the item. */
+  report?: unknown;
   at?: string;
   conv?: string;
   kind?: string;
@@ -55,6 +59,8 @@ export interface InputResult {
   input: string;
   ok: boolean;
   new: number;
+  /** Items recorded as seen with `report: false`, never shown. */
+  quiet: number;
   error?: string;
 }
 
@@ -78,7 +84,8 @@ function parseItems(stdout: string, input: string): { items: Item[]; bad: number
     if (!line.trim()) continue;
     try {
       const v = JSON.parse(line);
-      if (v && typeof v === "object" && !Array.isArray(v) && typeof v.key === "string" && v.key !== "") {
+      const keysOk = v?.keys === undefined || (Array.isArray(v.keys) && v.keys.every((k: unknown) => typeof k === "string" && k !== ""));
+      if (v && typeof v === "object" && !Array.isArray(v) && typeof v.key === "string" && v.key !== "" && keysOk) {
         items.push({ ...v, input });
       } else bad++;
     } catch {
@@ -90,6 +97,11 @@ function parseItems(stdout: string, input: string): { items: Item[]; bad: number
 
 const CORE_FIELDS = ["key", "at", "conv", "kind", "from"];
 
+/** Every seen key an item carries: `key`, then each of `keys`. */
+export function itemKeys(it: Item): string[] {
+  return [it.key, ...(it.keys ?? [])];
+}
+
 function renderItem(it: Item, n: number, total: number, gateWord: string | null): Record<string, unknown> {
   const out: Record<string, unknown> = { n: `${n}/${total}`, input: it.input };
   for (const f of CORE_FIELDS) {
@@ -98,7 +110,7 @@ function renderItem(it: Item, n: number, total: number, gateWord: string | null)
   }
   if (gateWord && typeof it.text === "string" && gateWordIn(it.text, gateWord)) out.gate_word = "present";
   for (const [k, v] of Object.entries(it)) {
-    if (k === "input" || k === "text" || CORE_FIELDS.includes(k)) continue;
+    if (k === "input" || k === "text" || k === "report" || CORE_FIELDS.includes(k)) continue;
     out[k] = v;
   }
   if (it.text !== undefined) out.text = it.text;
@@ -114,7 +126,7 @@ export function runCheck(root: string, opts: { commit: boolean }): CheckResult {
   const startMs = nowMs();
   const NOW = iso(startMs);
   const inputs: InputResult[] = [];
-  const failed = (input: string, error: string, n = 0) => inputs.push({ input, ok: false, new: n, error });
+  const failed = (input: string, error: string, n = 0, quiet = 0) => inputs.push({ input, ok: false, new: n, quiet, error });
 
   // the window
   let wm = readWatermark(root);
@@ -136,7 +148,9 @@ export function runCheck(root: string, opts: { commit: boolean }): CheckResult {
     failed("heartbeat.d", "no heartbeat scripts are installed, so no stream can be read");
   }
   const items: Item[] = [];
-  const reported = new Set<string>();
+  // every key recorded this run, reported or quiet, in order
+  const recorded: string[] = [];
+  const recordedSet = new Set<string>();
   for (const s of scripts) {
     const env = baseEnv(root, settings, configPath, "heartbeat", {
       OPSBOT_SINCE: SINCE,
@@ -145,15 +159,27 @@ export function runCheck(root: string, opts: { commit: boolean }): CheckResult {
     });
     const r = runScript(s, root, env);
     const { items: got, bad } = parseItems(r.stdout, s.name);
-    const fresh = got.filter((it) => !seen.has(it.key) && !reported.has(it.key));
-    for (const it of fresh) reported.add(it.key);
+    // new when any of its keys is not yet seen; then every one of its keys is recorded
+    const fresh: Item[] = [];
+    let quiet = 0;
+    for (const it of got) {
+      const ks = itemKeys(it);
+      if (!ks.some((k) => !seen.has(k) && !recordedSet.has(k))) continue;
+      for (const k of ks) {
+        if (seen.has(k) || recordedSet.has(k)) continue;
+        recordedSet.add(k);
+        recorded.push(k);
+      }
+      if (it.report === false) quiet++;
+      else fresh.push(it);
+    }
     items.push(...fresh);
     if (r.code !== 0) {
-      failed(s.name, `exit ${r.code}: ${firstLine(r.stderr) || "no message"}`, fresh.length);
+      failed(s.name, `exit ${r.code}: ${firstLine(r.stderr) || "no message"}`, fresh.length, quiet);
     } else if (bad > 0) {
-      failed(s.name, `${bad} line${bad === 1 ? "" : "s"} of output not a heartbeat item ({key, at, conv, kind, from, text})`, fresh.length);
+      failed(s.name, `${bad} line${bad === 1 ? "" : "s"} of output not a heartbeat item ({key, at, conv, kind, from, text})`, fresh.length, quiet);
     } else {
-      inputs.push({ input: s.name, ok: true, new: fresh.length });
+      inputs.push({ input: s.name, ok: true, new: fresh.length, quiet });
     }
   }
 
@@ -170,11 +196,14 @@ export function runCheck(root: string, opts: { commit: boolean }): CheckResult {
   const seenSize = fileSize(p.seen);
   const oldWm = readWatermark(root);
   const writeState = () => {
-    appendSeen(root, items.map((i) => i.key));
+    appendSeen(root, recorded);
     if (outcome === "nothing-new") writeWatermark(root, NOW);
     const cur = readWatermark(root);
-    const inputsObj: Record<string, { ok: boolean; new: number }> = {};
-    for (const i of realInputs()) inputsObj[i.input] = { ok: i.ok, new: i.new };
+    const inputsObj: Record<string, { ok: boolean; new: number; quiet?: number }> = {};
+    for (const i of realInputs()) {
+      inputsObj[i.input] = { ok: i.ok, new: i.new };
+      if (i.quiet > 0) inputsObj[i.input]!.quiet = i.quiet;
+    }
     appendJsonl(p.log, {
       at: NOW,
       outcome,
@@ -191,6 +220,7 @@ export function runCheck(root: string, opts: { commit: boolean }): CheckResult {
     const files = [p.seen, p.log];
     if (existsSync(p.watermark)) files.push(p.watermark);
     if (existsSync(p.outages)) files.push(p.outages);
+    files.push(...changedCommitPaths(root, settings.commit_paths, files));
     const why = commitOnly(root, files, `chore(cycle): ${subject}`);
     if (why) {
       // undo what this run logged, so no line claims an outcome that was not recorded

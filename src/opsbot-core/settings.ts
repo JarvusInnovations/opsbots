@@ -65,6 +65,8 @@ export interface Settings {
   /** Files a stream's monitor appends one line per event to; the session arms a bounded
    * Monitor on each between cycles (the live wake), and the listener's nudge is the backstop. */
   wake: { files: string[] };
+  /** Repo-relative files the check's commit and the cycle-end commit also take when changed. */
+  commit_paths: string[];
 }
 
 /** The kit's defaults (specs/architecture.md, Next wake; specs/skills/opsbot-core.md). */
@@ -161,6 +163,7 @@ export function validateSettings(raw: unknown): string[] {
     "repo_sync",
     "wake",
     "host",
+    "commit_paths",
   ]);
   str(raw, "name", "", true, NAME_RE, "must be lowercase letters, digits and dashes, starting with a letter");
   str(raw, "mark", "", true);
@@ -255,6 +258,28 @@ export function validateSettings(raw: unknown): string[] {
       }
     }
   }
+  if (raw.commit_paths !== undefined) problems.push(...commitPathProblems(raw.commit_paths));
+  return problems;
+}
+
+/**
+ * `commit_paths`: an array of repo-relative file paths. Refuses an absolute path, a `..`
+ * segment, and anything under `.git/` or `.claude/` (the core never commits those).
+ */
+function commitPathProblems(v: unknown): string[] {
+  if (!Array.isArray(v)) return ["commit_paths must be an array of repo-relative file paths"];
+  const problems: string[] = [];
+  for (const f of v) {
+    if (typeof f !== "string" || !f.trim()) {
+      problems.push("commit_paths entries must be non-empty strings");
+      continue;
+    }
+    const segs = f.split(/[\\/]+/).filter((x) => x !== "" && x !== ".");
+    if (f.startsWith("/") || /^[A-Za-z]:/.test(f)) problems.push(`commit_paths ${JSON.stringify(f)} must be relative to the repo, not absolute`);
+    else if (segs.includes("..")) problems.push(`commit_paths ${JSON.stringify(f)} must not contain a .. segment`);
+    else if (segs[0] === ".git" || segs[0] === ".claude") problems.push(`commit_paths ${JSON.stringify(f)} is under ${segs[0]}/, which the core never commits`);
+    else if (segs.length === 0) problems.push(`commit_paths ${JSON.stringify(f)} names the repo itself, not a file`);
+  }
   return problems;
 }
 
@@ -319,6 +344,7 @@ export function withDefaults(raw: Json): Settings {
     streams,
     repo_sync: pick(raw.repo_sync, "pull-on-clean"),
     wake: { files: wakeList },
+    commit_paths: Array.isArray(raw.commit_paths) ? (raw.commit_paths as string[]) : [],
   };
 }
 

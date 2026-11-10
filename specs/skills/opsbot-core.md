@@ -48,6 +48,7 @@ The bot's own files the skill reads and writes:
 | `streams.<name>` | per-stream values a heartbeat script reads (postures, ids, lookbacks); the script is found by name in `opsbot.d/heartbeat.d/`, not listed here |
 | `repo_sync` | `pull-on-clean` or `never-pull` |
 | `host` | optional; belongs to the `opsbot-host` skill (display, VNC and bridge ports); `settings validate` accepts it as an object and does not look inside |
+| `commit_paths` | optional; repo-relative files the check's commit and the `cycle end` commit also take when they exist and have changes (a baseline an adapter updates, an append-only log a helper script writes between cycles); a listed file that does not exist is skipped |
 | `wake.files` | optional; the files a `monitor.d/` listener appends one line per event to. The core prints, in the cold-start pack and at every `cycle begin` and `cycle end`, the state of each (armed until when, or not armed) and the exact bounded `Monitor` call that arms it; see *The live wake* below |
 
 `settings validate` refuses a file with an unknown key, a missing required key, or a
@@ -117,7 +118,7 @@ file, since a unit outlives any one commit.
 
 | Directory | When | Contract |
 | --- | --- | --- |
-| `heartbeat.d/` | every `check` | a stream adapter: prints NDJSON items `{key, at, conv, kind: "group"\|"dm", from, text, ...}`; `key` is the typed seen key; exit 0 with no lines = nothing new; non-zero = this input failed, reported as degraded by the script's name |
+| `heartbeat.d/` | every `check` | a stream adapter: prints NDJSON items `{key, at, conv, kind: "group"\|"dm", from, text, ...}`; `key` is the typed seen key; optional `keys` is an array of more seen keys the item stands for (one digest row for a group of events); optional `report: false` marks the item's keys seen without showing it (the bot's own messages); exit 0 with no lines = nothing new; non-zero = this input failed, reported as degraded by the script's name |
 | `monitor.d/` | always on | a long-running watcher or a timed probe; `infra install` renders it as a user service (`monitor.d/<name>`) or timer (`monitor.d/<name>@<interval>`); it appends one line per event to a file named in `wake.files` (the session's monitor wakes on it) and also runs `<core> nudge --now` (the backstop) |
 | `cycle.d/begin/` | after the lock, before `check` | housekeeping that must run first (a repo sync, a cache warm); non-zero aborts the cycle as degraded |
 | `cycle.d/end/` | after records, before the commit | what to show at the close: due promises, fixes not yet told, anything the operator should see this cycle; stdout is appended to the closing line |
@@ -163,6 +164,9 @@ its cache warm; both are the operator's call. A peer that cannot be read fails t
 - One writer: begin refuses on a live lock, a rebase or merge in progress, or
   `index.lock`.
 - A degraded input never yields "nothing new".
+- An item is new when its `key` or any entry of its `keys` is not yet seen; when it is reported, all of them are recorded. A `keys` value that is not an array of non-empty strings makes the line a bad line.
+- An item with `report: false` has its keys recorded as seen and is never shown or counted as new; a check whose only items are `report: false` is nothing new. The log counts them per input as `quiet`, only when there are any. Any other `report` value is ignored.
+- `commit_paths` are added to the explicit `--only` list of the check's commit and the `cycle end` commit, never anything else. `settings validate` refuses a non-array, an empty or non-string entry, an absolute path, a `..` segment, and a path under `.git/` or `.claude/`.
 - `cycle end` refuses a future time, a backwards move, or no check since the lock.
 - The cold-start pack is capped at a byte budget (16 000 bytes); the rule card, the kit's sections and the session-log section are whole and count against it, `wake.d/` sections share the rest and are truncated with "… N more".
 - House rules that must be in front of every session (how to write, when to delegate, how to read the digest) ship inside the skill as `references/pack/*.md` and ride the pack, so they are updated by `npx skills update` and never copied into a bot's CLAUDE.md. `OPSBOT_PACK_DIR` overrides the directory.

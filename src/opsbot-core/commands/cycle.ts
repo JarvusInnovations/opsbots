@@ -21,7 +21,7 @@ import { intFlag, parseArgs, setExit, usageError } from "../args.js";
 import { delayLine, nextDelay } from "../cadence.js";
 import { cliInvocation } from "../invocation.js";
 import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
-import { blockedBy, commitOnly, firstLine, nowIso, nowMs, parseIso, pushCommits, requireRoot, trailers } from "../repo.js";
+import { blockedBy, changedCommitPaths, commitOnly, firstLine, nowIso, nowMs, parseIso, pushCommits, requireRoot, trailers } from "../repo.js";
 import { loadSettings, type Settings } from "../settings.js";
 import {
   appendJsonl,
@@ -270,6 +270,7 @@ function cycleEnd(args: string[]): Record<string, unknown> {
   const files = [p.log];
   if (existsSync(p.watermark)) files.push(p.watermark);
   if (existsSync(p.outages)) files.push(p.outages);
+  files.push(...changedCommitPaths(root, settings.commit_paths, files));
   const why = commitOnly(root, files, `chore(cycle): finished, ${records} records`);
   if (why) {
     truncateTo(p.log, logSize);
