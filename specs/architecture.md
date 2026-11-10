@@ -230,6 +230,11 @@ autocompact window; the repo-sync policy (`pull-on-clean` for a repo other human
 commit to, `never-pull` for a single writer); the runtime adapter and agent name; the
 loop prompt. Nothing about the account the bot speaks from is scattered through scripts.
 
+A bot installs a released kit. The kit's default branch is `main`, which only its release
+PR from `develop` writes to, so `npx skills add` and `npx skills update` give a bot the last
+release and it moves to the next one deliberately. An operator who wants an unreleased fix
+names `#develop`.
+
 ## Divergences resolved
 
 | Mechanism | Campaign bot | Support-desk bot | Kit | Why |
