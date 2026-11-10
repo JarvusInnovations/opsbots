@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "1e0f74f" : "dev";
+    VERSION = true ? "cee4efc" : "dev";
   }
 });
 
@@ -7944,11 +7944,29 @@ var init_lib = __esm({
 });
 
 // src/opsbot-core/transcript.ts
-import { existsSync as existsSync9, readFileSync as readFileSync5 } from "node:fs";
-function readEvents(path) {
-  if (!existsSync9(path)) return [];
+import { closeSync, existsSync as existsSync9, openSync, readFileSync as readFileSync5, readSync, statSync as statSync4 } from "node:fs";
+function readEvents(path, maxBytes = TAIL_BYTES) {
+  let text;
+  try {
+    if (!existsSync9(path)) return [];
+    const size = statSync4(path).size;
+    if (size <= maxBytes) text = readFileSync5(path, "utf8");
+    else {
+      const buf = Buffer.allocUnsafe(maxBytes);
+      const fd = openSync(path, "r");
+      try {
+        readSync(fd, buf, 0, maxBytes, size - maxBytes);
+      } finally {
+        closeSync(fd);
+      }
+      text = buf.toString("utf8");
+      text = text.slice(text.indexOf("\n") + 1);
+    }
+  } catch {
+    return [];
+  }
   const out = [];
-  for (const line of readFileSync5(path, "utf8").split("\n")) {
+  for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     try {
       const v = JSON.parse(line);
@@ -8117,12 +8135,13 @@ async function sessionLogSectionLib(path, opts = {}) {
     return null;
   }
 }
-var COMPACTION_MARK, MIDTURN_MARK, parts, partText, NOISE, clip, hhmm;
+var COMPACTION_MARK, MIDTURN_MARK, TAIL_BYTES, parts, partText, NOISE, clip, hhmm;
 var init_transcript = __esm({
   "src/opsbot-core/transcript.ts"() {
     "use strict";
     COMPACTION_MARK = "This session is being continued from a previous conversation";
     MIDTURN_MARK = "The user sent a new message while you were working:";
+    TAIL_BYTES = 16 * 1024 * 1024;
     parts = (c) => Array.isArray(c) ? c : [];
     partText = (c) => typeof c === "string" ? c : parts(c).map((p) => p.type === "text" ? p.text ?? "" : "").join("\n");
     NOISE = [/^<command-/, /^<local-command/, /hook success/, /^<bash-input>/, /^\[Request interrupted/];
@@ -8194,7 +8213,7 @@ var init_wake = __esm({
 });
 
 // src/opsbot-core/commands/coldstart.ts
-import { existsSync as existsSync10, mkdirSync as mkdirSync3, readdirSync as readdirSync2, readFileSync as readFileSync6, rmSync as rmSync3, statSync as statSync4, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync10, mkdirSync as mkdirSync3, readdirSync as readdirSync2, readFileSync as readFileSync6, rmSync as rmSync3, statSync as statSync5, writeFileSync as writeFileSync3 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
 import { join as join16, resolve as resolve6 } from "node:path";
 function cacheDir2(name) {
@@ -8423,7 +8442,7 @@ async function gateCommand(args) {
   if (!existsSync10(pending)) return { gate: "open" };
   let packSize = 0;
   try {
-    packSize = statSync4(pack).size;
+    packSize = statSync5(pack).size;
   } catch {
     packSize = 0;
   }
@@ -8999,6 +9018,7 @@ function nudgeCommand(args) {
       const log = found2.log ?? sessionPointer(root)?.transcript_path ?? null;
       const evs = log ? readEvents(log) : [];
       if (evs.length === 0) return { nudge: `nothing \xB7 ${agent} is working (mid-turn; no session log to check)` };
+      if (!evs.some((e) => e.type === "assistant")) return { nudge: `nothing \xB7 ${agent} is working (mid-turn; the session log's tail shows no turn)` };
       const t = turnEnded(evs);
       if (!t.ended) return { nudge: `nothing \xB7 ${agent} is working (mid-turn since ${t.since.slice(11, 16)}Z)` };
       via = ` \xB7 the runtime said working, but the session log shows the turn ended${t.at ? ` at ${t.at.slice(11, 16)}Z` : ""} (background work only)`;
