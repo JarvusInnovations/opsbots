@@ -10,7 +10,7 @@ import { userInfo } from "node:os";
 
 export interface Row { piece: string; state: "ok" | "missing" | "differs"; detail: string; fix: string }
 
-const TOOLS = ["claude", "herdr", "gh-axi", "gws-axi", "slack-axi", "gitsheets-axi", "chrome-devtools-axi"];
+const TOOLS = ["claude", "herdr", "gh-axi", "gws-axi", "slack-axi", "gitsheets-axi", "agent-recall-axi", "chrome-devtools-axi"];
 
 export function statusRows(h: HostConfig): Row[] {
   const cli = cliInvocation();
