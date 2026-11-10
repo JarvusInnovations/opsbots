@@ -14,8 +14,22 @@ Two kinds of skill, installed with the [`skills`](https://skills.sh/) CLI:
   (bots, hosts, incidents, lessons) and, later, the mechanic that examines bots from the
   outside and feeds what it learns back into the kit.
 
+- **`opsbot-host`** — the Linux user under a bot: a bootstrap that takes a fresh user or VM
+  to a session that can start, the virtual desktop with VNC on the tailnet, the headless
+  browser bridge, and a status check for all of it.
+
+Setting up a fresh machine for agent work, bot or not, is one line with no root:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JarvusInnovations/opsbots/main/skills/opsbot-host/scripts/bootstrap.sh | bash
+```
+
+It installs asdf, node, the GitHub CLI, the AXI tools, Claude Code and herdr, each only when
+missing, and lists the sign-ins left for you. Add `-s -- --dry-run` to look first.
+
 ```bash
 npx skills add JarvusInnovations/opsbots --skill opsbot-core   # in a bot's repo
+npx skills add JarvusInnovations/opsbots --skill opsbot-host   # in a bot's repo
 npx skills add JarvusInnovations/opsbots --skill mothership    # in a mothership
 ```
 

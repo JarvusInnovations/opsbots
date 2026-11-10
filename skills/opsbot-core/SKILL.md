@@ -81,7 +81,7 @@ skipped. A kit skill or the bot's own `bin/` extends the loop by dropping a scri
 
 | Directory | When | Contract |
 | --- | --- | --- |
-| `heartbeat.d/` | every check | one stream: print NDJSON items `{key, at, conv, kind: "group"\|"dm", from, text, …}`; `key` is the typed seen key (`chat:<conv>:<msg>`, `mail:<id>`, `log:<service>:<id>`); no lines = nothing new; non-zero = this input failed (its first stderr line is the reason) |
+| `heartbeat.d/` | every check | one stream: print NDJSON items `{key, at, conv, kind: "group"\|"dm", from, text, …}`; `key` is the typed seen key (`chat:<conv>:<msg>`, `mail:<id>`, `log:<service>:<id>`); optional `keys` lists more seen keys the item stands for (a digest row for a group of events; new when any key is unseen, all recorded when reported); optional `report: false` records the keys as seen without showing the item (the bot's own messages); no lines = nothing new; non-zero = this input failed (its first stderr line is the reason) |
 | `monitor.d/` | always on | a watcher (`<name>`, a service) or a probe (`<name>@5m`, a timer); wakes the loop with `$OPSBOT_CORE nudge --now` |
 | `cycle.d/begin/` | after the lock, before the check | housekeeping such as a repo sync; non-zero aborts the cycle as degraded |
 | `cycle.d/end/` | before the commit | what to show at the close; its stdout follows the closing line |
@@ -101,6 +101,11 @@ One committed file holds every loop value; nothing is set twice. Copy
 (`name`, `mark`, `loop.prompt`, `runtime.agent`), and a cadence value over the cap; a `//`
 key is a comment. The check and every lifecycle script read the file as committed at
 `HEAD`, so what runs is what was reviewed.
+
+`commit_paths` (optional) lists repo-relative files the check's commit and the `cycle end`
+commit also take when they exist and have changes: a baseline an adapter updates, an
+append-only log a helper script writes between cycles. Nothing else is added to those
+commits. It refuses an absolute path, a `..` segment, and a path under `.git/` or `.claude/`.
 
 ## State it keeps
 

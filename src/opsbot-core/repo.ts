@@ -114,6 +114,25 @@ export function trailers(): string {
   return out.join("\n");
 }
 
+/**
+ * The `commit_paths` files that exist and have changes (untracked counts; an ignored
+ * file does not), as absolute paths, leaving out any already in `already`. A listed
+ * path that does not exist is skipped silently.
+ */
+export function changedCommitPaths(root: string, listed: string[], already: string[] = []): string[] {
+  const out: string[] = [];
+  const have = new Set(already.map((f) => resolve(root, f)));
+  for (const rel of listed) {
+    const abs = resolve(root, rel);
+    if (have.has(abs) || !existsSync(abs)) continue;
+    const st = git(root, ["status", "--porcelain", "--untracked-files=all", "--", abs]);
+    if (st.code !== 0 || !st.stdout.trim()) continue;
+    have.add(abs);
+    out.push(abs);
+  }
+  return out;
+}
+
 /** Stage and commit exactly these files (`--only`). Returns null on success, else why. */
 export function commitOnly(root: string, files: string[], subject: string): string | null {
   const t = trailers();

@@ -8,6 +8,7 @@ import { statusCommand } from "./commands/status.js";
 import { desktopCommand } from "./commands/desktop.js";
 import { browserCommand } from "./commands/browser.js";
 import { sessionsCommand } from "./commands/sessions.js";
+import { bootstrapCommand } from "./commands/bootstrap.js";
 import { parseArgs } from "../opsbot-core/args.js";
 
 const CLI = cliInvocation();
@@ -24,6 +25,7 @@ flags: --help on any command, -v/--version
 
 const COMMANDS: Record<string, AxiCliCommand<undefined>> = {
   status: (a) => { parseArgs(a, {}, "status"); return statusCommand(); },
+  bootstrap: (a) => bootstrapCommand(a),
   desktop: (a) => desktopCommand(a),
   browser: (a) => browserCommand(a),
   sessions: (a) => sessionsCommand(a),

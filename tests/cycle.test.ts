@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { cli, git, makeBot, readLines, writeStream, type Bot } from "./helpers";
+import { cli, git, makeBot, readLines, setSettings, writeStream, type Bot } from "./helpers";
 
 let bot: Bot;
 afterEach(() => bot?.cleanup());
@@ -145,6 +145,26 @@ describe("cycle end", () => {
     expect(existsSync(lockFile(bot))).toBe(false);
     expect(git(bot.root, "log", "-1", "--format=%s").trim()).toBe("chore(cycle): finished, 2 records");
     expect(git(bot.root, "status", "--porcelain").trim()).toBe("");
+  });
+
+  test("commit_paths: the cycle-end commit takes a changed listed file and leaves an unlisted one", () => {
+    bot = makeBot();
+    writeFileSync(join(bot.root, "helper.log"), "one\n");
+    writeFileSync(join(bot.root, "other.txt"), "a\n");
+    git(bot.root, "add", "helper.log", "other.txt");
+    git(bot.root, "commit", "-q", "-m", "files");
+    setSettings(bot, { commit_paths: ["helper.log", "absent.log"] });
+    writeStream(bot, [item(1)]);
+    expect(cli(bot, ["cycle", "begin"], { now: T0 }).code).toBe(10);
+    // a helper script appends between the check and the close
+    writeFileSync(join(bot.root, "helper.log"), "one\ntwo\n");
+    writeFileSync(join(bot.root, "other.txt"), "b\n");
+    const r = cli(bot, ["cycle", "end", "--records", "1"], { now: "2026-03-02T15:07:00Z" });
+    expect(r.code).toBe(0);
+    expect(git(bot.root, "log", "-1", "--format=%s").trim()).toBe("chore(cycle): finished, 1 records");
+    const files = git(bot.root, "show", "--name-only", "--format=", "HEAD").trim().split("\n").sort();
+    expect(files).toEqual(["helper.log", "logs/cycle.jsonl", "logs/intake/watermark"]);
+    expect(git(bot.root, "status", "--porcelain").trim()).toBe("M other.txt");
   });
 
   test("refuses a future watermark", () => {
