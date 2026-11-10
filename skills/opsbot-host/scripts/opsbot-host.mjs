@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-host/version.ts"() {
     "use strict";
-    VERSION = true ? "f0292c5" : "dev";
+    VERSION = true ? "0edcbbd" : "dev";
   }
 });
 
@@ -1771,6 +1771,7 @@ var init_reference = __esm({
       {
         group: "Install",
         commands: [
+          { usage: 'bootstrap [--dry-run] [--tools "a b"|none] [--node <version>] [--no-herdr]', summary: "A fresh Linux user up to a session that can start, with no root: ~/.local/bin and the asdf shims on PATH above .bashrc's interactive guard, asdf, node (the repo's pinned version, else the latest 22; a system node does not count), the GitHub CLI, the AXI tools (gh-axi, gws-axi, slack-axi, gitsheets-axi, agent-recall-axi unless --tools names others), Claude Code, herdr, and the repo's skills from skills-lock.json. Installs only what is missing and prints the sign-ins only a person can do. It is scripts/bootstrap.sh, plain bash, so a machine with no node yet pipes it from the repo; for a bot's user or a person's fresh VM alike." },
           { usage: "desktop install [--dry-run]", summary: "Xvfb, Openbox and x11vnc as user units on the bot's display, VNC bound to the tailnet address only, a VNC password generated once into ~/.config/<bot>/vnc-password. Idempotent; --dry-run prints every file whole and every command." },
           { usage: "sessions keep [--dry-run]", summary: "Set cleanupPeriodDays to 36500 in the bot's user-level ~/.claude/settings.json, every other key untouched, so Claude Code stops pruning its session logs after 30 days: they are its full-resolution memory." },
           { usage: "browser install [--dry-run]", summary: "chrome-devtools-axi and chrome-devtools-mcp under the bot's node when missing; the bridge port, MCP path and DISPLAY into environment.d and above .bashrc's interactive guard; prints the .claude/settings.json env block for the operator to commit (never writes it)." }
@@ -2417,6 +2418,37 @@ var init_sessions = __esm({
   }
 });
 
+// src/opsbot-host/commands/bootstrap.ts
+import { spawnSync as spawnSync3 } from "node:child_process";
+import { existsSync as existsSync8 } from "node:fs";
+import { dirname as dirname7, join as join6 } from "node:path";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
+function bootstrapScript() {
+  const here = dirname7(fileURLToPath3(import.meta.url));
+  const candidates = [
+    process.env.OPSBOT_HOST_BOOTSTRAP,
+    join6(here, "bootstrap.sh"),
+    join6(here, "..", "..", "..", "skills", "opsbot-host", "scripts", "bootstrap.sh")
+  ].filter((p) => !!p);
+  return candidates.find((p) => existsSync8(p)) ?? null;
+}
+function bootstrapCommand(args) {
+  const script = bootstrapScript();
+  if (!script) throw new AxiError("bootstrap.sh is not beside this CLI", "CANNOT_RUN", [`Run it from the repo: curl -fsSL ${RAW_URL} | bash`]);
+  const r = spawnSync3("bash", [script, ...args], { stdio: "inherit", timeout: 36e5 });
+  setExit(r.error ? 1 : r.status ?? 1);
+  return "";
+}
+var RAW_URL;
+var init_bootstrap = __esm({
+  "src/opsbot-host/commands/bootstrap.ts"() {
+    "use strict";
+    init_dist2();
+    init_args();
+    RAW_URL = "https://raw.githubusercontent.com/JarvusInnovations/opsbots/main/skills/opsbot-host/scripts/bootstrap.sh";
+  }
+});
+
 // src/opsbot-host/cli.ts
 var cli_exports = {};
 __export(cli_exports, {
@@ -2458,6 +2490,7 @@ var init_cli2 = __esm({
     init_desktop();
     init_browser();
     init_sessions();
+    init_bootstrap();
     init_args();
     CLI = cliInvocation();
     TOP_HELP = `usage: ${CLI} <command> [subcommand] [flags]
@@ -2474,6 +2507,7 @@ flags: --help on any command, -v/--version
         parseArgs(a, {}, "status");
         return statusCommand();
       },
+      bootstrap: (a) => bootstrapCommand(a),
       desktop: (a) => desktopCommand(a),
       browser: (a) => browserCommand(a),
       sessions: (a) => sessionsCommand(a),

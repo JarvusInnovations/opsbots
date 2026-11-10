@@ -106,3 +106,76 @@ describe("the CLI", () => {
     expect(r.code).toBe(2);
   });
 });
+
+describe("bootstrap", () => {
+  const SCRIPT = resolve(import.meta.dir, "..", "skills", "opsbot-host", "scripts", "bootstrap.sh");
+  const fresh = (args: string[], cwd?: string) => {
+    const h = mkdtempSync(join(tmpdir(), "opsbot-host-fresh-"));
+    dirs.push(h);
+    const r = spawnSync("bash", [SCRIPT, ...args], { cwd: cwd ?? h, encoding: "utf8", env: { HOME: h, PATH: "/usr/bin:/bin" } });
+    return { code: r.status ?? -1, out: r.stdout, err: r.stderr, home: h };
+  };
+
+  test("--dry-run on an empty home lists every piece with its commands and writes nothing", () => {
+    const r = fresh(["--dry-run"]);
+    expect(r.code).toBe(0);
+    for (const piece of ["PATH", "asdf", "node", "gh-axi", "agent-recall-axi", "claude", "herdr"]) expect(r.out).toMatch(new RegExp(`^would  ${piece} `, "m"));
+    expect(r.out).toContain("nothing changed");
+    expect(existsSync(join(r.home, ".bashrc"))).toBe(false);
+    expect(existsSync(join(r.home, ".local"))).toBe(false);
+  });
+
+  test("--tools replaces the default set, none drops it, --no-herdr skips herdr, --node pins the version", () => {
+    const r = fresh(["--dry-run", "--tools", "gh-axi,npm-axi", "--no-herdr", "--node", "22.1.0"]);
+    expect(r.out).toMatch(/^would  npm-axi /m);
+    expect(r.out).not.toContain("slack-axi");
+    expect(r.out).not.toMatch(/^would  herdr /m);
+    expect(r.out).toContain("v=22.1.0");
+    expect(fresh(["--dry-run", "--tools", "none"]).out).not.toContain("npm install -g");
+  });
+
+  test("the repo's pinned node is used, and missing skills from skills-lock.json are named", () => {
+    const b = bot();
+    writeFileSync(join(b.root, ".tool-versions"), "nodejs 22.9.0\n");
+    writeFileSync(join(b.root, "skills-lock.json"), JSON.stringify({ version: 1, skills: { "opsbot-core": { source: "x" } } }, null, 2));
+    const r = fresh(["--dry-run"], b.root);
+    expect(r.out).toContain("v=22.9.0");
+    expect(r.out).toMatch(/^would  skills .*opsbot-core/m);
+  });
+
+  test("an unknown flag and a tool name that is not a package name are refused before anything runs", () => {
+    expect(fresh(["--dry-runn"]).code).toBe(2);
+    const bad = fresh(["--dry-run", "--tools", "gh-axi; rm -rf ~"]);
+    expect(bad.code).toBe(2);
+    expect(bad.err).toContain("not one");
+  });
+
+  test("an existing .bashrc keeps its content under the PATH block, and the block is written once", () => {
+    const h = mkdtempSync(join(tmpdir(), "opsbot-host-rc-"));
+    dirs.push(h);
+    writeFileSync(join(h, ".bashrc"), "case $- in\n    *i*) ;;\n      *) return;;\nesac\nalias ll='ls -l'\n");
+    // a stand-in PATH where every later piece already exists, so only the PATH step acts
+    const bin = join(h, "bin");
+    mkdirSync(join(h, ".local", "bin"), { recursive: true });
+    mkdirSync(bin);
+    for (const t of ["asdf", "node", "gh", "claude", "herdr"]) writeFileSync(join(h, ".local", "bin", t), "#!/bin/sh\necho v99.0.0\n", { mode: 0o755 });
+    const run = () => spawnSync("bash", [SCRIPT, "--tools", "none"], { cwd: h, encoding: "utf8", env: { HOME: h, PATH: "/usr/bin:/bin" } });
+    const a = run();
+    expect(a.status).toBe(0);
+    const rc = readFileSync(join(h, ".bashrc"), "utf8");
+    expect(rc.startsWith("# >>> opsbot-host: tools on PATH")).toBe(true);
+    expect(rc).toContain("alias ll='ls -l'");
+    expect(rc.indexOf("export PATH=")).toBeLessThan(rc.indexOf("case $- in"));
+    const b2 = run();
+    expect(b2.stdout).toContain("installed 0");
+    expect(readFileSync(join(h, ".bashrc"), "utf8")).toBe(rc);
+  });
+
+  test("the CLI's bootstrap command is the same script", () => {
+    const b = bot();
+    const r = host(b, ["bootstrap", "--dry-run", "--tools", "none", "--no-herdr"], { PATH: `/usr/bin:/bin:${process.env.PATH}` });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("nothing changed");
+  });
+});
+

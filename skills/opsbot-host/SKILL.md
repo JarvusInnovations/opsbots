@@ -7,8 +7,11 @@ description: >-
   place they must be (repo settings, environment.d, .bashrc). Use when standing up a new bot's
   host user, moving a bot to another machine, when a bot's browser or desktop will not start,
   when `chrome-devtools-axi` reaches the wrong browser, or when asked what a bot's host is
-  missing. Triggers: "set up the bot's user", "bootstrap the host", "VNC for the bot", "headed
-  browser for the bot", "host status", "opsbot-host".
+  missing. Also use to bring up any fresh Linux user or VM for agent work (asdf, node, the
+  GitHub CLI, the AXI tools, Claude Code, herdr) with one script and no root. Triggers: "set up
+  the bot's user", "bootstrap the host", "set up a fresh VM", "new dev box", "install the
+  tools on this machine", "VNC for the bot", "headed browser for the bot", "host status",
+  "opsbot-host".
 ---
 
 # opsbot-host
@@ -33,6 +36,32 @@ The desktop also needs the packages: `sudo apt install xvfb openbox x11vnc`. Log
 into its accounts (Claude, Google, Slack, GitHub) is the operator's, by hand: those are the
 bot's credentials, and no command here touches them.
 
+## A fresh user or VM: bootstrap
+
+One script takes a new Linux user to a session that can start. It is plain bash, because it
+has to run before node exists, and it needs no root. On a machine with nothing yet:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/JarvusInnovations/opsbots/main/skills/opsbot-host/scripts/bootstrap.sh | bash
+```
+
+Add `-s -- --dry-run` after `bash` to see what it would do first. With the skill already
+installed it is `scripts/bootstrap.sh`, or `scripts/opsbot-host bootstrap`. Run it from the
+repo the user will work in when there is one: it then uses the repo's pinned node
+(`.tool-versions`) and restores its skills (`skills-lock.json`).
+
+It installs, each only when missing: `~/.local/bin` and the asdf shims on `PATH` (at the top
+of `.bashrc`, above the interactive guard, so non-interactive shells get them too), asdf, node,
+the GitHub CLI, the AXI tools (`gh-axi`, `gws-axi`, `slack-axi`, `gitsheets-axi`,
+`agent-recall-axi`; `--tools "a b"` names others, `--tools none` skips them), Claude Code and
+herdr (`--no-herdr` skips it). A node that came with the system does not count: global installs
+under it need root. A rerun installs nothing and says so.
+
+It works the same for a bot's user and for a person setting up their own VM; nothing in it is
+about bots. It signs in to nothing. It ends by listing the sign-ins only a person can do:
+`claude`, `gh auth login`, and the Google and Slack tools if that user reads them. Needs
+`curl`, `git` and `tar`, which a root user installs if the image lacks them.
+
 ## The numbers
 
 Each bot gets its own display, VNC port and browser bridge port, so two bots on one host
@@ -47,6 +76,7 @@ hand before this skill pins what it already uses, so `status` compares against r
 
 ## How to use it
 
+0. On a new user, `bootstrap` first (above), then `sessions keep`.
 1. `scripts/opsbot-host status` first. Every row is `ok`, `missing` or `differs`, and each
    fix is a command. Exit 1 means something is to fix.
 2. `desktop install --dry-run`, read what it would write, then `desktop install`.
@@ -71,6 +101,7 @@ Everything is idempotent. A password that exists is never regenerated (it lives 
 
 ### Install
 
+- `scripts/opsbot-host bootstrap [--dry-run] [--tools "a b"|none] [--node <version>] [--no-herdr]` — A fresh Linux user up to a session that can start, with no root: ~/.local/bin and the asdf shims on PATH above .bashrc's interactive guard, asdf, node (the repo's pinned version, else the latest 22; a system node does not count), the GitHub CLI, the AXI tools (gh-axi, gws-axi, slack-axi, gitsheets-axi, agent-recall-axi unless --tools names others), Claude Code, herdr, and the repo's skills from skills-lock.json. Installs only what is missing and prints the sign-ins only a person can do. It is scripts/bootstrap.sh, plain bash, so a machine with no node yet pipes it from the repo; for a bot's user or a person's fresh VM alike.
 - `scripts/opsbot-host desktop install [--dry-run]` — Xvfb, Openbox and x11vnc as user units on the bot's display, VNC bound to the tailnet address only, a VNC password generated once into ~/.config/<bot>/vnc-password. Idempotent; --dry-run prints every file whole and every command.
 - `scripts/opsbot-host sessions keep [--dry-run]` — Set cleanupPeriodDays to 36500 in the bot's user-level ~/.claude/settings.json, every other key untouched, so Claude Code stops pruning its session logs after 30 days: they are its full-resolution memory.
 - `scripts/opsbot-host browser install [--dry-run]` — chrome-devtools-axi and chrome-devtools-mcp under the bot's node when missing; the bridge port, MCP path and DISPLAY into environment.d and above .bashrc's interactive guard; prints the .claude/settings.json env block for the operator to commit (never writes it).
