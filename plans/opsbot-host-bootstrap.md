@@ -4,6 +4,7 @@ done: 2026-11-10
 depends: [opsbot-host]
 specs:
   - specs/skills/opsbot-host.md
+pr: 47
 ---
 
 # opsbot-host: bootstrap
