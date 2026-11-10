@@ -1,9 +1,11 @@
 ---
-status: in-progress
+status: done
+done: 2026-11-09
 depends: [loop-modes]
 specs:
   - specs/principles.md
   - specs/skills/opsbot-core.md
+pr: 39
 ---
 
 # Mode presets: window, cadence and the escalation brief
@@ -18,12 +20,12 @@ window to it.
 
 ## Validation
 
-- [ ] `start --dry-run` passes 750000 for a strategist, 300000 for a dispatcher, and the
+- [x] `start --dry-run` passes 750000 for a strategist, 300000 for a dispatcher, and the
       explicit value when `loop.autocompact` is set.
-- [ ] A dispatcher with wake files gets `quiet_working` and `quiet` at its cap; without wake
+- [x] A dispatcher with wake files gets `quiet_working` and `quiet` at its cap; without wake
       files, or with explicit values, the table stands; a strategist is unchanged.
-- [ ] The shipped template validates.
-- [ ] Full suite passes; bundle and SKILL.md `--check` clean.
+- [x] The shipped template validates.
+- [x] Full suite passes; bundle and SKILL.md `--check` clean.
 
 ## Notes
 
