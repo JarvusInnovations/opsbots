@@ -4,6 +4,7 @@ done: 2026-11-10
 depends: [mode-presets]
 specs:
   - specs/skills/opsbot-core.md
+pr: 42
 ---
 
 # Session drift: say when the session does not match the mode
