@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "0edcbbd" : "dev";
+    VERSION = true ? "68ad06d" : "dev";
   }
 });
 
@@ -2035,6 +2035,19 @@ function trailers() {
   }
   return out.join("\n");
 }
+function changedCommitPaths(root, listed, already = []) {
+  const out = [];
+  const have = new Set(already.map((f) => resolve2(root, f)));
+  for (const rel of listed) {
+    const abs = resolve2(root, rel);
+    if (have.has(abs) || !existsSync3(abs)) continue;
+    const st = git(root, ["status", "--porcelain", "--untracked-files=all", "--", abs]);
+    if (st.code !== 0 || !st.stdout.trim()) continue;
+    have.add(abs);
+    out.push(abs);
+  }
+  return out;
+}
 function commitOnly(root, files, subject) {
   const t = trailers();
   const msg = t ? `${subject}
@@ -2239,7 +2252,8 @@ function validateSettings(raw) {
     "streams",
     "repo_sync",
     "wake",
-    "host"
+    "host",
+    "commit_paths"
   ]);
   str2(raw, "name", "", true, NAME_RE, "must be lowercase letters, digits and dashes, starting with a letter");
   str2(raw, "mark", "", true);
@@ -2328,6 +2342,23 @@ function validateSettings(raw) {
       }
     }
   }
+  if (raw.commit_paths !== void 0) problems.push(...commitPathProblems(raw.commit_paths));
+  return problems;
+}
+function commitPathProblems(v) {
+  if (!Array.isArray(v)) return ["commit_paths must be an array of repo-relative file paths"];
+  const problems = [];
+  for (const f of v) {
+    if (typeof f !== "string" || !f.trim()) {
+      problems.push("commit_paths entries must be non-empty strings");
+      continue;
+    }
+    const segs = f.split(/[\\/]+/).filter((x) => x !== "" && x !== ".");
+    if (f.startsWith("/") || /^[A-Za-z]:/.test(f)) problems.push(`commit_paths ${JSON.stringify(f)} must be relative to the repo, not absolute`);
+    else if (segs.includes("..")) problems.push(`commit_paths ${JSON.stringify(f)} must not contain a .. segment`);
+    else if (segs[0] === ".git" || segs[0] === ".claude") problems.push(`commit_paths ${JSON.stringify(f)} is under ${segs[0]}/, which the core never commits`);
+    else if (segs.length === 0) problems.push(`commit_paths ${JSON.stringify(f)} names the repo itself, not a file`);
+  }
   return problems;
 }
 function withDefaults(raw) {
@@ -2386,7 +2417,8 @@ function withDefaults(raw) {
     runtime: { adapter: "herdr", agent: rt.agent },
     streams,
     repo_sync: pick(raw.repo_sync, "pull-on-clean"),
-    wake: { files: wakeList }
+    wake: { files: wakeList },
+    commit_paths: Array.isArray(raw.commit_paths) ? raw.commit_paths : []
   };
 }
 function parseSettingsText(text, where) {
@@ -2897,7 +2929,8 @@ function parseItems(stdout, input) {
     if (!line.trim()) continue;
     try {
       const v = JSON.parse(line);
-      if (v && typeof v === "object" && !Array.isArray(v) && typeof v.key === "string" && v.key !== "") {
+      const keysOk = v?.keys === void 0 || Array.isArray(v.keys) && v.keys.every((k) => typeof k === "string" && k !== "");
+      if (v && typeof v === "object" && !Array.isArray(v) && typeof v.key === "string" && v.key !== "" && keysOk) {
         items.push({ ...v, input });
       } else bad++;
     } catch {
@@ -2905,6 +2938,9 @@ function parseItems(stdout, input) {
     }
   }
   return { items, bad };
+}
+function itemKeys(it) {
+  return [it.key, ...it.keys ?? []];
 }
 function renderItem(it, n, total2, gateWord) {
   const out = { n: `${n}/${total2}`, input: it.input };
@@ -2914,7 +2950,7 @@ function renderItem(it, n, total2, gateWord) {
   }
   if (gateWord && typeof it.text === "string" && gateWordIn(it.text, gateWord)) out.gate_word = "present";
   for (const [k, v] of Object.entries(it)) {
-    if (k === "input" || k === "text" || CORE_FIELDS.includes(k)) continue;
+    if (k === "input" || k === "text" || k === "report" || CORE_FIELDS.includes(k)) continue;
     out[k] = v;
   }
   if (it.text !== void 0) out.text = it.text;
@@ -2929,7 +2965,7 @@ function runCheck(root, opts) {
   const startMs = nowMs();
   const NOW = iso(startMs);
   const inputs = [];
-  const failed = (input, error, n2 = 0) => inputs.push({ input, ok: false, new: n2, error });
+  const failed = (input, error, n2 = 0, quiet = 0) => inputs.push({ input, ok: false, new: n2, quiet, error });
   let wm = readWatermark(root);
   let sinceMs;
   if (wm !== null && validWatermark(wm)) {
@@ -2947,7 +2983,8 @@ function runCheck(root, opts) {
     failed("heartbeat.d", "no heartbeat scripts are installed, so no stream can be read");
   }
   const items = [];
-  const reported = /* @__PURE__ */ new Set();
+  const recorded = [];
+  const recordedSet = /* @__PURE__ */ new Set();
   for (const s of scripts) {
     const env = baseEnv(root, settings, configPath, "heartbeat", {
       OPSBOT_SINCE: SINCE,
@@ -2956,15 +2993,26 @@ function runCheck(root, opts) {
     });
     const r = runScript(s, root, env);
     const { items: got, bad } = parseItems(r.stdout, s.name);
-    const fresh = got.filter((it) => !seen.has(it.key) && !reported.has(it.key));
-    for (const it of fresh) reported.add(it.key);
+    const fresh = [];
+    let quiet = 0;
+    for (const it of got) {
+      const ks = itemKeys(it);
+      if (!ks.some((k) => !seen.has(k) && !recordedSet.has(k))) continue;
+      for (const k of ks) {
+        if (seen.has(k) || recordedSet.has(k)) continue;
+        recordedSet.add(k);
+        recorded.push(k);
+      }
+      if (it.report === false) quiet++;
+      else fresh.push(it);
+    }
     items.push(...fresh);
     if (r.code !== 0) {
-      failed(s.name, `exit ${r.code}: ${firstLine(r.stderr) || "no message"}`, fresh.length);
+      failed(s.name, `exit ${r.code}: ${firstLine(r.stderr) || "no message"}`, fresh.length, quiet);
     } else if (bad > 0) {
-      failed(s.name, `${bad} line${bad === 1 ? "" : "s"} of output not a heartbeat item ({key, at, conv, kind, from, text})`, fresh.length);
+      failed(s.name, `${bad} line${bad === 1 ? "" : "s"} of output not a heartbeat item ({key, at, conv, kind, from, text})`, fresh.length, quiet);
     } else {
-      inputs.push({ input: s.name, ok: true, new: fresh.length });
+      inputs.push({ input: s.name, ok: true, new: fresh.length, quiet });
     }
   }
   const NEW = items.length;
@@ -2977,11 +3025,14 @@ function runCheck(root, opts) {
   const seenSize = fileSize(p.seen);
   const oldWm = readWatermark(root);
   const writeState = () => {
-    appendSeen(root, items.map((i) => i.key));
+    appendSeen(root, recorded);
     if (outcome === "nothing-new") writeWatermark(root, NOW);
     const cur2 = readWatermark(root);
     const inputsObj = {};
-    for (const i of realInputs()) inputsObj[i.input] = { ok: i.ok, new: i.new };
+    for (const i of realInputs()) {
+      inputsObj[i.input] = { ok: i.ok, new: i.new };
+      if (i.quiet > 0) inputsObj[i.input].quiet = i.quiet;
+    }
     appendJsonl(p.log, {
       at: NOW,
       outcome,
@@ -2997,6 +3048,7 @@ function runCheck(root, opts) {
     const files = [p.seen, p.log];
     if (existsSync7(p.watermark)) files.push(p.watermark);
     if (existsSync7(p.outages)) files.push(p.outages);
+    files.push(...changedCommitPaths(root, settings.commit_paths, files));
     const why = commitOnly(root, files, `chore(cycle): ${subject}`);
     if (why) {
       truncateTo(p.log, logSize);
@@ -8811,6 +8863,7 @@ function cycleEnd(args) {
   const files = [p.log];
   if (existsSync11(p.watermark)) files.push(p.watermark);
   if (existsSync11(p.outages)) files.push(p.outages);
+  files.push(...changedCommitPaths(root, settings.commit_paths, files));
   const why = commitOnly(root, files, `chore(cycle): finished, ${records} records`);
   if (why) {
     truncateTo(p.log, logSize);
