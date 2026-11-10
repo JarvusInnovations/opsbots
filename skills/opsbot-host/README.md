@@ -30,7 +30,7 @@ Each step is skipped when the piece is already there, so it is safe to run again
 | [asdf](https://asdf-vm.com) | Downloads the latest release into `~/.local/bin`. It manages tool versions per user |
 | node | Installs through asdf: the latest 22, or the version pinned in the current repo's `.tool-versions` |
 | GitHub CLI | Installs `gh` through asdf, unless the machine already has it |
-| AXI tools | `npm install -g` for `gh-axi`, `gws-axi`, `slack-axi`, `gitsheets-axi` and `agent-recall-axi`: command-line tools agents use for GitHub, Google Workspace, Slack, structured repo data and session history |
+| AXI tools | `npm install -g` for `gh-axi`, `gws-axi`, `slack-axi`, `gitsheets-axi`, `agent-recall-axi` and `chrome-devtools-axi`: command-line tools agents use for GitHub, Google Workspace, Slack, structured repo data, session history and driving a browser |
 | [Claude Code](https://code.claude.com/docs) | Runs Anthropic's installer |
 | [herdr](https://herdr.dev) | Runs its installer. A terminal multiplexer for agent sessions |
 | Skills | In a repo with a `skills-lock.json`, restores any skill that is missing |
@@ -57,7 +57,7 @@ local copy.
 | Option | Effect |
 | --- | --- |
 | `--dry-run` | Print every step and its commands; change nothing |
-| `--tools "a b"` | Install these npm packages instead of the default five. `--tools none` installs none |
+| `--tools "a b"` | Install these npm packages instead of the default six. `--tools none` installs none |
 | `--node <version>` | Install this node version |
 | `--no-herdr` | Skip herdr |
 
@@ -76,6 +76,9 @@ curl -fsSL https://raw.githubusercontent.com/JarvusInnovations/opsbots/main/skil
 - **It needs `curl`, `git` and `tar`.** Most images have them. If one is missing the script
   stops and says so; installing it needs root: `sudo apt install -y curl git tar`.
 - **It refuses to run as root.** Everything goes under your home directory.
+- **The browser tool needs Chrome.** `chrome-devtools-axi` drives a Chrome or Chromium that
+  is already installed. If the machine has none, installing one needs root, for example
+  `sudo apt install -y chromium`.
 - **A node that came with the system is ignored.** Global installs under it need root, and
   the tools need node 20 or later.
 - **If a step fails,** the script stops and prints the command it was running. Fix the cause
