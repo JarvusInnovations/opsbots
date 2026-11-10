@@ -122,7 +122,9 @@ describe("bootstrap", () => {
     for (const piece of ["PATH", "asdf", "node", "gh-axi", "agent-recall-axi", "claude", "herdr"]) expect(r.out).toMatch(new RegExp(`^would  ${piece} `, "m"));
     expect(r.out).toContain("nothing changed");
     expect(existsSync(join(r.home, ".bashrc"))).toBe(false);
-    expect(existsSync(join(r.home, ".local"))).toBe(false);
+    // a probed tool may write its own state under the home (gh does on some hosts); the script's own targets stay absent
+    expect(existsSync(join(r.home, ".local", "bin"))).toBe(false);
+    expect(existsSync(join(r.home, ".asdf"))).toBe(false);
   });
 
   test("--tools replaces the default set, none drops it, --no-herdr skips herdr, --node pins the version", () => {
