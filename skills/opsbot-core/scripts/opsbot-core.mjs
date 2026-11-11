@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "a98dd3c" : "dev";
+    VERSION = true ? "76d5e2c" : "dev";
   }
 });
 
@@ -1895,7 +1895,7 @@ var init_reference = __esm({
         commands: [
           {
             usage: "cycle begin",
-            summary: "Refuse while another writer holds the checkout (exit 30, `wait \xB7 \u2026 \xB7 next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it. With `loop.schedule: monitor`, on 0 and 30 the `wake` field holds the schedule monitor's state and the one Monitor call to make now."
+            summary: "Refuse while another writer holds the checkout (exit 30, `wait \xB7 \u2026 \xB7 next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it. With `loop.schedule: monitor`, on 0 and 30 the `wake` field holds the schedule monitor's state and the one Monitor call to make now. With `sleep` set, a nothing-new begin that finds the loop quiet for `after_minutes` prints a `sleep` field in place of `wake`: arm nothing, end the turn. A begin that finds `.git/opsbot-sleep` removes it and logs the wake."
           },
           {
             usage: "check [--no-commit]",
@@ -1903,7 +1903,11 @@ var init_reference = __esm({
           },
           {
             usage: "cycle end --records N [--degraded] [--summary TEXT]",
-            summary: "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle."
+            summary: "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle. With `sleep` set, a `sleep` field may replace `wake`, as at `cycle begin`."
+          },
+          {
+            usage: "check --peek",
+            summary: "Run every heartbeat script as a check does (each also gets `OPSBOT_PEEK=1`) and print the count of new items per input. Records, logs and commits nothing; the watermark and seen keys are untouched, so the next check sees the same items. Exit 0 \xB7 10 \xB7 20 \xB7 2 as `check`."
           },
           { usage: "next-delay", summary: "Seconds until the next cycle and why, from the cycle log and the cadence table. With `loop.schedule: monitor`, never over 1740 (29 min), and the reason says when that cap applied." }
         ]
@@ -1939,14 +1943,18 @@ var init_reference = __esm({
       {
         group: "Liveness (run by system timers)",
         commands: [
-          { usage: "watchdog [--dry-run]", summary: "When no cycle has logged within `watchdog_minutes`, tell the operator once per outage through `escalate.d/` and record it." },
+          { usage: "watchdog [--dry-run]", summary: "When no cycle has logged within `watchdog_minutes`, tell the operator once per outage through `escalate.d/` and record it. Stands down while the bot sleeps." },
           {
             usage: "nudge [--now [--reason TEXT]] [--dry-run]",
-            summary: "Re-issue `loop.prompt` to the named agent when the loop is quiet, unlocked, past cooldown and idle. `--now` (for listeners) skips the quiet test. A `working` agent whose own session log shows its turn ended (background work only) is prompted anyway, with a note."
+            summary: "Re-issue `loop.prompt` to the named agent when the loop is quiet, unlocked, past cooldown and idle. `--now` (for listeners) skips the quiet test. A `working` agent whose own session log shows its turn ended (background work only) is prompted anyway, with a note. While the bot sleeps only `--now` acts, and it wakes it."
+          },
+          {
+            usage: "sleep tick [--dry-run]",
+            summary: "The sleep timer's tick (only with `sleep` set; a no-op while awake). Going down: types `/compact` once the session is idle. Asleep: wakes it with `<loop.prompt> (woken: <reason>)` on an operator message, a wake-file line, the due time, `max_minutes`, or a `check --peek` exit of 10 or 20. A wake no `cycle begin` answers within `watchdog_minutes` is told once through `escalate.d/`. Exit 1 when the runtime or the operator could not be reached."
           },
           {
             usage: "infra install|uninstall|status [--dry-run]",
-            summary: "Render the watchdog and nudge timers and one unit per `monitor.d/` script from `opsbot.json`; `status` names stale units."
+            summary: "Render the watchdog and nudge timers, one unit per `monitor.d/` script, and with `sleep` set the sleep timer, from `opsbot.json`; `status` names stale units and the sleep state."
           }
         ]
       },
@@ -2257,7 +2265,8 @@ function validateSettings(raw) {
     "repo_sync",
     "wake",
     "host",
-    "commit_paths"
+    "commit_paths",
+    "sleep"
   ]);
   str2(raw, "name", "", true, NAME_RE, "must be lowercase letters, digits and dashes, starting with a letter");
   str2(raw, "mark", "", true);
@@ -2341,10 +2350,10 @@ function validateSettings(raw) {
     }
   }
   obj(raw, "host", "", false);
-  const wake = obj(raw, "wake", "", false);
-  if (wake) {
-    allow(wake, "wake.", ["files"]);
-    const files = wake.files;
+  const wake2 = obj(raw, "wake", "", false);
+  if (wake2) {
+    allow(wake2, "wake.", ["files"]);
+    const files = wake2.files;
     if (files !== void 0) {
       if (!Array.isArray(files) || files.some((f) => typeof f !== "string" || !f.trim())) {
         problems.push("wake.files must be an array of file paths (strings)");
@@ -2352,6 +2361,17 @@ function validateSettings(raw) {
     }
   }
   if (raw.commit_paths !== void 0) problems.push(...commitPathProblems(raw.commit_paths));
+  const sleep = obj(raw, "sleep", "", false);
+  if (sleep) {
+    allow(sleep, "sleep.", ["after_minutes", "probe_minutes", "max_minutes", "compact"]);
+    for (const k of ["after_minutes", "probe_minutes", "max_minutes"]) posInt(sleep, k, "sleep.");
+    if (sleep.compact !== void 0 && typeof sleep.compact !== "boolean") problems.push("sleep.compact must be true or false");
+    if (typeof sleep.probe_minutes === "number" && sleep.probe_minutes > 60) problems.push("sleep.probe_minutes must be 60 or less");
+    const loopSchedule = isObj(raw.loop) ? raw.loop.schedule : void 0;
+    if (loopSchedule !== "monitor") {
+      problems.push("sleep requires loop.schedule to be monitor: the prompt is then a plain message the sleep timer can type, and there is no self-paced loop to end");
+    }
+  }
   return problems;
 }
 function commitPathProblems(v) {
@@ -2435,7 +2455,13 @@ function withDefaults(raw) {
     streams,
     repo_sync: pick(raw.repo_sync, "pull-on-clean"),
     wake: { files: wakeList },
-    commit_paths: Array.isArray(raw.commit_paths) ? raw.commit_paths : []
+    commit_paths: Array.isArray(raw.commit_paths) ? raw.commit_paths : [],
+    sleep: isObj(raw.sleep) ? {
+      after_minutes: pick(raw.sleep.after_minutes, DEFAULT_SLEEP.after_minutes),
+      probe_minutes: pick(raw.sleep.probe_minutes, DEFAULT_SLEEP.probe_minutes),
+      max_minutes: pick(raw.sleep.max_minutes, DEFAULT_SLEEP.max_minutes),
+      compact: pick(raw.sleep.compact, DEFAULT_SLEEP.compact)
+    } : null
   };
 }
 function parseSettingsText(text, where) {
@@ -2474,7 +2500,7 @@ function trySettings(root) {
   const p = join3(root, SETTINGS_FILE);
   return existsSync4(p) ? tryText(readFileSync2(p, "utf8")) : null;
 }
-var SETTINGS_FILE, LOOP_MODES, MODE_AUTOCOMPACT, LOOP_SCHEDULES, MODE_MODEL, DEFAULT_CADENCE, DEFAULT_LIVENESS, MONITOR_NUDGE_MINUTES, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR;
+var SETTINGS_FILE, LOOP_MODES, MODE_AUTOCOMPACT, LOOP_SCHEDULES, MODE_MODEL, DEFAULT_SLEEP, DEFAULT_CADENCE, DEFAULT_LIVENESS, MONITOR_NUDGE_MINUTES, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR;
 var init_settings = __esm({
   "src/opsbot-core/settings.ts"() {
     "use strict";
@@ -2485,6 +2511,7 @@ var init_settings = __esm({
     MODE_AUTOCOMPACT = { strategist: "750k", dispatcher: "300k" };
     LOOP_SCHEDULES = ["self", "monitor"];
     MODE_MODEL = { strategist: "fable", dispatcher: "opus" };
+    DEFAULT_SLEEP = { after_minutes: 60, probe_minutes: 10, max_minutes: 480, compact: true };
     DEFAULT_CADENCE = {
       hot: 180,
       warm: 600,
@@ -2512,20 +2539,111 @@ var init_settings = __esm({
   }
 });
 
+// src/opsbot-core/lifecycle.ts
+import { accessSync as accessSync2, constants as constants2, existsSync as existsSync5, mkdirSync, readdirSync, realpathSync as realpathSync2, statSync, writeFileSync } from "node:fs";
+import { join as join4, relative } from "node:path";
+function parsePoint(s) {
+  const t = s.replace(/\/+$/, "");
+  for (const p of POINTS) {
+    if (p === t || POINT_DIRS[p] === t || POINT_DIRS[p] === `${t}.d` || `cycle.d/${t}` === POINT_DIRS[p]) return p;
+  }
+  return null;
+}
+function discover(root, point) {
+  const dir = join4(root, OPSBOT_D, POINT_DIRS[point]);
+  const scripts = [];
+  const skipped = [];
+  if (!existsSync5(dir)) return { scripts, skipped };
+  const names = readdirSync(dir).sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+  for (const name of names) {
+    if (name.startsWith(".")) continue;
+    const path = join4(dir, name);
+    let st;
+    try {
+      st = statSync(path);
+    } catch {
+      skipped.push({ point, name, reason: "a broken link" });
+      continue;
+    }
+    if (st.isDirectory()) continue;
+    if (!st.isFile()) {
+      skipped.push({ point, name, reason: "not a regular file" });
+      continue;
+    }
+    try {
+      accessSync2(path, constants2.X_OK);
+    } catch {
+      skipped.push({ point, name, reason: "not executable" });
+      continue;
+    }
+    let real2 = path;
+    try {
+      real2 = realpathSync2(path);
+    } catch {
+    }
+    const rel = relative(root, real2);
+    scripts.push({ point, name, path, source: rel.startsWith("..") ? real2 : rel });
+  }
+  return { scripts, skipped };
+}
+function configSnapshot(root, text) {
+  const p = gitPath(root, "opsbot-config.json");
+  try {
+    writeFileSync(p, text);
+  } catch {
+    mkdirSync(join4(root, ".git"), { recursive: true });
+    writeFileSync(p, text);
+  }
+  return p;
+}
+function baseEnv(root, settings, configPath, point, extra = {}) {
+  return {
+    ...process.env,
+    OPSBOT_ROOT: root,
+    OPSBOT_CONFIG: configPath,
+    OPSBOT_NAME: settings.name,
+    OPSBOT_MARK: settings.mark,
+    OPSBOT_HOOK: point,
+    ...extra
+  };
+}
+function runScript(script, root, env, input) {
+  return run(script.path, [], { cwd: root, env, input, timeoutMs: SCRIPT_TIMEOUT_MS });
+}
+var OPSBOT_D, POINTS, POINT_DIRS, SCRIPT_TIMEOUT_MS;
+var init_lifecycle = __esm({
+  "src/opsbot-core/lifecycle.ts"() {
+    "use strict";
+    init_repo();
+    OPSBOT_D = "opsbot.d";
+    POINTS = ["heartbeat", "monitor", "cycle.begin", "cycle.end", "wake", "escalate", "due"];
+    POINT_DIRS = {
+      heartbeat: "heartbeat.d",
+      monitor: "monitor.d",
+      "cycle.begin": "cycle.d/begin",
+      "cycle.end": "cycle.d/end",
+      wake: "wake.d",
+      escalate: "escalate.d",
+      due: "due.d"
+    };
+    SCRIPT_TIMEOUT_MS = 3e5;
+  }
+});
+
 // src/opsbot-core/state.ts
-import { appendFileSync, existsSync as existsSync5, mkdirSync, readFileSync as readFileSync3, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
-import { dirname as dirname3, join as join4 } from "node:path";
+import { appendFileSync, existsSync as existsSync6, mkdirSync as mkdirSync2, readFileSync as readFileSync3, rmSync, statSync as statSync2, truncateSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { dirname as dirname3, join as join5 } from "node:path";
 function paths(root) {
   return {
-    log: join4(root, CYCLE_LOG),
-    seen: join4(root, SEEN_FILE),
-    watermark: join4(root, WATERMARK_FILE),
-    outages: join4(root, OUTAGES_FILE),
+    log: join5(root, CYCLE_LOG),
+    seen: join5(root, SEEN_FILE),
+    watermark: join5(root, WATERMARK_FILE),
+    outages: join5(root, OUTAGES_FILE),
     lock: gitPath(root, LOCK_NAME)
   };
 }
 function readJsonl(file) {
-  if (!existsSync5(file)) return [];
+  if (!existsSync6(file)) return [];
   const out = [];
   for (const line of readFileSync3(file, "utf8").split("\n")) {
     if (!line.trim()) continue;
@@ -2538,19 +2656,19 @@ function readJsonl(file) {
   return out;
 }
 function appendJsonl(file, obj) {
-  mkdirSync(dirname3(file), { recursive: true });
+  mkdirSync2(dirname3(file), { recursive: true });
   appendFileSync(file, `${JSON.stringify(obj)}
 `);
 }
 function fileSize(file) {
   try {
-    return statSync(file).size;
+    return statSync2(file).size;
   } catch {
     return 0;
   }
 }
 function truncateTo(file, size) {
-  if (!existsSync5(file)) return;
+  if (!existsSync6(file)) return;
   if (size === 0 && fileSize(file) > 0) truncateSync(file, 0);
   else truncateSync(file, size);
 }
@@ -2614,7 +2732,7 @@ function recordOutageEnd(root, started, ended) {
 }
 function readWatermark(root) {
   const f = paths(root).watermark;
-  if (!existsSync5(f)) return null;
+  if (!existsSync6(f)) return null;
   const line = readFileSync3(f, "utf8").split("\n")[0]?.trim() ?? "";
   return line || null;
 }
@@ -2623,26 +2741,26 @@ function validWatermark(wm) {
 }
 function writeWatermark(root, wm) {
   const f = paths(root).watermark;
-  mkdirSync(dirname3(f), { recursive: true });
-  writeFileSync(f, `${wm}
+  mkdirSync2(dirname3(f), { recursive: true });
+  writeFileSync2(f, `${wm}
 `);
 }
 function readSeen(root) {
   const f = paths(root).seen;
-  if (!existsSync5(f)) return /* @__PURE__ */ new Set();
+  if (!existsSync6(f)) return /* @__PURE__ */ new Set();
   return new Set(
     readFileSync3(f, "utf8").split("\n").filter((l) => l !== "")
   );
 }
 function appendSeen(root, keys) {
   const f = paths(root).seen;
-  mkdirSync(dirname3(f), { recursive: true });
+  mkdirSync2(dirname3(f), { recursive: true });
   appendFileSync(f, keys.map((k) => `${k}
 `).join(""));
 }
 function readLock(root) {
   const f = paths(root).lock;
-  if (!existsSync5(f)) return { hold: null, raw: false };
+  if (!existsSync6(f)) return { hold: null, raw: false };
   try {
     const v = JSON.parse(readFileSync3(f, "utf8"));
     return {
@@ -2714,10 +2832,10 @@ function takeLock(root) {
     started: nowIso()
   };
   try {
-    writeFileSync(f, `${JSON.stringify(hold)}
+    writeFileSync2(f, `${JSON.stringify(hold)}
 `, { flag: "wx" });
     if (hold.session) try {
-      writeFileSync(loopSessionFile(root), `${hold.session}
+      writeFileSync2(loopSessionFile(root), `${hold.session}
 `);
     } catch {
     }
@@ -2742,398 +2860,6 @@ var init_state = __esm({
     OUTAGE_KINDS = ["failed-turn", "refused", "plan-limit", "session-ended", "stopped"];
     CHECK_OUTCOMES = ["nothing-new", "new", "degraded"];
     CYCLE_OUTCOMES = [...CHECK_OUTCOMES, "finished"];
-  }
-});
-
-// src/opsbot-core/commands/home.ts
-function age(ms) {
-  const m = Math.floor(ms / 6e4);
-  if (m < 60) return `${m} min ago`;
-  const h = Math.floor(m / 60);
-  if (h < 48) return `${h} h ${m % 60} min ago`;
-  return `${Math.floor(h / 24)} days ago`;
-}
-function homeCommand() {
-  const cli = cliInvocation();
-  const root = findRoot();
-  if (!root) {
-    return {
-      bot: "not inside a git checkout",
-      help: [`Run \`${cli}\` from the bot's repo (or set OPSBOT_ROOT)`]
-    };
-  }
-  const s = trySettings(root);
-  if (!s) {
-    return {
-      bot: "no valid opsbot.json in this repo",
-      help: [
-        "Copy the skill's templates/opsbot.json to the repo root as opsbot.json, fill it in, and commit it",
-        `Run \`${cli} settings validate\` to see what is wrong`
-      ]
-    };
-  }
-  const now = nowMs();
-  const lines = readCycleLog(root);
-  const last = [...lines].reverse().find((l) => ["nothing-new", "new", "degraded", "finished"].includes(l.outcome));
-  const check = lastCheck(lines);
-  const lock = judgeLock(root, s.lock_max_minutes);
-  const open5 = outages(root).filter((o) => o.ended === null).length;
-  const failed = check && Array.isArray(check.failed) ? check.failed.length : 0;
-  const lastAt = last ? parseIso(last.at) : null;
-  return {
-    bot: `${s.mark} ${s.name}`,
-    last_cycle: last ? `${last.outcome} \xB7 ${last.at}${lastAt !== null ? ` (${age(now - lastAt)})` : ""}` : "none logged yet",
-    lock: lock.state === "free" ? "free" : lock.state === "held" ? `held by session ${lock.hold.session || "unknown"} since ${lock.hold.started}` : `abandoned: ${lock.note}`,
-    next_wake: delayLine(nextDelay(s, lines, now)),
-    failed_inputs: failed,
-    open_outages: open5,
-    help: [
-      `Run \`${cli} cycle begin\` to start a cycle`,
-      `Run \`${cli} log tail\` for recent cycles, \`${cli} hooks list\` for what runs at each point`,
-      `Run \`${cli} --help\` for every command`
-    ]
-  };
-}
-var init_home = __esm({
-  "src/opsbot-core/commands/home.ts"() {
-    "use strict";
-    init_cadence();
-    init_invocation();
-    init_repo();
-    init_settings();
-    init_state();
-  }
-});
-
-// src/opsbot-core/args.ts
-function parseArgs(args, spec, usage) {
-  const bool = spec.bool ?? [];
-  const value = spec.value ?? [];
-  const positionals = [];
-  const flags = {};
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.startsWith("--")) {
-      const eq = a.indexOf("=");
-      const name = eq > 0 ? a.slice(2, eq) : a.slice(2);
-      if (bool.includes(name)) {
-        if (eq > 0) throw usageError(`--${name} takes no value`, usage);
-        flags[name] = true;
-      } else if (value.includes(name)) {
-        const v = eq > 0 ? a.slice(eq + 1) : args[++i];
-        if (v === void 0 || eq < 0 && v.startsWith("--")) throw usageError(`--${name} needs a value`, usage);
-        flags[name] = v;
-      } else {
-        const valid = [...value, ...bool].map((f) => `--${f}`).join(", ");
-        throw usageError(`unknown flag --${name}`, usage, valid ? `valid flags here: ${valid}` : "this command takes no flags");
-      }
-    } else {
-      positionals.push(a);
-    }
-  }
-  if (positionals.length > (spec.maxPositionals ?? 0)) {
-    throw usageError(`unexpected argument ${JSON.stringify(positionals[spec.maxPositionals ?? 0])}`, usage);
-  }
-  return { positionals, flags };
-}
-function usageError(message, usage, extra) {
-  const help = [`${cliInvocation()} ${usage}`];
-  if (extra) help.unshift(extra);
-  return new AxiError(message, "VALIDATION_ERROR", help);
-}
-function intFlag(flags, name, usage, opts = {}) {
-  const v = flags[name];
-  if (v === void 0) return void 0;
-  if (typeof v !== "string" || !/^\d+$/.test(v)) throw usageError(`--${name} must be a whole number`, usage);
-  const n = Number(v);
-  if (opts.min !== void 0 && n < opts.min) throw usageError(`--${name} must be at least ${opts.min}`, usage);
-  if (opts.max !== void 0 && n > opts.max) throw usageError(`--${name} must be at most ${opts.max}`, usage);
-  return n;
-}
-function setExit(code) {
-  process.exitCode = code;
-}
-var init_args = __esm({
-  "src/opsbot-core/args.ts"() {
-    "use strict";
-    init_dist2();
-    init_invocation();
-  }
-});
-
-// src/opsbot-core/lifecycle.ts
-import { accessSync as accessSync2, constants as constants2, existsSync as existsSync6, mkdirSync as mkdirSync2, readdirSync, realpathSync as realpathSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join5, relative } from "node:path";
-function parsePoint(s) {
-  const t = s.replace(/\/+$/, "");
-  for (const p of POINTS) {
-    if (p === t || POINT_DIRS[p] === t || POINT_DIRS[p] === `${t}.d` || `cycle.d/${t}` === POINT_DIRS[p]) return p;
-  }
-  return null;
-}
-function discover(root, point) {
-  const dir = join5(root, OPSBOT_D, POINT_DIRS[point]);
-  const scripts = [];
-  const skipped = [];
-  if (!existsSync6(dir)) return { scripts, skipped };
-  const names = readdirSync(dir).sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
-  for (const name of names) {
-    if (name.startsWith(".")) continue;
-    const path = join5(dir, name);
-    let st;
-    try {
-      st = statSync2(path);
-    } catch {
-      skipped.push({ point, name, reason: "a broken link" });
-      continue;
-    }
-    if (st.isDirectory()) continue;
-    if (!st.isFile()) {
-      skipped.push({ point, name, reason: "not a regular file" });
-      continue;
-    }
-    try {
-      accessSync2(path, constants2.X_OK);
-    } catch {
-      skipped.push({ point, name, reason: "not executable" });
-      continue;
-    }
-    let real2 = path;
-    try {
-      real2 = realpathSync2(path);
-    } catch {
-    }
-    const rel = relative(root, real2);
-    scripts.push({ point, name, path, source: rel.startsWith("..") ? real2 : rel });
-  }
-  return { scripts, skipped };
-}
-function configSnapshot(root, text) {
-  const p = gitPath(root, "opsbot-config.json");
-  try {
-    writeFileSync2(p, text);
-  } catch {
-    mkdirSync2(join5(root, ".git"), { recursive: true });
-    writeFileSync2(p, text);
-  }
-  return p;
-}
-function baseEnv(root, settings, configPath, point, extra = {}) {
-  return {
-    ...process.env,
-    OPSBOT_ROOT: root,
-    OPSBOT_CONFIG: configPath,
-    OPSBOT_NAME: settings.name,
-    OPSBOT_MARK: settings.mark,
-    OPSBOT_HOOK: point,
-    ...extra
-  };
-}
-function runScript(script, root, env, input) {
-  return run(script.path, [], { cwd: root, env, input, timeoutMs: SCRIPT_TIMEOUT_MS });
-}
-var OPSBOT_D, POINTS, POINT_DIRS, SCRIPT_TIMEOUT_MS;
-var init_lifecycle = __esm({
-  "src/opsbot-core/lifecycle.ts"() {
-    "use strict";
-    init_repo();
-    OPSBOT_D = "opsbot.d";
-    POINTS = ["heartbeat", "monitor", "cycle.begin", "cycle.end", "wake", "escalate"];
-    POINT_DIRS = {
-      heartbeat: "heartbeat.d",
-      monitor: "monitor.d",
-      "cycle.begin": "cycle.d/begin",
-      "cycle.end": "cycle.d/end",
-      wake: "wake.d",
-      escalate: "escalate.d"
-    };
-    SCRIPT_TIMEOUT_MS = 3e5;
-  }
-});
-
-// src/opsbot-core/commands/check.ts
-import { existsSync as existsSync7, rmSync as rmSync2 } from "node:fs";
-function gateWordIn(text, word) {
-  if (!/^[A-Z]{3,}$/.test(word)) return false;
-  return new RegExp(`(?<![\\p{L}\\p{N}])${word}(?![\\p{L}\\p{N}])`, "u").test(text ?? "");
-}
-function parseItems(stdout, input) {
-  const items = [];
-  let bad = 0;
-  for (const line of stdout.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const v = JSON.parse(line);
-      const keysOk = v?.keys === void 0 || Array.isArray(v.keys) && v.keys.every((k) => typeof k === "string" && k !== "");
-      if (v && typeof v === "object" && !Array.isArray(v) && typeof v.key === "string" && v.key !== "" && keysOk) {
-        items.push({ ...v, input });
-      } else bad++;
-    } catch {
-      bad++;
-    }
-  }
-  return { items, bad };
-}
-function itemKeys(it) {
-  return [it.key, ...it.keys ?? []];
-}
-function renderItem(it, n, total2, gateWord) {
-  const out = { n: `${n}/${total2}`, input: it.input };
-  for (const f of CORE_FIELDS) {
-    if (it[f] === void 0) continue;
-    out[f] = f === "kind" && typeof it.kind === "string" ? it.kind.toUpperCase() : it[f];
-  }
-  if (gateWord && typeof it.text === "string" && gateWordIn(it.text, gateWord)) out.gate_word = "present";
-  for (const [k, v] of Object.entries(it)) {
-    if (k === "input" || k === "text" || k === "report" || CORE_FIELDS.includes(k)) continue;
-    out[k] = v;
-  }
-  if (it.text !== void 0) out.text = it.text;
-  return out;
-}
-function runCheck(root, opts) {
-  if (!hasHead(root)) {
-    throw new AxiError("no commit at HEAD in this checkout", "CANNOT_RUN", ["Commit opsbot.json first"]);
-  }
-  const { settings, text } = loadSettings(root);
-  const p = paths(root);
-  const startMs = nowMs();
-  const NOW = iso(startMs);
-  const inputs = [];
-  const failed = (input, error, n2 = 0, quiet = 0) => inputs.push({ input, ok: false, new: n2, quiet, error });
-  let wm = readWatermark(root);
-  let sinceMs;
-  if (wm !== null && validWatermark(wm)) {
-    sinceMs = parseIso(wm) - MARGIN_MINUTES * 6e4;
-  } else {
-    if (wm !== null) failed("watermark", "the watermark file does not hold one ISO-8601 UTC time");
-    wm = null;
-    sinceMs = startMs - FIRST_RUN_HOURS * 36e5;
-  }
-  const SINCE = iso(sinceMs);
-  const seen = readSeen(root);
-  const configPath = configSnapshot(root, text);
-  const { scripts } = discover(root, "heartbeat");
-  if (scripts.length === 0) {
-    failed("heartbeat.d", "no heartbeat scripts are installed, so no stream can be read");
-  }
-  const items = [];
-  const recorded = [];
-  const recordedSet = /* @__PURE__ */ new Set();
-  for (const s of scripts) {
-    const env = baseEnv(root, settings, configPath, "heartbeat", {
-      OPSBOT_SINCE: SINCE,
-      OPSBOT_SEEN: p.seen,
-      OPSBOT_WATERMARK: wm ?? ""
-    });
-    const r = runScript(s, root, env);
-    const { items: got, bad } = parseItems(r.stdout, s.name);
-    const fresh = [];
-    let quiet = 0;
-    for (const it of got) {
-      const ks = itemKeys(it);
-      if (!ks.some((k) => !seen.has(k) && !recordedSet.has(k))) continue;
-      for (const k of ks) {
-        if (seen.has(k) || recordedSet.has(k)) continue;
-        recordedSet.add(k);
-        recorded.push(k);
-      }
-      if (it.report === false) quiet++;
-      else fresh.push(it);
-    }
-    items.push(...fresh);
-    if (r.code !== 0) {
-      failed(s.name, `exit ${r.code}: ${firstLine(r.stderr) || "no message"}`, fresh.length, quiet);
-    } else if (bad > 0) {
-      failed(s.name, `${bad} line${bad === 1 ? "" : "s"} of output not a heartbeat item ({key, at, conv, kind, from, text})`, fresh.length, quiet);
-    } else {
-      inputs.push({ input: s.name, ok: true, new: fresh.length, quiet });
-    }
-  }
-  const NEW = items.length;
-  const realInputs = () => inputs.filter((i) => i.input !== "watermark" && i.input !== "commit" && i.input !== "heartbeat.d");
-  const blocked = opts.commit ? blockedBy(root) : null;
-  if (blocked) failed("commit", `cannot commit: ${blocked}`);
-  const failedList = () => inputs.filter((i) => !i.ok).map((i) => ({ input: i.input, error: i.error ?? "" }));
-  let outcome = failedList().length ? "degraded" : NEW > 0 ? "new" : "nothing-new";
-  const logSize = fileSize(p.log);
-  const seenSize = fileSize(p.seen);
-  const oldWm = readWatermark(root);
-  const writeState = () => {
-    appendSeen(root, recorded);
-    if (outcome === "nothing-new") writeWatermark(root, NOW);
-    const cur2 = readWatermark(root);
-    const inputsObj = {};
-    for (const i of realInputs()) {
-      inputsObj[i.input] = { ok: i.ok, new: i.new };
-      if (i.quiet > 0) inputsObj[i.input].quiet = i.quiet;
-    }
-    appendJsonl(p.log, {
-      at: NOW,
-      outcome,
-      inputs: inputsObj,
-      new: NEW,
-      failed: failedList(),
-      watermark: cur2 ?? null
-    });
-  };
-  writeState();
-  if (opts.commit && !blocked) {
-    const subject = outcome === "nothing-new" ? "nothing new" : outcome === "new" ? `${NEW} new` : `degraded, ${NEW} new`;
-    const files = [p.seen, p.log];
-    if (existsSync7(p.watermark)) files.push(p.watermark);
-    if (existsSync7(p.outages)) files.push(p.outages);
-    files.push(...changedCommitPaths(root, settings.commit_paths, files));
-    const why = commitOnly(root, files, `chore(cycle): ${subject}`);
-    if (why) {
-      truncateTo(p.log, logSize);
-      truncateTo(p.seen, seenSize);
-      if (oldWm !== null) writeWatermark(root, oldWm);
-      else rmSync2(p.watermark, { force: true });
-      failed("commit", `cannot commit: ${why}`);
-      outcome = "degraded";
-      writeState();
-    }
-  }
-  const cur = readWatermark(root);
-  const n = realInputs().length;
-  const code = outcome === "nothing-new" ? 0 : outcome === "new" ? 10 : 20;
-  if (outcome === "nothing-new") {
-    const line2 = `nothing new \xB7 ${n} inputs \xB7 watermark ${cur}`;
-    return { code, outcome, line: line2, output: { check: line2 } };
-  }
-  const fl = failedList();
-  const line = outcome === "degraded" ? `degraded \xB7 ${fl.length} failed \xB7 ${NEW} new \xB7 ${n} inputs \xB7 watermark ${cur ?? "none"} (not advanced)` : `new \xB7 ${NEW} new \xB7 ${n} inputs \xB7 watermark ${cur ?? "none"} (not advanced)`;
-  const output = { check: line };
-  if (fl.length) output.failed = fl;
-  if (NEW > 0) output.items = items.map((it, i) => renderItem(it, i + 1, NEW, settings.gate_word));
-  return { code, outcome, line, output };
-}
-function checkCommand(args) {
-  const { flags } = parseArgs(args, { bool: ["no-commit"] }, CHECK_USAGE);
-  const root = requireRoot();
-  const r = runCheck(root, { commit: !flags["no-commit"] });
-  setExit(r.code);
-  if (r.code !== 0) {
-    r.output.help = [`Work the items, then run \`${cliInvocation()} cycle end --records <n>\`${r.code === 20 ? " (add --degraded when an input could not be read)" : ""}`];
-  }
-  return r.output;
-}
-var MARGIN_MINUTES, FIRST_RUN_HOURS, CHECK_USAGE, CORE_FIELDS;
-var init_check = __esm({
-  "src/opsbot-core/commands/check.ts"() {
-    "use strict";
-    init_dist2();
-    init_args();
-    init_invocation();
-    init_lifecycle();
-    init_repo();
-    init_settings();
-    init_state();
-    MARGIN_MINUTES = 30;
-    FIRST_RUN_HOURS = 24;
-    CHECK_USAGE = "check [--no-commit]";
-    CORE_FIELDS = ["key", "at", "conv", "kind", "from"];
   }
 });
 
@@ -3417,7 +3143,7 @@ var init_reader = __esm({
 
 // node_modules/agent-recall-axi/dist/src/lib/adapters/claude-code/classify.js
 import { basename as basename3, join as join6 } from "node:path";
-import { existsSync as existsSync8 } from "node:fs";
+import { existsSync as existsSync7 } from "node:fs";
 function isSilentType(type) {
   if (type === void 0)
     return true;
@@ -3656,10 +3382,10 @@ function parsePointer(text, sidecar) {
     preview = text.slice(pv.index + pv[0].length);
   preview = preview.replace(/\s*<\/persisted-output>\s*$/, "").replace(/\n?\.\.\.\s*$/, "");
   let path = stored;
-  let exists = existsSync8(stored);
+  let exists = existsSync7(stored);
   if (sidecar) {
     const relocated = join6(sidecar, "tool-results", basename3(stored));
-    if (relocated !== stored && existsSync8(relocated)) {
+    if (relocated !== stored && existsSync7(relocated)) {
       path = relocated;
       exists = true;
     }
@@ -5205,15 +4931,15 @@ async function indexEntry(session, mtimeMs) {
   const e = (await readSessionsIndex(dir)).get(session.id);
   if (e?.fileMtime === void 0)
     return void 0;
-  let mtime = mtimeMs;
-  if (mtime === void 0) {
+  let mtime2 = mtimeMs;
+  if (mtime2 === void 0) {
     try {
-      mtime = (await stat5(session.path)).mtimeMs;
+      mtime2 = (await stat5(session.path)).mtimeMs;
     } catch {
       return void 0;
     }
   }
-  return Math.trunc(e.fileMtime) === Math.trunc(mtime) ? e : void 0;
+  return Math.trunc(e.fileMtime) === Math.trunc(mtime2) ? e : void 0;
 }
 async function headerTitle(session) {
   return await customTitleFile(session) ?? (await indexEntry(session))?.summary ?? await headHuman(session);
@@ -5253,13 +4979,13 @@ async function humanAt(session, loc) {
     return void 0;
   }
 }
-async function build(session, m, size, mtime) {
+async function build(session, m, size, mtime2) {
   const out = {
     ...m.counts,
     lines: m.seq,
     bytes: size,
-    mtime: mtime.toISOString(),
-    last: m.stats.max ?? mtime.toISOString()
+    mtime: mtime2.toISOString(),
+    last: m.stats.max ?? mtime2.toISOString()
   };
   if (m.stats.first)
     out.started = m.stats.first;
@@ -5532,14 +5258,14 @@ async function latest(scope) {
   let best;
   for (const project of resolved.projects) {
     for await (const s of claudeCode.listSessions(project, { subagents: false })) {
-      let mtime;
+      let mtime2;
       try {
-        mtime = (await stat7(s.path)).mtimeMs;
+        mtime2 = (await stat7(s.path)).mtimeMs;
       } catch {
         continue;
       }
-      if (!best || mtime > best.mtime || mtime === best.mtime && s.id > best.s.id)
-        best = { s, mtime };
+      if (!best || mtime2 > best.mtime || mtime2 === best.mtime && s.id > best.s.id)
+        best = { s, mtime: mtime2 };
     }
   }
   if (!best)
@@ -7603,8 +7329,8 @@ async function homeListing(scope, opts = {}) {
   const indexes = /* @__PURE__ */ new Map();
   const sessions = [];
   const budget = { left: STATS_APPEND };
-  for (const { s, mtime } of found2.slice(0, limit)) {
-    const mtimeIso = new Date(mtime).toISOString();
+  for (const { s, mtime: mtime2 } of found2.slice(0, limit)) {
+    const mtimeIso = new Date(mtime2).toISOString();
     const stats = await cachedStats(s, { cache: opts.cache ?? {}, budget }).catch(() => void 0);
     if (stats) {
       const row2 = { session: s, mtime: mtimeIso, last: stats.last, turns: stats.turns, source: "stats" };
@@ -7619,7 +7345,7 @@ async function homeListing(scope, opts = {}) {
       if (!indexes.has(dir))
         indexes.set(dir, await readSessionsIndex(dir));
       const e = indexes.get(dir).get(s.id);
-      if (e?.fileMtime !== void 0 && Math.trunc(e.fileMtime) === Math.trunc(mtime))
+      if (e?.fileMtime !== void 0 && Math.trunc(e.fileMtime) === Math.trunc(mtime2))
         entry = e;
     }
     const row = { session: s, mtime: mtimeIso, last: entry?.modified ?? mtimeIso, source: entry ? "index" : "file" };
@@ -7636,7 +7362,7 @@ async function homeListing(scope, opts = {}) {
   return out;
 }
 var LAST_HUMAN_BYTES, STATS_APPEND;
-var init_home2 = __esm({
+var init_home = __esm({
   "node_modules/agent-recall-axi/dist/src/lib/home.js"() {
     init_adapter();
     init_claude_code();
@@ -8024,18 +7750,18 @@ var init_lib = __esm({
     init_tools();
     init_resume();
     init_stats();
-    init_home2();
+    init_home();
     init_find();
     init_recall();
   }
 });
 
 // src/opsbot-core/transcript.ts
-import { closeSync, existsSync as existsSync9, openSync, readFileSync as readFileSync5, readSync, statSync as statSync4 } from "node:fs";
+import { closeSync, existsSync as existsSync8, openSync, readFileSync as readFileSync5, readSync, statSync as statSync4 } from "node:fs";
 function readEvents(path, maxBytes = TAIL_BYTES) {
   let text;
   try {
-    if (!existsSync9(path)) return [];
+    if (!existsSync8(path)) return [];
     const size = statSync4(path).size;
     if (size <= maxBytes) text = readFileSync5(path, "utf8");
     else {
@@ -8349,7 +8075,7 @@ function schedulePackLines(s, evs, now) {
   if (st) return [`armed until ${hhmm2(st.until)} (since ${hhmm2(st.at)}); nothing to do until it delivers`];
   return [`${evs ? "not armed" : "state unknown (no session log)"} \xB7 run \`cycle begin\` now; it prints the one Monitor call to make`];
 }
-var MONITOR_MAX_MS, MONITOR_MIN_MS, hhmm2, WAKE_RULES, SCHEDULE_MARGIN_S, CYCLE_DUE, basename6, SCHEDULE_RULES;
+var MONITOR_MAX_MS, MONITOR_MIN_MS, hhmm2, WAKE_RULES, SCHEDULE_MARGIN_S, CYCLE_DUE, basename6, SLEEP_RULES, SCHEDULE_RULES;
 var init_wake = __esm({
   "src/opsbot-core/wake.ts"() {
     "use strict";
@@ -8366,6 +8092,10 @@ var init_wake = __esm({
     SCHEDULE_MARGIN_S = 60;
     CYCLE_DUE = "cycle due";
     basename6 = (p) => p.replace(/\/+$/, "").split("/").pop() || p;
+    SLEEP_RULES = [
+      "When `cycle begin` or `cycle end` prints a `sleep` field in place of `wake`, arm no monitor and end your turn: the sleep timer compacts you and wakes you.",
+      "A wake from sleep is the loop prompt followed by `(woken: <reason>)`: run `cycle begin` as after any wake."
+    ];
     SCHEDULE_RULES = [
       "The monitor is your schedule and your live wake.",
       "When it delivers `cycle due` or an event line, run `cycle begin`.",
@@ -8378,8 +8108,524 @@ var init_wake = __esm({
   }
 });
 
+// src/opsbot-core/sleep.ts
+import { existsSync as existsSync9, readFileSync as readFileSync6, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "node:fs";
+function sleepFile(root) {
+  return gitPath(root, SLEEP_STATE);
+}
+function readSleep(root) {
+  try {
+    const v = JSON.parse(readFileSync6(sleepFile(root), "utf8"));
+    return v && typeof v === "object" && typeof v.decided_at === "string" ? v : null;
+  } catch {
+    return null;
+  }
+}
+function activeSleep(root, s) {
+  return s.sleep ? readSleep(root) : null;
+}
+function writeSleep(root, st) {
+  writeFileSync3(sleepFile(root), `${JSON.stringify(st)}
+`);
+}
+function clearSleep(root) {
+  rmSync2(sleepFile(root), { force: true });
+}
+function lineCount(file) {
+  try {
+    const t = readFileSync6(file, "utf8");
+    if (!t) return 0;
+    return t.split("\n").length - (t.endsWith("\n") ? 1 : 0);
+  } catch {
+    return 0;
+  }
+}
+function wakeLineCounts(s) {
+  return Object.fromEntries(wakeFiles(s).map((f) => [f, lineCount(f)]));
+}
+function lastOperatorAt(evs, loopPrompt, after) {
+  const prompt = loopPrompt.trim();
+  let last = null;
+  for (const m of humanMessages2(evs)) {
+    if (m.text.startsWith(prompt) || m.text.startsWith("<task-notification") || m.text.startsWith("<system-reminder")) continue;
+    if (after && m.at <= after) continue;
+    if (!last || m.at > last) last = m.at;
+  }
+  return last;
+}
+function dueTimes(root, s, settingsText) {
+  const scripts = discover(root, "due").scripts;
+  if (scripts.length === 0) return { due: [], problem: null };
+  const configPath = configSnapshot(root, settingsText);
+  const due = [];
+  for (const sc of scripts) {
+    const r = runScript(sc, root, baseEnv(root, s, configPath, "due"));
+    if (r.code !== 0) return { due, problem: `due.d/${sc.name} failed, exit ${r.code}` };
+    for (const line of r.stdout.split("\n")) {
+      if (!line.trim()) continue;
+      const [t, ...rest] = line.trim().split(/\s+/);
+      const ms = parseIso(t ?? "");
+      if (ms === null) return { due, problem: `due.d/${sc.name} printed a line that does not open with a time: ${line.slice(0, 80)}` };
+      due.push({ at: iso(ms), what: rest.join(" ") || sc.name });
+    }
+  }
+  due.sort((a, b) => a.at < b.at ? -1 : a.at > b.at ? 1 : 0);
+  return { due, problem: null };
+}
+function firstCycleAt(lines) {
+  for (const l of lines) if (CYCLE_OUTCOMES.includes(l.outcome)) return l.at;
+  return null;
+}
+function decideSleep(root, s, settingsText, lines, now, evs, by) {
+  const sl = s.sleep;
+  if (!sl) return { sleep: false, why: "sleep is not set" };
+  const check = lastCheck(lines);
+  if (check?.outcome === "degraded") return { sleep: false, why: "the last check was degraded" };
+  const candidates2 = [lastArrival(lines), lastOperatorAt(evs, s.loop.prompt)].filter((t) => !!t);
+  if (candidates2.length === 0) {
+    const first = firstCycleAt(lines);
+    if (first) candidates2.push(first);
+  }
+  const quietSince = candidates2.sort().pop() ?? iso(now);
+  const quietMs = now - (parseIso(quietSince) ?? now);
+  const after = sl.after_minutes * 6e4;
+  if (quietMs < after) return { sleep: false, why: `quiet for ${Math.floor(quietMs / 6e4)} of ${sl.after_minutes} minutes` };
+  const { due, problem } = dueTimes(root, s, settingsText);
+  if (problem) return { sleep: false, why: problem };
+  const next3 = due[0] ?? null;
+  if (next3 && (parseIso(next3.at) ?? 0) < now + after) {
+    return { sleep: false, why: `due at ${hhmm3(next3.at)}: ${next3.what}` };
+  }
+  return {
+    sleep: true,
+    state: {
+      decided_at: iso(now),
+      by,
+      quiet_since: quietSince,
+      due: next3?.at ?? null,
+      due_what: next3?.what ?? null,
+      wake_lines: wakeLineCounts(s),
+      began: null,
+      compacted: false,
+      looked_at: null,
+      woken: null,
+      escalated: false
+    }
+  };
+}
+function wakeBy(s, st) {
+  const max = (parseIso(st.decided_at) ?? 0) + (s.sleep?.max_minutes ?? 0) * 6e4;
+  const due = st.due ? parseIso(st.due) : null;
+  if (due !== null && due < max) return { at: iso(due), why: `due: ${st.due_what ?? "something"}` };
+  return { at: iso(max), why: `${s.sleep?.max_minutes ?? 0} minutes asleep` };
+}
+function sleepFieldLines(s, st) {
+  const by = wakeBy(s, st);
+  const quietMin = Math.floor(((parseIso(st.decided_at) ?? 0) - (parseIso(st.quiet_since) ?? 0)) / 6e4);
+  return [
+    `sleep now: quiet since ${hhmm3(st.quiet_since)} (${quietMin} min), and nothing is due before ${hhmm3(by.at)}`,
+    "arm no monitor, call no ScheduleWakeup, start nothing in the background, and end your turn now",
+    `the sleep timer ${s.sleep?.compact ? "compacts this session once it is idle, then " : ""}wakes it with the loop prompt when a stream has something, and by ${hhmm3(by.at)} at the latest (${by.why})`,
+    "when the loop prompt arrives, run `cycle begin` as after any wake"
+  ];
+}
+function sleepLogLine(st) {
+  return { at: st.decided_at, outcome: "sleep", by: st.by, quiet_since: st.quiet_since, due: st.due };
+}
+function wakeLogLine(st, now) {
+  const w = st.woken;
+  const ev = w ? parseIso(w.event_at) : null;
+  return {
+    at: iso(now),
+    outcome: "wake",
+    reason: w ? w.reason : st.began ? "a cycle began with no wake recorded (the operator, or the session itself)" : "a cycle began before the sleep did",
+    latency_s: ev !== null ? Math.max(0, Math.round((now - ev) / 1e3)) : null,
+    slept_from: st.began ?? st.decided_at,
+    woken_at: w?.at ?? null
+  };
+}
+function silenceFrom(lines, st, now, lastCycle) {
+  if (st) return st.woken ? st.woken.at : iso(now);
+  let last = lastCycle;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i];
+    if (l.outcome !== "wake") continue;
+    const w = typeof l.woken_at === "string" ? l.woken_at : l.at;
+    if (!last || w > last) last = w;
+    break;
+  }
+  return last;
+}
+function sleepSpans(lines) {
+  const spans2 = [];
+  for (const l of lines) {
+    if (l.outcome === "sleep") spans2.push({ from: l.at, to: null });
+    else if (l.outcome === "wake" && spans2.length && spans2[spans2.length - 1].to === null) {
+      spans2[spans2.length - 1].to = typeof l.woken_at === "string" ? l.woken_at : l.at;
+    }
+  }
+  return spans2;
+}
+function sleepStatusLine(s, st) {
+  if (st.woken) return `woken at ${hhmm3(st.woken.at)} for: ${st.woken.reason}${st.woken.sent ? "" : " (the prompt has not landed yet)"}; waiting for cycle begin`;
+  if (!st.began) return `going down since ${hhmm3(st.decided_at)}: the sleep timer ${s.sleep?.compact ? "compacts the session" : "marks the sleep begun"} once it is idle`;
+  const lastLook = st.looked_at ?? st.began;
+  const next3 = iso((parseIso(lastLook) ?? 0) + (s.sleep?.probe_minutes ?? 10) * 6e4);
+  return `asleep since ${hhmm3(st.began)}, next look ${hhmm3(next3)}, wake by ${hhmm3(wakeBy(s, st).at)}`;
+}
+var SLEEP_STATE, hhmm3;
+var init_sleep = __esm({
+  "src/opsbot-core/sleep.ts"() {
+    "use strict";
+    init_lifecycle();
+    init_repo();
+    init_state();
+    init_cadence();
+    init_transcript();
+    init_wake();
+    SLEEP_STATE = "opsbot-sleep";
+    hhmm3 = (t) => `${t.slice(11, 16)}Z`;
+  }
+});
+
+// src/opsbot-core/commands/home.ts
+function age(ms) {
+  const m = Math.floor(ms / 6e4);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h} h ${m % 60} min ago`;
+  return `${Math.floor(h / 24)} days ago`;
+}
+function homeCommand() {
+  const cli = cliInvocation();
+  const root = findRoot();
+  if (!root) {
+    return {
+      bot: "not inside a git checkout",
+      help: [`Run \`${cli}\` from the bot's repo (or set OPSBOT_ROOT)`]
+    };
+  }
+  const s = trySettings(root);
+  if (!s) {
+    return {
+      bot: "no valid opsbot.json in this repo",
+      help: [
+        "Copy the skill's templates/opsbot.json to the repo root as opsbot.json, fill it in, and commit it",
+        `Run \`${cli} settings validate\` to see what is wrong`
+      ]
+    };
+  }
+  const now = nowMs();
+  const lines = readCycleLog(root);
+  const last = [...lines].reverse().find((l) => ["nothing-new", "new", "degraded", "finished"].includes(l.outcome));
+  const check = lastCheck(lines);
+  const lock = judgeLock(root, s.lock_max_minutes);
+  const open5 = outages(root).filter((o) => o.ended === null).length;
+  const failed = check && Array.isArray(check.failed) ? check.failed.length : 0;
+  const lastAt = last ? parseIso(last.at) : null;
+  return {
+    bot: `${s.mark} ${s.name}`,
+    last_cycle: last ? `${last.outcome} \xB7 ${last.at}${lastAt !== null ? ` (${age(now - lastAt)})` : ""}` : "none logged yet",
+    lock: lock.state === "free" ? "free" : lock.state === "held" ? `held by session ${lock.hold.session || "unknown"} since ${lock.hold.started}` : `abandoned: ${lock.note}`,
+    next_wake: delayLine(nextDelay(s, lines, now)),
+    failed_inputs: failed,
+    open_outages: open5,
+    ...s.sleep ? { sleep: ((st) => st ? sleepStatusLine(s, st) : "awake")(readSleep(root)) } : {},
+    help: [
+      `Run \`${cli} cycle begin\` to start a cycle`,
+      `Run \`${cli} log tail\` for recent cycles, \`${cli} hooks list\` for what runs at each point`,
+      `Run \`${cli} --help\` for every command`
+    ]
+  };
+}
+var init_home2 = __esm({
+  "src/opsbot-core/commands/home.ts"() {
+    "use strict";
+    init_cadence();
+    init_invocation();
+    init_repo();
+    init_settings();
+    init_sleep();
+    init_state();
+  }
+});
+
+// src/opsbot-core/args.ts
+function parseArgs(args, spec, usage) {
+  const bool = spec.bool ?? [];
+  const value = spec.value ?? [];
+  const positionals = [];
+  const flags = {};
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith("--")) {
+      const eq = a.indexOf("=");
+      const name = eq > 0 ? a.slice(2, eq) : a.slice(2);
+      if (bool.includes(name)) {
+        if (eq > 0) throw usageError(`--${name} takes no value`, usage);
+        flags[name] = true;
+      } else if (value.includes(name)) {
+        const v = eq > 0 ? a.slice(eq + 1) : args[++i];
+        if (v === void 0 || eq < 0 && v.startsWith("--")) throw usageError(`--${name} needs a value`, usage);
+        flags[name] = v;
+      } else {
+        const valid = [...value, ...bool].map((f) => `--${f}`).join(", ");
+        throw usageError(`unknown flag --${name}`, usage, valid ? `valid flags here: ${valid}` : "this command takes no flags");
+      }
+    } else {
+      positionals.push(a);
+    }
+  }
+  if (positionals.length > (spec.maxPositionals ?? 0)) {
+    throw usageError(`unexpected argument ${JSON.stringify(positionals[spec.maxPositionals ?? 0])}`, usage);
+  }
+  return { positionals, flags };
+}
+function usageError(message, usage, extra) {
+  const help = [`${cliInvocation()} ${usage}`];
+  if (extra) help.unshift(extra);
+  return new AxiError(message, "VALIDATION_ERROR", help);
+}
+function intFlag(flags, name, usage, opts = {}) {
+  const v = flags[name];
+  if (v === void 0) return void 0;
+  if (typeof v !== "string" || !/^\d+$/.test(v)) throw usageError(`--${name} must be a whole number`, usage);
+  const n = Number(v);
+  if (opts.min !== void 0 && n < opts.min) throw usageError(`--${name} must be at least ${opts.min}`, usage);
+  if (opts.max !== void 0 && n > opts.max) throw usageError(`--${name} must be at most ${opts.max}`, usage);
+  return n;
+}
+function setExit(code) {
+  process.exitCode = code;
+}
+var init_args = __esm({
+  "src/opsbot-core/args.ts"() {
+    "use strict";
+    init_dist2();
+    init_invocation();
+  }
+});
+
+// src/opsbot-core/commands/check.ts
+import { existsSync as existsSync10, rmSync as rmSync3 } from "node:fs";
+function gateWordIn(text, word) {
+  if (!/^[A-Z]{3,}$/.test(word)) return false;
+  return new RegExp(`(?<![\\p{L}\\p{N}])${word}(?![\\p{L}\\p{N}])`, "u").test(text ?? "");
+}
+function parseItems(stdout, input) {
+  const items = [];
+  let bad = 0;
+  for (const line of stdout.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const v = JSON.parse(line);
+      const keysOk = v?.keys === void 0 || Array.isArray(v.keys) && v.keys.every((k) => typeof k === "string" && k !== "");
+      if (v && typeof v === "object" && !Array.isArray(v) && typeof v.key === "string" && v.key !== "" && keysOk) {
+        items.push({ ...v, input });
+      } else bad++;
+    } catch {
+      bad++;
+    }
+  }
+  return { items, bad };
+}
+function itemKeys(it) {
+  return [it.key, ...it.keys ?? []];
+}
+function renderItem(it, n, total2, gateWord) {
+  const out = { n: `${n}/${total2}`, input: it.input };
+  for (const f of CORE_FIELDS) {
+    if (it[f] === void 0) continue;
+    out[f] = f === "kind" && typeof it.kind === "string" ? it.kind.toUpperCase() : it[f];
+  }
+  if (gateWord && typeof it.text === "string" && gateWordIn(it.text, gateWord)) out.gate_word = "present";
+  for (const [k, v] of Object.entries(it)) {
+    if (k === "input" || k === "text" || k === "report" || CORE_FIELDS.includes(k)) continue;
+    out[k] = v;
+  }
+  if (it.text !== void 0) out.text = it.text;
+  return out;
+}
+function runPeek(root) {
+  const r = sweep(root, { commit: false, peek: true });
+  if (!("peek" in r)) throw new Error("unreachable: a peek returned a check");
+  return r.peek;
+}
+function runCheck(root, opts) {
+  const r = sweep(root, { commit: opts.commit, peek: false });
+  if (!("check" in r)) throw new Error("unreachable: a check returned a peek");
+  return r.check;
+}
+function sweep(root, opts) {
+  if (!hasHead(root)) {
+    throw new AxiError("no commit at HEAD in this checkout", "CANNOT_RUN", ["Commit opsbot.json first"]);
+  }
+  const { settings, text } = loadSettings(root);
+  const p = paths(root);
+  const startMs = nowMs();
+  const NOW = iso(startMs);
+  const inputs = [];
+  const failed = (input, error, n2 = 0, quiet = 0) => inputs.push({ input, ok: false, new: n2, quiet, error });
+  let wm = readWatermark(root);
+  let sinceMs;
+  if (wm !== null && validWatermark(wm)) {
+    sinceMs = parseIso(wm) - MARGIN_MINUTES * 6e4;
+  } else {
+    if (wm !== null) failed("watermark", "the watermark file does not hold one ISO-8601 UTC time");
+    wm = null;
+    sinceMs = startMs - FIRST_RUN_HOURS * 36e5;
+  }
+  const SINCE = iso(sinceMs);
+  const seen = readSeen(root);
+  const configPath = configSnapshot(root, text);
+  const { scripts } = discover(root, "heartbeat");
+  if (scripts.length === 0) {
+    failed("heartbeat.d", "no heartbeat scripts are installed, so no stream can be read");
+  }
+  const items = [];
+  const recorded = [];
+  const recordedSet = /* @__PURE__ */ new Set();
+  for (const s of scripts) {
+    const env = baseEnv(root, settings, configPath, "heartbeat", {
+      OPSBOT_SINCE: SINCE,
+      OPSBOT_SEEN: p.seen,
+      OPSBOT_WATERMARK: wm ?? "",
+      ...opts.peek ? { OPSBOT_PEEK: "1" } : {}
+    });
+    const r = runScript(s, root, env);
+    const { items: got, bad } = parseItems(r.stdout, s.name);
+    const fresh = [];
+    let quiet = 0;
+    for (const it of got) {
+      const ks = itemKeys(it);
+      if (!ks.some((k) => !seen.has(k) && !recordedSet.has(k))) continue;
+      for (const k of ks) {
+        if (seen.has(k) || recordedSet.has(k)) continue;
+        recordedSet.add(k);
+        recorded.push(k);
+      }
+      if (it.report === false) quiet++;
+      else fresh.push(it);
+    }
+    items.push(...fresh);
+    if (r.code !== 0) {
+      failed(s.name, `exit ${r.code}: ${firstLine(r.stderr) || "no message"}`, fresh.length, quiet);
+    } else if (bad > 0) {
+      failed(s.name, `${bad} line${bad === 1 ? "" : "s"} of output not a heartbeat item ({key, at, conv, kind, from, text})`, fresh.length, quiet);
+    } else {
+      inputs.push({ input: s.name, ok: true, new: fresh.length, quiet });
+    }
+  }
+  const NEW = items.length;
+  const realInputs = () => inputs.filter((i) => i.input !== "watermark" && i.input !== "commit" && i.input !== "heartbeat.d");
+  if (opts.peek) {
+    const bad = inputs.filter((i) => !i.ok);
+    const code2 = bad.length ? 20 : NEW > 0 ? 10 : 0;
+    const outcome2 = code2 === 20 ? "degraded" : code2 === 10 ? "new" : "nothing-new";
+    const ats = items.map((it) => typeof it.at === "string" ? parseIso(it.at) : null).filter((t) => t !== null);
+    const n2 = realInputs().length;
+    const line2 = code2 === 0 ? `nothing new \xB7 ${n2} inputs \xB7 nothing recorded` : code2 === 10 ? `new \xB7 ${NEW} new \xB7 ${n2} inputs \xB7 nothing recorded` : `degraded \xB7 ${bad.length} failed \xB7 ${NEW} new \xB7 ${n2} inputs \xB7 nothing recorded`;
+    return { peek: { code: code2, outcome: outcome2, line: line2, inputs, new: NEW, earliest: ats.length ? iso(Math.min(...ats)) : null } };
+  }
+  const blocked = opts.commit ? blockedBy(root) : null;
+  if (blocked) failed("commit", `cannot commit: ${blocked}`);
+  const failedList = () => inputs.filter((i) => !i.ok).map((i) => ({ input: i.input, error: i.error ?? "" }));
+  let outcome = failedList().length ? "degraded" : NEW > 0 ? "new" : "nothing-new";
+  const logSize = fileSize(p.log);
+  const seenSize = fileSize(p.seen);
+  const oldWm = readWatermark(root);
+  const writeState = () => {
+    appendSeen(root, recorded);
+    if (outcome === "nothing-new") writeWatermark(root, NOW);
+    const cur2 = readWatermark(root);
+    const inputsObj = {};
+    for (const i of realInputs()) {
+      inputsObj[i.input] = { ok: i.ok, new: i.new };
+      if (i.quiet > 0) inputsObj[i.input].quiet = i.quiet;
+    }
+    appendJsonl(p.log, {
+      at: NOW,
+      outcome,
+      inputs: inputsObj,
+      new: NEW,
+      failed: failedList(),
+      watermark: cur2 ?? null
+    });
+  };
+  writeState();
+  if (opts.commit && !blocked) {
+    const subject = outcome === "nothing-new" ? "nothing new" : outcome === "new" ? `${NEW} new` : `degraded, ${NEW} new`;
+    const files = [p.seen, p.log];
+    if (existsSync10(p.watermark)) files.push(p.watermark);
+    if (existsSync10(p.outages)) files.push(p.outages);
+    files.push(...changedCommitPaths(root, settings.commit_paths, files));
+    const why = commitOnly(root, files, `chore(cycle): ${subject}`);
+    if (why) {
+      truncateTo(p.log, logSize);
+      truncateTo(p.seen, seenSize);
+      if (oldWm !== null) writeWatermark(root, oldWm);
+      else rmSync3(p.watermark, { force: true });
+      failed("commit", `cannot commit: ${why}`);
+      outcome = "degraded";
+      writeState();
+    }
+  }
+  const cur = readWatermark(root);
+  const n = realInputs().length;
+  const code = outcome === "nothing-new" ? 0 : outcome === "new" ? 10 : 20;
+  if (outcome === "nothing-new") {
+    const line2 = `nothing new \xB7 ${n} inputs \xB7 watermark ${cur}`;
+    return { check: { code, outcome, line: line2, output: { check: line2 } } };
+  }
+  const fl = failedList();
+  const line = outcome === "degraded" ? `degraded \xB7 ${fl.length} failed \xB7 ${NEW} new \xB7 ${n} inputs \xB7 watermark ${cur ?? "none"} (not advanced)` : `new \xB7 ${NEW} new \xB7 ${n} inputs \xB7 watermark ${cur ?? "none"} (not advanced)`;
+  const output = { check: line };
+  if (fl.length) output.failed = fl;
+  if (NEW > 0) output.items = items.map((it, i) => renderItem(it, i + 1, NEW, settings.gate_word));
+  return { check: { code, outcome, line, output } };
+}
+function checkCommand(args) {
+  const { flags } = parseArgs(args, { bool: ["no-commit", "peek"] }, CHECK_USAGE);
+  const root = requireRoot();
+  if (flags.peek) {
+    if (flags["no-commit"]) throw new AxiError("--peek commits nothing already; drop --no-commit", "VALIDATION_ERROR", [CHECK_USAGE]);
+    if (!hasHead(root)) throw new AxiError("no commit at HEAD in this checkout", "CANNOT_RUN", ["Commit opsbot.json first"]);
+    const r2 = runPeek(root);
+    setExit(r2.code);
+    const out = {
+      peek: r2.line,
+      inputs: r2.inputs.map((i) => ({ input: i.input, ok: i.ok, new: i.new, error: i.error ?? "" }))
+    };
+    if (r2.code !== 0) out.help = [`Nothing was recorded; run \`${cliInvocation()} cycle begin\` to work the items`];
+    return out;
+  }
+  const r = runCheck(root, { commit: !flags["no-commit"] });
+  setExit(r.code);
+  if (r.code !== 0) {
+    r.output.help = [`Work the items, then run \`${cliInvocation()} cycle end --records <n>\`${r.code === 20 ? " (add --degraded when an input could not be read)" : ""}`];
+  }
+  return r.output;
+}
+var MARGIN_MINUTES, FIRST_RUN_HOURS, CHECK_USAGE, CORE_FIELDS;
+var init_check = __esm({
+  "src/opsbot-core/commands/check.ts"() {
+    "use strict";
+    init_dist2();
+    init_args();
+    init_invocation();
+    init_lifecycle();
+    init_repo();
+    init_settings();
+    init_state();
+    MARGIN_MINUTES = 30;
+    FIRST_RUN_HOURS = 24;
+    CHECK_USAGE = "check [--no-commit] | check --peek";
+    CORE_FIELDS = ["key", "at", "conv", "kind", "from"];
+  }
+});
+
 // src/opsbot-core/commands/coldstart.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync10, mkdirSync as mkdirSync3, readdirSync as readdirSync2, readFileSync as readFileSync6, rmSync as rmSync3, statSync as statSync5, writeFileSync as writeFileSync3 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync11, mkdirSync as mkdirSync3, readdirSync as readdirSync2, readFileSync as readFileSync7, rmSync as rmSync4, statSync as statSync5, writeFileSync as writeFileSync4 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
 import { dirname as dirname9, join as join16, resolve as resolve6 } from "node:path";
 function legacyCacheDir(name) {
@@ -8388,12 +8634,12 @@ function legacyCacheDir(name) {
 }
 function ensureScratch(root) {
   const dir = join16(root, SCRATCH_DIR);
-  const created = !existsSync10(dir);
+  const created = !existsSync11(dir);
   mkdirSync3(dir, { recursive: true });
   const exclude = gitPath(root, "info/exclude");
   let text = "";
   try {
-    text = readFileSync6(exclude, "utf8");
+    text = readFileSync7(exclude, "utf8");
   } catch {
   }
   const present = text.split("\n").some((l) => ["/.scratch", "/.scratch/", ".scratch", ".scratch/"].includes(l.trim()));
@@ -8406,14 +8652,14 @@ function ensureScratch(root) {
 }
 function writeSessionPointer(root, p) {
   try {
-    writeFileSync3(gitPath(root, "opsbot-session"), `${JSON.stringify(p)}
+    writeFileSync4(gitPath(root, "opsbot-session"), `${JSON.stringify(p)}
 `);
   } catch {
   }
 }
 function sessionPointer(root) {
   try {
-    const v = JSON.parse(readFileSync6(gitPath(root, "opsbot-session"), "utf8"));
+    const v = JSON.parse(readFileSync7(gitPath(root, "opsbot-session"), "utf8"));
     return v && typeof v.transcript_path === "string" ? v : null;
   } catch {
     return null;
@@ -8463,16 +8709,25 @@ function logSummary(root, now) {
     out.push(
       `cycles ${checks.length} \xB7 nothing new ${count2("nothing-new")} \xB7 new ${count2("new")} \xB7 degraded ${count2("degraded")} \xB7 items ${items}`
     );
-    const times = all.filter((l) => CYCLE_OUTCOMES.includes(l.outcome)).map((l) => parseIso(l.at)).sort((a, b) => a - b);
+    const times = all.filter((l) => CYCLE_OUTCOMES.includes(l.outcome) || l.outcome === "sleep" || l.outcome === "wake").map((l) => ({
+      t: parseIso(l.outcome === "wake" && typeof l.woken_at === "string" ? l.woken_at : l.at) ?? parseIso(l.at),
+      sleep: l.outcome === "sleep"
+    })).sort((a, b) => a.t - b.t);
     let gap = 0;
     let from = 0;
     for (let i = 1; i < times.length; i++) {
-      if (times[i] - times[i - 1] > gap) {
-        gap = times[i] - times[i - 1];
-        from = times[i - 1];
+      if (times[i - 1].sleep) continue;
+      if (times[i].t - times[i - 1].t > gap) {
+        gap = times[i].t - times[i - 1].t;
+        from = times[i - 1].t;
       }
     }
     if (times.length > 1) out.push(`longest gap ${Math.floor(gap / 6e4)} min, from ${iso(from)}`);
+    const spans2 = sleepSpans(all);
+    if (spans2.length) {
+      const asleep = spans2.reduce((a, sp) => a + ((sp.to ? parseIso(sp.to) : now) - parseIso(sp.from)), 0);
+      out.push(`slept ${spans2.length} time${spans2.length === 1 ? "" : "s"}, ${Math.floor(asleep / 6e4)} min in all${spans2[spans2.length - 1].to ? "" : ", asleep now"}`);
+    }
     const last = checks[checks.length - 1];
     out.push(`last cycle ${last.at} \xB7 ${last.outcome}`);
     const lastDeg = [...checks].reverse().find((c) => c.outcome === "degraded");
@@ -8498,12 +8753,12 @@ function logSummary(root, now) {
 }
 function kitSections(mode) {
   const dir = process.env.OPSBOT_PACK_DIR || join16(skillDir(), "references", "pack");
-  if (!existsSync10(dir)) return [];
+  if (!existsSync11(dir)) return [];
   return readdirSync2(dir).filter((f) => f.endsWith(".md")).filter((f) => {
     const m = f.match(/^\d+[-_]mode-([a-z]+)\.md$/);
     return !m || m[1] === (mode ?? "strategist");
   }).sort().map((f) => {
-    let text = readFileSync6(join16(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
+    let text = readFileSync7(join16(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
     const m = text.match(/^#\s+(.+)$/m);
     const title = m ? m[1].trim() : f.replace(/^\d+[-_]/, "").replace(/\.md$/, "");
     if (m) text = text.replace(m[0], "").replace(/^\n+/, "");
@@ -8531,7 +8786,9 @@ ${capSection(body, SESSION_LOG_CAP)}`);
   }
   if (s.loop.schedule === "monitor") {
     const evs = transcript ? readEvents(transcript) : null;
-    const lines = [...schedulePackLines(s, evs && evs.length ? evs : null, now), ...SCHEDULE_RULES];
+    const slept = activeSleep(root, s);
+    const state = slept ? [`${sleepStatusLine(s, slept)}; arm nothing now: when the loop prompt arrives, run \`cycle begin\``] : schedulePackLines(s, evs && evs.length ? evs : null, now);
+    const lines = [...state, ...SCHEDULE_RULES, ...s.sleep ? SLEEP_RULES : []];
     kit.push(`\u2550\u2550\u2550 1.${kit.length + 1} The schedule and live wake (arm it before anything else)
 ${lines.join("\n")}`);
   } else if (wakeFiles(s).length) {
@@ -8604,11 +8861,11 @@ async function coldStartCommand(args) {
   ensureScratch(root);
   const { dir, pack: packFile, pending } = packPaths(root);
   mkdirSync3(dir, { recursive: true });
-  writeFileSync3(packFile, pack);
-  writeFileSync3(pending, `${nowIso()}
+  writeFileSync4(packFile, pack);
+  writeFileSync4(pending, `${nowIso()}
 `);
   try {
-    rmSync3(legacyPackPaths(s.name).pending, { force: true });
+    rmSync4(legacyPackPaths(s.name).pending, { force: true });
   } catch {
   }
   return [
@@ -8637,8 +8894,8 @@ async function gateCommand(args) {
   if (!s) return { gate: "open (no settings)" };
   const current = packPaths(root);
   const legacy = legacyPackPaths(s.name);
-  const { pack, pending } = existsSync10(current.pending) ? current : existsSync10(legacy.pending) ? legacy : current;
-  if (!existsSync10(pending)) return { gate: "open" };
+  const { pack, pending } = existsSync11(current.pending) ? current : existsSync11(legacy.pending) ? legacy : current;
+  if (!existsSync11(pending)) return { gate: "open" };
   let packSize = 0;
   try {
     packSize = statSync5(pack).size;
@@ -8646,7 +8903,7 @@ async function gateCommand(args) {
     packSize = 0;
   }
   if (packSize === 0) {
-    rmSync3(pending, { force: true });
+    rmSync4(pending, { force: true });
     return { gate: "open (no pack to read; flag cleared)" };
   }
   let input = {};
@@ -8660,7 +8917,7 @@ async function gateCommand(args) {
   const path = typeof ti.file_path === "string" ? ti.file_path : "";
   const partial = ti.offset !== void 0 || ti.limit !== void 0 || ti.pages !== void 0;
   if (tool === "Read" && path && resolve6(path) === resolve6(pack) && !partial) {
-    rmSync3(pending, { force: true });
+    rmSync4(pending, { force: true });
     return { gate: "open (pack read whole; flag cleared)" };
   }
   const reason = `Reground first: Read ${pack} whole (no offset or limit) before any other tool. The hook output you saw may have been cut short; the file holds the rule card, what is owed and the live state.`;
@@ -8682,6 +8939,7 @@ var init_coldstart = __esm({
     init_repo();
     init_settings();
     init_state();
+    init_sleep();
     WAKE_BUDGET = 6e3;
     SESSION_LOG_CAP = 4e3;
     MIN_SECTION = 300;
@@ -8753,7 +9011,7 @@ var init_start = __esm({
 });
 
 // src/opsbot-core/drift.ts
-import { readFileSync as readFileSync7, writeFileSync as writeFileSync4 } from "node:fs";
+import { readFileSync as readFileSync8, writeFileSync as writeFileSync5 } from "node:fs";
 function modelMatches(want, have) {
   const w = cls(want);
   const h = cls(have);
@@ -8780,19 +9038,19 @@ ${lines.join("\n")}
 `;
   let prev2 = "";
   try {
-    prev2 = readFileSync7(marker, "utf8");
+    prev2 = readFileSync8(marker, "utf8");
   } catch {
   }
   if (lines.length === 0) {
     if (prev2) try {
-      writeFileSync4(marker, "");
+      writeFileSync5(marker, "");
     } catch {
     }
     return [];
   }
   if (prev2 === sig) return [];
   try {
-    writeFileSync4(marker, sig);
+    writeFileSync5(marker, sig);
   } catch {
   }
   return [
@@ -8813,7 +9071,7 @@ var init_drift = __esm({
 });
 
 // src/opsbot-core/commands/cycle.ts
-import { existsSync as existsSync11, rmSync as rmSync4 } from "node:fs";
+import { existsSync as existsSync12, rmSync as rmSync5 } from "node:fs";
 function next2(root, s) {
   return delayLine(nextDelay(s, readCycleLog(root), nowMs()));
 }
@@ -8829,6 +9087,15 @@ function scheduleReport(root, s) {
   const ptr = sessionPointer(root);
   const evs = ptr ? readEvents(ptr.transcript_path) : [];
   return scheduleLines(s, evs.length ? evs : null, nowMs(), nextDelay(s, readCycleLog(root), nowMs()).seconds);
+}
+function sessionEvents(root) {
+  const ptr = sessionPointer(root);
+  return ptr ? readEvents(ptr.transcript_path) : [];
+}
+function sleepDecision(root, s, text, by) {
+  if (!s.sleep) return null;
+  const d = decideSleep(root, s, text, readCycleLog(root), nowMs(), sessionEvents(root), by);
+  return d.sleep ? d.state : null;
 }
 function driftLines(root, s) {
   const ptr = sessionPointer(root);
@@ -8871,7 +9138,8 @@ function cycleBegin() {
   }
   if (!takeLock(root)) return wait(root, settings, "another cycle took the checkout at the same moment");
   const lines = readCycleLog(root);
-  const last = lastCycleAt(lines);
+  const slept = readSleep(root);
+  const last = silenceFrom(lines, slept, nowMs(), lastCycleAt(lines));
   if (last && !openOutage(root)) {
     const gap = nowMs() - (parseIso(last) ?? nowMs());
     if (gap >= settings.liveness.watchdog_minutes * 6e4) {
@@ -8879,9 +9147,13 @@ function cycleBegin() {
         kind: "stopped",
         started: last,
         ended: nowIso(),
-        note: `no cycle logged for ${Math.floor(gap / 6e4)} minutes; cause not seen from here`
+        note: slept?.woken ? `woken at ${slept.woken.at} for: ${slept.woken.reason}; no cycle began for ${Math.floor(gap / 6e4)} minutes` : `no cycle logged for ${Math.floor(gap / 6e4)} minutes; cause not seen from here`
       });
     }
+  }
+  if (slept) {
+    clearSleep(root);
+    appendJsonl(paths(root).log, wakeLogLine(slept, nowMs()));
   }
   const configPath = configSnapshot(root, text);
   for (const s of discover(root, "cycle.begin").scripts) {
@@ -8919,12 +9191,24 @@ function cycleBegin() {
     else process.env.OPSBOT_COMMIT_TRAILERS = prev2;
   }
   if (r.code === 0) {
+    let sleep = sleepDecision(root, settings, text, "cycle begin");
+    if (sleep) {
+      const p = paths(root);
+      const size = fileSize(p.log);
+      appendJsonl(p.log, sleepLogLine(sleep));
+      if (commitOnly(root, [p.log], "chore(cycle): sleep") === null) writeSleep(root, sleep);
+      else {
+        truncateTo(p.log, size);
+        sleep = null;
+      }
+    }
     const why = pushCommits(root);
     releaseLock(root);
     setExit(0);
     const out = { cycle: `${r.line}${why ? ` \xB7 not pushed: ${why}` : ""} \xB7 next ${next2(root, settings)}` };
-    const wake2 = wakeReport(root, settings, true);
-    if (wake2.length) out.wake = wake2;
+    const wake3 = sleep ? [] : wakeReport(root, settings, true);
+    if (sleep) out.sleep = sleepFieldLines(settings, sleep);
+    if (wake3.length) out.wake = wake3;
     const drift2 = driftLines(root, settings);
     if (drift2.length) out.session = drift2;
     return out;
@@ -8936,8 +9220,8 @@ function cycleBegin() {
       `Work the items; then \`${cliInvocation()} cycle end --records <n>${r.code === 20 ? " --degraded" : ""}\` (the checkout stays held until then)`
     ]
   };
-  const wake = wakeReport(root, settings, false);
-  if (wake.length) held.wake = wake;
+  const wake2 = wakeReport(root, settings, false);
+  if (wake2.length) held.wake = wake2;
   const drift = driftLines(root, settings);
   if (drift.length) held.session = drift;
   return held;
@@ -9012,19 +9296,22 @@ function cycleEnd(args) {
   };
   if (summary !== void 0) line.summary = summary;
   appendJsonl(p.log, line);
+  const sleep = sleepDecision(root, settings, text, "cycle end");
+  if (sleep) appendJsonl(p.log, sleepLogLine(sleep));
   const files = [p.log];
-  if (existsSync11(p.watermark)) files.push(p.watermark);
-  if (existsSync11(p.outages)) files.push(p.outages);
+  if (existsSync12(p.watermark)) files.push(p.watermark);
+  if (existsSync12(p.outages)) files.push(p.outages);
   files.push(...changedCommitPaths(root, settings.commit_paths, files));
   const why = commitOnly(root, files, `chore(cycle): finished, ${records} records`);
   if (why) {
     truncateTo(p.log, logSize);
     if (oldWm) writeWatermark(root, oldWm);
-    else if (!degraded) rmSync4(p.watermark, { force: true });
+    else if (!degraded) rmSync5(p.watermark, { force: true });
     throw new AxiError(`cannot commit the cycle log (${why}); nothing written, the checkout still held`, "CANNOT_COMMIT", [
       "Fix the repo, then run cycle end again"
     ]);
   }
+  if (sleep) writeSleep(root, sleep);
   const pushed = pushCommits(root);
   releaseLock(root);
   const out = {
@@ -9032,8 +9319,12 @@ function cycleEnd(args) {
   };
   if (notes.length) out.notes = notes;
   out.next = next2(root, settings);
-  const wake = wakeReport(root, settings, true);
-  if (wake.length) out.wake = wake;
+  if (sleep) {
+    out.sleep = sleepFieldLines(settings, sleep);
+    return out;
+  }
+  const wake2 = wakeReport(root, settings, true);
+  if (wake2.length) out.wake = wake2;
   return out;
 }
 var init_cycle = __esm({
@@ -9052,6 +9343,7 @@ var init_cycle = __esm({
     init_transcript();
     init_drift();
     init_wake();
+    init_sleep();
   }
 });
 
@@ -9113,7 +9405,7 @@ var init_outage = __esm({
 });
 
 // src/opsbot-core/runtime.ts
-import { appendFileSync as appendFileSync3, readFileSync as readFileSync8 } from "node:fs";
+import { appendFileSync as appendFileSync3, readFileSync as readFileSync9 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
 import { join as join17 } from "node:path";
 function normStatus(s) {
@@ -9176,7 +9468,7 @@ ${r.stdout}`) };
 function fakeAdapter(file) {
   const state = () => {
     try {
-      return JSON.parse(readFileSync8(file, "utf8"));
+      return JSON.parse(readFileSync9(file, "utf8"));
     } catch {
       return {};
     }
@@ -9235,7 +9527,7 @@ ${r.stdout}`) };
 });
 
 // src/opsbot-core/commands/liveness.ts
-import { existsSync as existsSync12, readFileSync as readFileSync9, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync13, readFileSync as readFileSync10, writeFileSync as writeFileSync6 } from "node:fs";
 function watchdogCommand(args) {
   const { flags } = parseArgs(args, { bool: ["dry-run"] }, "watchdog [--dry-run]");
   const dry = flags["dry-run"] === true;
@@ -9248,6 +9540,16 @@ function watchdogCommand(args) {
   const lines = readCycleLog(root);
   const last = lastCycleAt(lines);
   const open5 = openOutage(root);
+  const asleep = activeSleep(root, settings);
+  if (asleep) {
+    const said = `asleep \xB7 ${sleepStatusLine(settings, asleep)}; the sleep timer watches`;
+    if (open5 && last && last > open5 && !blocked && !dry) {
+      const resumed = lines.find((l) => CYCLE_OUTCOMES.includes(l.outcome) && l.at > open5)?.at ?? last;
+      recordOutageEnd(root, open5, resumed);
+      return { watchdog: `${said} \xB7 outage from ${open5} ended ${resumed}` };
+    }
+    return { watchdog: said };
+  }
   const gap = last ? now - (parseIso(last) ?? now) : null;
   if (gap !== null && gap < watch * 6e4) {
     if (open5 && last > open5) {
@@ -9260,7 +9562,7 @@ function watchdogCommand(args) {
     return { watchdog: `alive \xB7 last cycle ${last}, ${Math.floor(gap / 6e4)} min ago` };
   }
   const started = last ?? "never";
-  if (existsSync12(told) && readFileSync9(told, "utf8").split("\n")[0] === started) {
+  if (existsSync13(told) && readFileSync10(told, "utf8").split("\n")[0] === started) {
     return { watchdog: `stopped since ${started} \xB7 the operator already told` };
   }
   const seen = [];
@@ -9280,26 +9582,20 @@ function watchdogCommand(args) {
   const first = last ? `${settings.mark} ${settings.name} has logged no cycle since ${humanTime(parseIso(last), settings.timezone)}, over ${watch} minutes ago, so nothing is being read or answered.` : `${settings.mark} ${settings.name} has never logged a cycle in this checkout, so nothing is being read or answered.`;
   const message = [first, ...seen, "The watchdog will not repeat this for the same stop."].join("\n");
   if (dry) return { watchdog: `stopped since ${started} \xB7 would tell the operator`, message: message.split("\n") };
-  const scripts = discover(root, "escalate").scripts;
-  if (scripts.length === 0) {
+  const results = escalate(root, settings, text, message);
+  if (results === null) {
     setExit(1);
     return {
       watchdog: `stopped since ${started} \xB7 cannot tell the operator: no script in opsbot.d/escalate.d/`,
       help: ["Install an escalation script (a channel skill provides one) so the watchdog can reach the operator"]
     };
   }
-  const configPath = configSnapshot(root, text);
-  const results = scripts.map((s) => {
-    const r = runScript(s, root, baseEnv(root, settings, configPath, "escalate"), `${message}
-`);
-    return { script: s.name, ok: r.code === 0, error: r.code === 0 ? "" : `exit ${r.code}: ${firstLine(r.stderr) || "no message"}` };
-  });
   const sent = results.filter((r) => r.ok);
   if (sent.length === 0) {
     setExit(1);
     return { watchdog: `stopped since ${started} \xB7 cannot tell the operator: every escalation script failed`, escalations: results };
   }
-  writeFileSync5(told, `${started}
+  writeFileSync6(told, `${started}
 `);
   if (blocked) {
     return { watchdog: `stopped since ${started} \xB7 the operator told \xB7 outage not recorded while ${blocked}`, escalations: results };
@@ -9313,34 +9609,67 @@ function watchdogCommand(args) {
   }
   return { watchdog: `stopped since ${started} \xB7 the operator told \xB7 outage recorded`, escalations: results };
 }
+function escalate(root, settings, text, message) {
+  const scripts = discover(root, "escalate").scripts;
+  if (scripts.length === 0) return null;
+  const configPath = configSnapshot(root, text);
+  return scripts.map((s) => {
+    const r = runScript(s, root, baseEnv(root, settings, configPath, "escalate"), `${message}
+`);
+    return { script: s.name, ok: r.code === 0, error: r.code === 0 ? "" : `exit ${r.code}: ${firstLine(r.stderr) || "no message"}` };
+  });
+}
+function sessionIdle(root, agent, found2) {
+  switch (found2.status) {
+    case "idle":
+    case "done":
+      return { idle: true, via: "" };
+    case "working": {
+      const log = found2.log ?? sessionPointer(root)?.transcript_path ?? null;
+      const evs = log ? readEvents(log) : [];
+      if (evs.length === 0) return { idle: false, why: `${agent} is working (mid-turn; no session log to check)`, blocked: false };
+      if (!evs.some((e) => e.type === "assistant")) return { idle: false, why: `${agent} is working (mid-turn; the session log's tail shows no turn)`, blocked: false };
+      const t = turnEnded(evs);
+      if (!t.ended) return { idle: false, why: `${agent} is working (mid-turn since ${t.since.slice(11, 16)}Z)`, blocked: false };
+      return { idle: true, via: ` \xB7 the runtime said working, but the session log shows the turn ended${t.at ? ` at ${t.at.slice(11, 16)}Z` : ""} (background work only)` };
+    }
+    case "blocked":
+      return { idle: false, why: `${agent} is blocked at a dialog; a prompt would land in it`, blocked: true };
+    default:
+      return { idle: false, why: `the runtime cannot tell what ${agent} is doing (${found2.status}); treated as busy`, blocked: false };
+  }
+}
 function nudgeCommand(args) {
   const usage = "nudge [--now [--reason TEXT]] [--dry-run]";
   const { flags } = parseArgs(args, { bool: ["now", "dry-run"], value: ["reason"] }, usage);
-  const wake = flags.now === true;
+  const wake2 = flags.now === true;
   const reason = typeof flags.reason === "string" ? flags.reason : "";
-  if (reason && !wake) throw new AxiError("--reason goes with --now", "VALIDATION_ERROR", [usage]);
+  if (reason && !wake2) throw new AxiError("--reason goes with --now", "VALIDATION_ERROR", [usage]);
   const dry = flags["dry-run"] === true;
   const root = requireRoot();
   const { settings } = loadSettings(root);
   const agent = settings.runtime.agent;
   const line = settings.loop.prompt;
   const now = nowMs();
-  const quiet = wake ? settings.liveness.wake_cooldown_minutes : settings.liveness.nudge_minutes;
-  const cooldown = wake ? settings.liveness.wake_cooldown_minutes : settings.liveness.nudge_cooldown_minutes;
-  const marker = gitPath(root, wake ? "opsbot-nudge-now" : "opsbot-nudge");
+  const quiet = wake2 ? settings.liveness.wake_cooldown_minutes : settings.liveness.nudge_minutes;
+  const cooldown = wake2 ? settings.liveness.wake_cooldown_minutes : settings.liveness.nudge_cooldown_minutes;
+  const marker = gitPath(root, wake2 ? "opsbot-nudge-now" : "opsbot-nudge");
+  const asleep = activeSleep(root, settings);
+  if (asleep && !wake2) return { nudge: `nothing \xB7 ${sleepStatusLine(settings, asleep)}` };
+  const firstWake = !!asleep && !asleep.woken;
   const v = judgeLock(root, settings.lock_max_minutes);
   if (v.state === "held") return { nudge: `nothing \xB7 a cycle holds the checkout since ${v.hold.started}` };
   const blocked = blockedBy(root);
   if (blocked) return { nudge: `nothing \xB7 ${blocked}` };
   const last = lastCycleAt(readCycleLog(root));
-  if (!wake && last && now - (parseIso(last) ?? 0) < quiet * 6e4) {
+  if (!wake2 && last && now - (parseIso(last) ?? 0) < quiet * 6e4) {
     return { nudge: `nothing \xB7 last cycle ${last}` };
   }
-  if (existsSync12(marker)) {
-    const [prev2, why] = readFileSync9(marker, "utf8").split("\n");
+  if (existsSync13(marker) && !firstWake) {
+    const [prev2, why] = readFileSync10(marker, "utf8").split("\n");
     if (prev2 && /^\d+$/.test(prev2) && now - Number(prev2) * 1e3 < cooldown * 6e4) {
       const ago = Math.floor((now - Number(prev2) * 1e3) / 6e4);
-      return { nudge: wake ? `nothing \xB7 woke ${ago} min ago${why ? ` for: ${why}` : ""}` : `nothing \xB7 nudged ${ago} min ago and no cycle since` };
+      return { nudge: wake2 ? `nothing \xB7 woke ${ago} min ago${why ? ` for: ${why}` : ""}` : `nothing \xB7 nudged ${ago} min ago and no cycle since` };
     }
   }
   const rt = runtimeFor(settings);
@@ -9349,38 +9678,25 @@ function nudgeCommand(args) {
     setExit(1);
     return { nudge: found2.code === "agent_not_found" ? `cannot \xB7 the runtime has no agent named ${agent}` : `cannot \xB7 ${rt.name}: ${found2.code}: ${found2.message}` };
   }
-  let via = "";
-  switch (found2.status) {
-    case "idle":
-    case "done":
-      break;
-    case "working": {
-      const log = found2.log ?? sessionPointer(root)?.transcript_path ?? null;
-      const evs = log ? readEvents(log) : [];
-      if (evs.length === 0) return { nudge: `nothing \xB7 ${agent} is working (mid-turn; no session log to check)` };
-      if (!evs.some((e) => e.type === "assistant")) return { nudge: `nothing \xB7 ${agent} is working (mid-turn; the session log's tail shows no turn)` };
-      const t = turnEnded(evs);
-      if (!t.ended) return { nudge: `nothing \xB7 ${agent} is working (mid-turn since ${t.since.slice(11, 16)}Z)` };
-      via = ` \xB7 the runtime said working, but the session log shows the turn ended${t.at ? ` at ${t.at.slice(11, 16)}Z` : ""} (background work only)`;
-      break;
-    }
-    case "blocked":
-      return { nudge: `nothing \xB7 ${agent} is blocked at a dialog; a prompt would land in it` };
-    default:
-      return { nudge: `nothing \xB7 the runtime cannot tell what ${agent} is doing (${found2.status}); treated as busy` };
-  }
-  if (dry) return { nudge: `would prompt ${agent} (${found2.pane}, ${found2.status})${wake ? ` now${reason ? `, for: ${reason}` : ""}` : ""}: ${line}` };
+  const idle = sessionIdle(root, agent, found2);
+  if (!idle.idle) return { nudge: `nothing \xB7 ${idle.why}` };
+  const via = idle.via;
+  if (dry) return { nudge: `would prompt ${agent} (${found2.pane}, ${found2.status})${wake2 ? ` now${reason ? `, for: ${reason}` : ""}` : ""}: ${line}` };
   const stamp = `${Math.floor(now / 1e3)}
 ${reason}
 `;
   const r = rt.prompt(agent, line);
+  if (asleep && (r.ok || r.code !== "agent_blocked" && r.code !== "agent_not_found") && !asleep.woken) {
+    const at = nowIso();
+    writeSleep(root, { ...asleep, woken: { at, reason: `nudge --now${reason ? `: ${reason}` : ""}`, event_at: at, sent: true } });
+  }
   if (!r.ok) {
-    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") writeFileSync5(marker, stamp);
+    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") writeFileSync6(marker, stamp);
     setExit(1);
     return { nudge: `cannot \xB7 ${rt.name} prompt ${agent}: ${r.code}: ${r.message}` };
   }
-  writeFileSync5(marker, stamp);
-  return { nudge: `${wake ? `woke ${agent}${reason ? ` for: ${reason}` : ""}` : `nudged ${agent}: ${line}`}${via}`, at: nowIso() };
+  writeFileSync6(marker, stamp);
+  return { nudge: `${wake2 ? `woke ${agent}${reason ? ` for: ${reason}` : ""}` : `nudged ${agent}: ${line}`}${via}`, at: nowIso() };
 }
 var init_liveness = __esm({
   "src/opsbot-core/commands/liveness.ts"() {
@@ -9393,12 +9709,13 @@ var init_liveness = __esm({
     init_runtime();
     init_transcript();
     init_coldstart();
+    init_sleep();
     init_state();
   }
 });
 
 // src/opsbot-core/commands/infra.ts
-import { existsSync as existsSync13, mkdirSync as mkdirSync4, readFileSync as readFileSync10, readdirSync as readdirSync3, rmSync as rmSync5, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync14, mkdirSync as mkdirSync4, readFileSync as readFileSync11, readdirSync as readdirSync3, rmSync as rmSync6, writeFileSync as writeFileSync7 } from "node:fs";
 import { homedir as homedir11 } from "node:os";
 import { join as join18 } from "node:path";
 function unitDir() {
@@ -9412,12 +9729,12 @@ function templatesDir() {
 }
 function template(name) {
   const p = join18(templatesDir(), name);
-  if (!existsSync13(p)) {
+  if (!existsSync14(p)) {
     throw new AxiError(`the unit template ${name} is missing from ${templatesDir()}`, "CANNOT_RUN", [
       "Reinstall the skill: npx skills add JarvusInnovations/opsbots --skill opsbot-core"
     ]);
   }
-  return readFileSync10(p, "utf8");
+  return readFileSync11(p, "utf8");
 }
 function fill(t, vars) {
   return t.replace(/@([A-Z_]+)@/g, (m, k) => k in vars ? vars[k] : m);
@@ -9443,6 +9760,13 @@ function renderUnits(root, s) {
     { file: `${pre}nudge.service`, content: fill(template("opsbot-nudge.service"), base), enable: false },
     { file: `${pre}nudge.timer`, content: fill(template("opsbot-nudge.timer"), base), enable: true }
   ];
+  if (s.sleep) {
+    const vars = { ...base, PROBE: String(s.sleep.probe_minutes) };
+    units.push(
+      { file: `${pre}sleep.service`, content: fill(template("opsbot-sleep.service"), vars), enable: false },
+      { file: `${pre}sleep.timer`, content: fill(template("opsbot-sleep.timer"), vars), enable: true }
+    );
+  }
   const problems = [];
   for (const sc of discover(root, "monitor").scripts) {
     const at = sc.name.lastIndexOf("@");
@@ -9475,7 +9799,7 @@ function systemctl(args) {
 }
 function installed(s) {
   const dir = unitDir();
-  if (!existsSync13(dir)) return [];
+  if (!existsSync14(dir)) return [];
   return readdirSync3(dir).filter((f) => f.startsWith(prefix(s))).sort();
 }
 function infraCommand(args) {
@@ -9493,7 +9817,7 @@ function infraCommand(args) {
     const want = new Set(units.map((u) => u.file));
     const rows = units.map((u) => {
       const p = join18(dir, u.file);
-      const state = !existsSync13(p) ? "missing" : samePathless(readFileSync10(p, "utf8"), u.content) ? "current" : "stale";
+      const state = !existsSync14(p) ? "missing" : samePathless(readFileSync11(p, "utf8"), u.content) ? "current" : "stale";
       let active = "-";
       if (u.enable && state !== "missing") {
         const r = systemctl(["is-active", u.file]);
@@ -9511,6 +9835,10 @@ function infraCommand(args) {
       units: rows
     };
     if (problems.length) out.problems = problems;
+    if (settings.sleep) {
+      const st = readSleep(root);
+      out.sleep = st ? sleepStatusLine(settings, st) : "awake";
+    }
     if (bad) out.help = [`Run \`${cliInvocation()} infra install\` to render them from opsbot.json`];
     return out;
   }
@@ -9533,9 +9861,9 @@ function infraCommand(args) {
     mkdirSync4(dir, { recursive: true });
     if (stale.length) {
       systemctl(["disable", "--now", ...stale]);
-      for (const f of stale) rmSync5(join18(dir, f), { force: true });
+      for (const f of stale) rmSync6(join18(dir, f), { force: true });
     }
-    for (const u of units) writeFileSync6(join18(dir, u.file), u.content);
+    for (const u of units) writeFileSync7(join18(dir, u.file), u.content);
     const steps = [];
     const reload2 = systemctl(["daemon-reload"]);
     steps.push({ step: "daemon-reload", ok: reload2.ok, detail: firstLine(reload2.out) });
@@ -9552,7 +9880,7 @@ function infraCommand(args) {
   if (files.length === 0) return { infra: `no ${prefix(settings)}* units installed (no-op)` };
   if (dry) return { infra: `would disable and remove ${files.length} units from ${dir}`, units: files };
   const dis = systemctl(["disable", "--now", ...files]);
-  for (const f of files) rmSync5(join18(dir, f), { force: true });
+  for (const f of files) rmSync6(join18(dir, f), { force: true });
   const reload = systemctl(["daemon-reload"]);
   if (!reload.ok) setExit(1);
   return {
@@ -9573,13 +9901,14 @@ var init_infra = __esm({
     init_lifecycle();
     init_repo();
     init_settings();
+    init_sleep();
     INFRA_USAGE = "infra install|uninstall|status [--dry-run]";
     SPAN_RE = /^(\d+)(s|sec|m|min|h|hr)$/;
   }
 });
 
 // src/opsbot-core/commands/hook.ts
-import { existsSync as existsSync14, mkdirSync as mkdirSync5, readFileSync as readFileSync11, writeFileSync as writeFileSync7 } from "node:fs";
+import { existsSync as existsSync15, mkdirSync as mkdirSync5, readFileSync as readFileSync12, writeFileSync as writeFileSync8 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
 import { dirname as dirname10, join as join19, relative as relative2 } from "node:path";
 function settingsPath(scope, dir) {
@@ -9595,16 +9924,16 @@ function hookBase(scope, dir) {
   return JSON.stringify(shim);
 }
 function readSettings(p) {
-  if (!existsSync14(p)) return {};
+  if (!existsSync15(p)) return {};
   try {
-    return JSON.parse(readFileSync11(p, "utf8"));
+    return JSON.parse(readFileSync12(p, "utf8"));
   } catch {
     throw new AxiError(`${p} is not valid JSON; not touching it`, "CANNOT_RUN", ["Fix the file by hand, then run hook install again"]);
   }
 }
 function writeSettings(p, s) {
   mkdirSync5(dirname10(p), { recursive: true });
-  writeFileSync7(p, `${JSON.stringify(s, null, 2)}
+  writeFileSync8(p, `${JSON.stringify(s, null, 2)}
 `);
 }
 function upsertPreTool(settings, command) {
@@ -9708,8 +10037,185 @@ var init_hook = __esm({
   }
 });
 
+// src/opsbot-core/commands/sleep.ts
+import { statSync as statSync6 } from "node:fs";
+import { basename as basename7 } from "node:path";
+function wakePrompt(s, reason) {
+  return `${s.loop.prompt} (woken: ${reason})`;
+}
+function sleepCommand(args) {
+  const [sub, ...rest] = args;
+  if (sub !== "tick") {
+    throw new AxiError(sub ? `unknown sleep subcommand ${sub}` : "sleep needs a subcommand", "VALIDATION_ERROR", [`${cliInvocation()} ${SLEEP_USAGE}`]);
+  }
+  const { flags } = parseArgs(rest, { bool: ["dry-run"] }, SLEEP_USAGE);
+  return sleepTick(flags["dry-run"] === true);
+}
+function cheapReason(root, s, st, now) {
+  const ptr = sessionPointer(root);
+  const op = ptr ? lastOperatorAt(readEvents(ptr.transcript_path), s.loop.prompt, st.decided_at) : null;
+  if (op) return { reason: "the operator wrote to the session", event_at: op };
+  for (const [file, base] of Object.entries(st.wake_lines)) {
+    const n = lineCount(file);
+    if (n > base || n < base && n > 0) return { reason: `a new line in ${basename7(file)}`, event_at: mtime(file) ?? iso(now) };
+  }
+  const by = wakeBy(s, st);
+  if ((parseIso(by.at) ?? Infinity) <= now) return { reason: by.why, event_at: by.at };
+  return null;
+}
+function peekReason(root, now) {
+  try {
+    const p = runPeek(root);
+    if (p.code === 10) {
+      const where = p.inputs.filter((i) => i.new > 0).map((i) => i.input).join(", ");
+      return { reason: `a peek found ${p.new} new (${where})`, event_at: p.earliest ?? iso(now) };
+    }
+    if (p.code === 20) {
+      const bad = p.inputs.filter((i) => !i.ok).map((i) => i.input).join(", ");
+      return { reason: `a peek found a stream failing (${bad})`, event_at: iso(now) };
+    }
+    return null;
+  } catch (e) {
+    return { reason: `the peek could not run: ${e.message}`, event_at: iso(now) };
+  }
+}
+function sleepTick(dry) {
+  const root = requireRoot();
+  const { settings: s, text } = loadSettings(root);
+  if (!s.sleep) return { sleep: "sleep is not set in opsbot.json (no-op)" };
+  const st = readSleep(root);
+  if (!st) return { sleep: "awake (no-op)" };
+  const now = nowMs();
+  const save2 = (next3) => {
+    if (!dry) writeSleep(root, next3);
+  };
+  if (st.woken) return answerWatch(root, s, text, st, now, dry, save2);
+  const cheap = cheapReason(root, s, st, now);
+  const reason = cheap ?? (st.began ? peekReason(root, now) : null);
+  if (reason) return wake(root, s, st, reason, now, dry, save2);
+  if (!st.began) return goDown(root, s, st, now, dry, save2);
+  save2({ ...st, looked_at: iso(now) });
+  return { sleep: sleepStatusLine(s, { ...st, looked_at: iso(now) }) };
+}
+function goDown(root, s, st, now, dry, save2) {
+  const agent = s.runtime.agent;
+  const rt = runtimeFor(s);
+  const found2 = rt.get(agent);
+  if (!found2.ok) {
+    setExit(1);
+    return { sleep: `going down \xB7 cannot reach the session: ${found2.code === "agent_not_found" ? `the runtime has no agent named ${agent}` : `${rt.name}: ${found2.code}: ${found2.message}`}` };
+  }
+  const idle = sessionIdle(root, agent, found2);
+  if (!idle.idle) return { sleep: `going down \xB7 waiting: ${idle.why}` };
+  const compact = s.sleep.compact;
+  if (dry) return { sleep: compact ? `going down \xB7 would type ${COMPACT} into ${agent} (${found2.pane})${idle.via}` : "going down \xB7 would mark the sleep begun (sleep.compact is false)" };
+  if (!compact) {
+    save2({ ...st, began: iso(now), looked_at: iso(now) });
+    return { sleep: `asleep \xB7 began without compacting (sleep.compact is false)` };
+  }
+  const r = rt.prompt(agent, COMPACT);
+  if (!r.ok) {
+    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") save2({ ...st, began: iso(now), compacted: true, looked_at: iso(now) });
+    setExit(1);
+    return { sleep: `going down \xB7 cannot \xB7 ${rt.name} prompt ${agent}: ${r.code}: ${r.message}` };
+  }
+  save2({ ...st, began: iso(now), compacted: true, looked_at: iso(now) });
+  return { sleep: `asleep \xB7 typed ${COMPACT} into ${agent}${idle.via}`, at: iso(now) };
+}
+function wake(root, s, st, why, now, dry, save2) {
+  const agent = s.runtime.agent;
+  const text = wakePrompt(s, why.reason);
+  const record = (sent) => save2({ ...st, woken: { at: st.woken?.at ?? iso(now), reason: why.reason, event_at: why.event_at, sent } });
+  const rt = runtimeFor(s);
+  const found2 = rt.get(agent);
+  if (!found2.ok) {
+    if (!dry) record(false);
+    setExit(1);
+    return { sleep: `wake for: ${why.reason} \xB7 cannot reach the session: ${found2.code === "agent_not_found" ? `the runtime has no agent named ${agent}` : `${rt.name}: ${found2.code}: ${found2.message}`}` };
+  }
+  const idle = sessionIdle(root, agent, found2);
+  if (!idle.idle) {
+    if (idle.blocked && !dry) record(false);
+    return { sleep: `wake for: ${why.reason} \xB7 waiting: ${idle.why}` };
+  }
+  if (dry) return { sleep: `would wake ${agent} (${found2.pane}) for: ${why.reason}`, prompt: text };
+  const r = rt.prompt(agent, text);
+  if (!r.ok) {
+    record(r.code !== "agent_blocked" && r.code !== "agent_not_found");
+    setExit(1);
+    return { sleep: `wake for: ${why.reason} \xB7 cannot \xB7 ${rt.name} prompt ${agent}: ${r.code}: ${r.message}` };
+  }
+  record(true);
+  return { sleep: `woke ${agent} for: ${why.reason}${idle.via}`, at: iso(now) };
+}
+function answerWatch(root, s, text, st, now, dry, save2) {
+  const w = st.woken;
+  const wokenMs = parseIso(w.at) ?? now;
+  const mins = Math.floor((now - wokenMs) / 6e4);
+  const watch = s.liveness.watchdog_minutes;
+  if (mins < watch || st.escalated) {
+    if (!w.sent) return wake(root, s, st, { reason: w.reason, event_at: w.event_at }, now, dry, save2);
+    return { sleep: `${sleepStatusLine(s, st)} (${mins} min)${st.escalated ? " \xB7 the operator already told" : ""}` };
+  }
+  const seen = [];
+  const rt = runtimeFor(s);
+  const found2 = rt.get(s.runtime.agent);
+  if (found2.ok) {
+    if (found2.status === "blocked") seen.push("The bot's session is waiting at a permission or question dialog.");
+    else seen.push(`The runtime says the session is ${found2.status}.`);
+  } else if (found2.code === "agent_not_found") seen.push(`The runtime has no agent named ${s.runtime.agent}, so the session itself is not running.`);
+  if (!w.sent) seen.push("The wake could not be typed into the session.");
+  const message = [
+    `${s.mark} ${s.name} was asleep and was woken at ${humanTime(wokenMs, s.timezone)} for: ${w.reason}. No cycle has begun since, over ${watch} minutes ago, so nothing is being read or answered.`,
+    ...seen,
+    "The sleep timer will not repeat this for the same wake."
+  ].join("\n");
+  if (dry) return { sleep: `woken ${mins} min ago and unanswered \xB7 would tell the operator`, message: message.split("\n") };
+  const results = escalate(root, s, text, message);
+  if (results === null) {
+    setExit(1);
+    return { sleep: `woken ${mins} min ago and unanswered \xB7 cannot tell the operator: no script in opsbot.d/escalate.d/` };
+  }
+  if (!results.some((r) => r.ok)) {
+    setExit(1);
+    return { sleep: `woken ${mins} min ago and unanswered \xB7 cannot tell the operator: every escalation script failed`, escalations: results };
+  }
+  save2({ ...st, escalated: true });
+  if (!openOutage(root)) {
+    recordOutage(root, { kind: "stopped", started: w.at, note: `woken for: ${w.reason}; no cycle began within ${watch} minutes. ${seen.join(" ")}`.trim() });
+  }
+  return { sleep: `woken ${mins} min ago and unanswered \xB7 the operator told \xB7 outage recorded`, escalations: results };
+}
+var SLEEP_USAGE, COMPACT, mtime;
+var init_sleep2 = __esm({
+  "src/opsbot-core/commands/sleep.ts"() {
+    "use strict";
+    init_dist2();
+    init_args();
+    init_invocation();
+    init_repo();
+    init_runtime();
+    init_settings();
+    init_sleep();
+    init_state();
+    init_transcript();
+    init_check();
+    init_coldstart();
+    init_liveness();
+    SLEEP_USAGE = "sleep tick [--dry-run]";
+    COMPACT = "/compact";
+    mtime = (f) => {
+      try {
+        return iso(statSync6(f).mtimeMs);
+      } catch {
+        return null;
+      }
+    };
+  }
+});
+
 // src/opsbot-core/commands/simple.ts
-import { existsSync as existsSync15, readFileSync as readFileSync12 } from "node:fs";
+import { existsSync as existsSync16, readFileSync as readFileSync13 } from "node:fs";
 import { join as join20 } from "node:path";
 function nextDelayCommand(args) {
   parseArgs(args, {}, "next-delay");
@@ -9771,6 +10277,10 @@ function detail2(l) {
       return `${l.kind ?? ""} from ${l.started ?? ""}`;
     case "outage-end":
       return `outage from ${l.started ?? ""} ended ${l.ended ?? ""}`;
+    case "sleep":
+      return `quiet since ${l.quiet_since ?? ""}${l.due ? ` \xB7 due ${String(l.due)}` : ""}`;
+    case "wake":
+      return `${l.reason ?? ""}${typeof l.latency_s === "number" ? ` \xB7 ${l.latency_s} s after the event` : ""}`;
     default:
       return "";
   }
@@ -9838,7 +10348,7 @@ function settingsCommand(args) {
     where = `${SETTINGS_FILE} at HEAD`;
   } else {
     const p = join20(root, SETTINGS_FILE);
-    text = existsSync15(p) ? readFileSync12(p, "utf8") : null;
+    text = existsSync16(p) ? readFileSync13(p, "utf8") : null;
     where = SETTINGS_FILE;
   }
   if (text === null) {
@@ -9848,9 +10358,9 @@ function settingsCommand(args) {
   }
   const { raw, problems } = parseSettingsText(text, where);
   const claude = join20(root, ".claude", "settings.json");
-  if (raw && existsSync15(claude)) {
+  if (raw && existsSync16(claude)) {
     try {
-      const cs = JSON.parse(readFileSync12(claude, "utf8"));
+      const cs = JSON.parse(readFileSync13(claude, "utf8"));
       const loop = raw.loop ?? {};
       if (cs && cs.autoCompactWindow !== void 0 && String(cs.autoCompactWindow) !== String(loop.autocompact ?? "")) {
         problems.push(
@@ -9921,7 +10431,7 @@ var init_cli2 = __esm({
     init_invocation();
     init_reference();
     init_version();
-    init_home();
+    init_home2();
     init_check();
     init_cycle();
     init_coldstart();
@@ -9930,6 +10440,7 @@ var init_cli2 = __esm({
     init_infra();
     init_hook();
     init_start();
+    init_sleep2();
     init_simple();
     CLI = cliInvocation();
     TOP_HELP = `usage: ${CLI} <command> [subcommand] [args] [flags]
@@ -9950,6 +10461,7 @@ env:   OPSBOT_ROOT (the bot's repo; default: the git top level of the working di
       outage: (a) => outageCommand(a),
       watchdog: (a) => watchdogCommand(a),
       nudge: (a) => nudgeCommand(a),
+      sleep: (a) => sleepCommand(a),
       infra: (a) => infraCommand(a),
       hook: (a) => hookCommand(a),
       hooks: (a) => hooksCommand(a),

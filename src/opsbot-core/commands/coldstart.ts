@@ -32,12 +32,13 @@ import { dirname, join, resolve } from "node:path";
 import { parseArgs, setExit, usageError } from "../args.js";
 import { skillDir } from "../invocation.js";
 import { readEvents, sessionLogSection, sessionLogSectionLib } from "../transcript.js";
-import { SCHEDULE_RULES, WAKE_RULES, schedulePackLines, wakeFiles, wakeLines } from "../wake.js";
+import { SCHEDULE_RULES, SLEEP_RULES, WAKE_RULES, schedulePackLines, wakeFiles, wakeLines } from "../wake.js";
 import { gitPath } from "../repo.js";
 import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
 import { findRoot, firstLine, iso, nowIso, nowMs, parseIso, showHead } from "../repo.js";
 import { SETTINGS_FILE, parseSettingsText, trySettings, withDefaults, type Settings } from "../settings.js";
 import { CHECK_OUTCOMES, CYCLE_OUTCOMES, outages, readCycleLog } from "../state.js";
+import { activeSleep, sleepSpans, sleepStatusLine } from "../sleep.js";
 
 /** What the wake.d sections share, in bytes. The rule card, the kit's own sections and the
  * session log are whole and outside it: they are what the bot must read, and a long rule card
@@ -142,19 +143,29 @@ function logSummary(root: string, now: number): string[] {
     out.push(
       `cycles ${checks.length} · nothing new ${count("nothing-new")} · new ${count("new")} · degraded ${count("degraded")} · items ${items}`,
     );
+    // a sleep...wake span is intended silence: the stretch that starts at a sleep line is no gap
     const times = all
-      .filter((l) => CYCLE_OUTCOMES.includes(l.outcome))
-      .map((l) => parseIso(l.at)!)
-      .sort((a, b) => a - b);
+      .filter((l) => CYCLE_OUTCOMES.includes(l.outcome) || l.outcome === "sleep" || l.outcome === "wake")
+      .map((l) => ({
+        t: parseIso(l.outcome === "wake" && typeof l.woken_at === "string" ? l.woken_at : l.at) ?? parseIso(l.at)!,
+        sleep: l.outcome === "sleep",
+      }))
+      .sort((a, b) => a.t - b.t);
     let gap = 0;
     let from = 0;
     for (let i = 1; i < times.length; i++) {
-      if (times[i]! - times[i - 1]! > gap) {
-        gap = times[i]! - times[i - 1]!;
-        from = times[i - 1]!;
+      if (times[i - 1]!.sleep) continue;
+      if (times[i]!.t - times[i - 1]!.t > gap) {
+        gap = times[i]!.t - times[i - 1]!.t;
+        from = times[i - 1]!.t;
       }
     }
     if (times.length > 1) out.push(`longest gap ${Math.floor(gap / 60_000)} min, from ${iso(from)}`);
+    const spans = sleepSpans(all);
+    if (spans.length) {
+      const asleep = spans.reduce((a, sp) => a + ((sp.to ? parseIso(sp.to)! : now) - parseIso(sp.from)!), 0);
+      out.push(`slept ${spans.length} time${spans.length === 1 ? "" : "s"}, ${Math.floor(asleep / 60_000)} min in all${spans[spans.length - 1]!.to ? "" : ", asleep now"}`);
+    }
     const last = checks[checks.length - 1]!;
     out.push(`last cycle ${last.at} · ${last.outcome}`);
     const lastDeg = [...checks].reverse().find((c) => c.outcome === "degraded");
@@ -221,7 +232,11 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
   if (s.loop.schedule === "monitor") {
     // one monitor is the schedule and the live wake, with or without wake files
     const evs = transcript ? readEvents(transcript) : null;
-    const lines = [...schedulePackLines(s, evs && evs.length ? evs : null, now), ...SCHEDULE_RULES];
+    const slept = activeSleep(root, s);
+    const state = slept
+      ? [`${sleepStatusLine(s, slept)}; arm nothing now: when the loop prompt arrives, run \`cycle begin\``]
+      : schedulePackLines(s, evs && evs.length ? evs : null, now);
+    const lines = [...state, ...SCHEDULE_RULES, ...(s.sleep ? SLEEP_RULES : [])];
     kit.push(`═══ 1.${kit.length + 1} The schedule and live wake (arm it before anything else)\n${lines.join("\n")}`);
   } else if (wakeFiles(s).length) {
     const evs = transcript ? readEvents(transcript) : null;

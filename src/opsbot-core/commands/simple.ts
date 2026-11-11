@@ -83,6 +83,10 @@ export function detail(l: LogLine): string {
       return `${l.kind ?? ""} from ${l.started ?? ""}`;
     case "outage-end":
       return `outage from ${l.started ?? ""} ended ${l.ended ?? ""}`;
+    case "sleep":
+      return `quiet since ${l.quiet_since ?? ""}${l.due ? ` · due ${String(l.due)}` : ""}`;
+    case "wake":
+      return `${l.reason ?? ""}${typeof l.latency_s === "number" ? ` · ${l.latency_s} s after the event` : ""}`;
     default:
       return "";
   }

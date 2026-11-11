@@ -12,6 +12,7 @@ import { watchdogCommand, nudgeCommand } from "./commands/liveness.js";
 import { infraCommand } from "./commands/infra.js";
 import { hookCommand } from "./commands/hook.js";
 import { startCommand } from "./commands/start.js";
+import { sleepCommand } from "./commands/sleep.js";
 import { hooksCommand, lockCommand, logCommand, nextDelayCommand, settingsCommand } from "./commands/simple.js";
 
 const CLI = cliInvocation();
@@ -35,6 +36,7 @@ const COMMANDS: Record<string, AxiCliCommand<undefined>> = {
   outage: (a) => outageCommand(a),
   watchdog: (a) => watchdogCommand(a),
   nudge: (a) => nudgeCommand(a),
+  sleep: (a) => sleepCommand(a),
   infra: (a) => infraCommand(a),
   hook: (a) => hookCommand(a),
   hooks: (a) => hooksCommand(a),

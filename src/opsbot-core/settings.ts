@@ -56,6 +56,16 @@ export interface Liveness {
   interval_minutes: number;
 }
 
+/** Sleep after a quiet stretch, wake on an event (specs/skills/opsbot-core.md, Sleep). */
+export interface Sleep {
+  after_minutes: number;
+  probe_minutes: number;
+  max_minutes: number;
+  compact: boolean;
+}
+
+export const DEFAULT_SLEEP: Sleep = { after_minutes: 60, probe_minutes: 10, max_minutes: 480, compact: true };
+
 export interface Settings {
   name: string;
   mark: string;
@@ -74,6 +84,8 @@ export interface Settings {
   wake: { files: string[] };
   /** Repo-relative files the check's commit and the cycle-end commit also take when changed. */
   commit_paths: string[];
+  /** Null when `sleep` is absent: the bot never sleeps. */
+  sleep: Sleep | null;
 }
 
 /** The kit's defaults (specs/architecture.md, Next wake; specs/skills/opsbot-core.md). */
@@ -175,6 +187,7 @@ export function validateSettings(raw: unknown): string[] {
     "wake",
     "host",
     "commit_paths",
+    "sleep",
   ]);
   str(raw, "name", "", true, NAME_RE, "must be lowercase letters, digits and dashes, starting with a letter");
   str(raw, "mark", "", true);
@@ -275,6 +288,18 @@ export function validateSettings(raw: unknown): string[] {
     }
   }
   if (raw.commit_paths !== undefined) problems.push(...commitPathProblems(raw.commit_paths));
+  const sleep = obj(raw, "sleep", "", false);
+  if (sleep) {
+    allow(sleep, "sleep.", ["after_minutes", "probe_minutes", "max_minutes", "compact"]);
+    for (const k of ["after_minutes", "probe_minutes", "max_minutes"]) posInt(sleep, k, "sleep.");
+    if (sleep.compact !== undefined && typeof sleep.compact !== "boolean") problems.push("sleep.compact must be true or false");
+    // the compaction on the way down must land while the one-hour cache is warm
+    if (typeof sleep.probe_minutes === "number" && sleep.probe_minutes > 60) problems.push("sleep.probe_minutes must be 60 or less");
+    const loopSchedule = isObj(raw.loop) ? raw.loop.schedule : undefined;
+    if (loopSchedule !== "monitor") {
+      problems.push("sleep requires loop.schedule to be monitor: the prompt is then a plain message the sleep timer can type, and there is no self-paced loop to end");
+    }
+  }
   return problems;
 }
 
@@ -370,6 +395,14 @@ export function withDefaults(raw: Json): Settings {
     repo_sync: pick(raw.repo_sync, "pull-on-clean"),
     wake: { files: wakeList },
     commit_paths: Array.isArray(raw.commit_paths) ? (raw.commit_paths as string[]) : [],
+    sleep: isObj(raw.sleep)
+      ? {
+          after_minutes: pick(raw.sleep.after_minutes, DEFAULT_SLEEP.after_minutes),
+          probe_minutes: pick(raw.sleep.probe_minutes, DEFAULT_SLEEP.probe_minutes),
+          max_minutes: pick(raw.sleep.max_minutes, DEFAULT_SLEEP.max_minutes),
+          compact: pick(raw.sleep.compact, DEFAULT_SLEEP.compact),
+        }
+      : null,
   };
 }
 

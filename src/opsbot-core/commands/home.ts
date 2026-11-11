@@ -7,6 +7,7 @@ import { nextDelay, delayLine } from "../cadence.js";
 import { cliInvocation } from "../invocation.js";
 import { findRoot, nowMs, parseIso } from "../repo.js";
 import { trySettings } from "../settings.js";
+import { readSleep, sleepStatusLine } from "../sleep.js";
 import { judgeLock, lastCheck, outages, readCycleLog } from "../state.js";
 
 function age(ms: number): string {
@@ -56,6 +57,7 @@ export function homeCommand(): Record<string, unknown> {
     next_wake: delayLine(nextDelay(s, lines, now)),
     failed_inputs: failed,
     open_outages: open,
+    ...(s.sleep ? { sleep: ((st) => (st ? sleepStatusLine(s, st) : "awake"))(readSleep(root)) } : {}),
     help: [
       `Run \`${cli} cycle begin\` to start a cycle`,
       `Run \`${cli} log tail\` for recent cycles, \`${cli} hooks list\` for what runs at each point`,

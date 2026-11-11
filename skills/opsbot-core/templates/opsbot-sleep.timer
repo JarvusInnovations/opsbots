@@ -1,0 +1,11 @@
+# Runs the sleep tick every sleep.probe_minutes (@PROBE@).
+[Unit]
+Description=@NAME@ sleep tick, every @PROBE@ minutes
+
+[Timer]
+OnBootSec=@PROBE@min
+OnUnitActiveSec=@PROBE@min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
