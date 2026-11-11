@@ -63,7 +63,6 @@ Anything in opsbot-host.
 - [x] The pack: monitor mode carries every schedule rule (even with no wake files) and not
       the per-file rules; self mode keeps the per-file rules.
 - [x] 160 tests pass; `tsc --noEmit` clean; bundle and SKILL.md rebuilt and `check` clean.
-- [ ] Trial on one bot.
 
 ## Notes
 
@@ -75,3 +74,9 @@ Anything in opsbot-host.
   wake. A held `cycle begin` (exit 10 or 20) prints none: `cycle end` arms.
 - The pack does not print the call: it says to run `cycle begin`, which prints it with
   the due time of that moment.
+- Not part of this plan: the trial on one live bot. The default stays `self` until that
+  trial has run for a week; changing the default is its own plan.
+- A live check in a session: the generated command, armed as a Monitor with a 20-second
+  deadline, delivered `cycle due` and the harness reported the stream as ended. A notification
+  that arrives mid-turn is logged first as a queued entry; the reader now counts that as the
+  monitor's end too.

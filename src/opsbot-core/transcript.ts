@@ -42,7 +42,9 @@ export function readEvents(path: string, maxBytes: number = TAIL_BYTES): Ev[] {
     try {
       const v = JSON.parse(line);
       if (v && typeof v === "object" && typeof v.type === "string") {
-        const e: Ev = { type: v.type, timestamp: String(v.timestamp ?? ""), content: v.message?.content };
+        // a notification that arrives mid-turn is logged first as a queue-operation, with its text
+        // at the top level; it becomes a user entry only when the turn takes it
+        const e: Ev = { type: v.type, timestamp: String(v.timestamp ?? ""), content: v.message?.content ?? (v.type === "queue-operation" ? v.content : undefined) };
         if (typeof v.subtype === "string") e.subtype = v.subtype;
         if (typeof v.message?.model === "string") e.model = v.message.model;
         out.push(e);
@@ -165,9 +167,9 @@ export function lastMonitorCall(evs: Ev[], match: string | ((call: { command: st
       if (description) {
         for (let j = i + 1; j < evs.length && !ended; j++) {
           const u = evs[j]!;
-          if (u.type !== "user") continue;
+          if (u.type !== "user" && u.type !== "queue-operation") continue;
           const t = partText(u.content);
-          if (t.includes(description) && /\b(exited|expired|stopped|event|timed out|killed|cycle due)\b/i.test(t)) ended = true;
+          if (t.includes(description) && /\b(exited|expired|stopped|ended|event|timed out|killed|cycle due)\b/i.test(t)) ended = true;
         }
       }
       return { at: e.timestamp, timeoutMs, description, command: cmd, ended };

@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "b7ce182" : "dev";
+    VERSION = true ? "5d83414" : "dev";
   }
 });
 
@@ -8039,7 +8039,7 @@ function readEvents(path, maxBytes = TAIL_BYTES) {
     try {
       const v = JSON.parse(line);
       if (v && typeof v === "object" && typeof v.type === "string") {
-        const e = { type: v.type, timestamp: String(v.timestamp ?? ""), content: v.message?.content };
+        const e = { type: v.type, timestamp: String(v.timestamp ?? ""), content: v.message?.content ?? (v.type === "queue-operation" ? v.content : void 0) };
         if (typeof v.subtype === "string") e.subtype = v.subtype;
         if (typeof v.message?.model === "string") e.model = v.message.model;
         out.push(e);
@@ -8135,9 +8135,9 @@ function lastMonitorCall(evs, match) {
       if (description) {
         for (let j = i + 1; j < evs.length && !ended; j++) {
           const u = evs[j];
-          if (u.type !== "user") continue;
+          if (u.type !== "user" && u.type !== "queue-operation") continue;
           const t = partText(u.content);
-          if (t.includes(description) && /\b(exited|expired|stopped|event|timed out|killed|cycle due)\b/i.test(t)) ended = true;
+          if (t.includes(description) && /\b(exited|expired|stopped|ended|event|timed out|killed|cycle due)\b/i.test(t)) ended = true;
         }
       }
       return { at: e.timestamp, timeoutMs, description, command: cmd, ended };

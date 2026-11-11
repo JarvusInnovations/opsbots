@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { BASE_SETTINGS, cli, makeBot, writeStream, type Bot } from "./helpers";
 import { nextDelay } from "../src/opsbot-core/cadence";
 import { validateSettings, withDefaults } from "../src/opsbot-core/settings";
-import { readEvents } from "../src/opsbot-core/transcript";
+import { lastMonitorCall, readEvents } from "../src/opsbot-core/transcript";
 import {
   SCHEDULE_RULES,
   WAKE_RULES,
@@ -275,5 +275,17 @@ describe("the pack by schedule", () => {
     } finally {
       self.cleanup();
     }
+  });
+
+  test("a monitor whose end is so far only a queued notification (it arrived mid-turn) reads as ended", () => {
+    const dir = mkdtempSync(join(tmpdir(), "opsbot-queued-"));
+    const log = join(dir, "s.jsonl");
+    const call = { type: "assistant", timestamp: "2026-03-02T15:00:00Z", message: { content: [{ type: "tool_use", id: "t1", name: "Monitor", input: { command: "end=$(( $(date +%s) + 1740 )); while sleep 2; do :; done", description: "testbot schedule", timeout_ms: 1800000 } }] } };
+    const queued = { type: "queue-operation", operation: "enqueue", timestamp: "2026-03-02T15:05:00Z", content: '<task-notification>\n<summary>Monitor "testbot schedule" stream ended</summary>\n<event>chat.jsonl: {"ts":"1"}</event>\n</task-notification>' };
+    writeFileSync(log, [call].map((x) => JSON.stringify(x)).join("\n") + "\n");
+    expect(lastMonitorCall(readEvents(log), (m) => m.description === "testbot schedule")!.ended).toBe(false);
+    writeFileSync(log, [call, queued].map((x) => JSON.stringify(x)).join("\n") + "\n");
+    expect(lastMonitorCall(readEvents(log), (m) => m.description === "testbot schedule")!.ended).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
   });
 });
