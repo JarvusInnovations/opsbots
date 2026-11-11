@@ -51,8 +51,9 @@ where each token goes, is [README.md](README.md).
 
 - a direct message to the bot;
 - an @mention (`app_mention`);
-- a reply in a thread the bot was @mentioned in (only when the app subscribes to
-  `message.channels` / `message.groups`, an option in the manifest);
+- a reply in a thread the bot was @mentioned in, with no new mention needed (the
+  `message.channels`, `message.groups` and `message.mpim` events in the manifest; every other
+  channel message is dropped unrecorded);
 - a reaction on one of the bot's own messages;
 - a new member joining the workspace.
 

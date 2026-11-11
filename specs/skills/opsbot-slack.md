@@ -83,9 +83,12 @@ message is empty, slack-axi is not in bot mode, or the draft or send fails.
 `chat:write`, `im:history`, `im:read`, `im:write`, `mpim:history`, `mpim:read`,
 `channels:history`, `channels:read`, `groups:history`, `groups:read`, `reactions:read`,
 `reactions:write`, `users:read`, `files:read`, each commented with why. Bot events:
-`app_mention`, `message.im`, `reaction_added`, `team_join`. Listed as options in a comment, off
-by default: `users:read.email`, `files:write`, `channels:join`, `chat:write.public`, and the
-`message.channels` / `message.groups` events.
+`app_mention`, `message.im`, `message.channels`, `message.groups`, `message.mpim`,
+`reaction_added`, `team_join`. The three channel message events are what let a reply in a
+thread reach the bot without a new @mention; the listener keeps only replies in a thread that
+began with a mention and drops every other channel message unrecorded. Listed as options in a
+comment, off by default: `users:read.email`, `files:write`, `channels:join`,
+`chat:write.public`.
 
 ## The sender hook
 
