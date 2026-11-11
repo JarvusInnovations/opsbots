@@ -15,11 +15,11 @@
 #   channels:join      the bot joins a public channel itself; without it a person adds it
 #   chat:write.public  the bot posts in a public channel it has not been added to
 #
-# One optional pair of bot events, added under settings.event_subscriptions.bot_events:
-#   message.channels, message.groups
-#                      hear a reply in a thread the bot was @mentioned in, without a new
-#                      @mention. Every message in its channels then reaches the listener,
-#                      which keeps only those replies. Needs no new scope.
+# The message.channels, message.groups and message.mpim events below are what let a reply in a
+# thread reach the bot without a new @mention. With them, every message in a channel the bot
+# is in reaches the listener, which keeps only replies in a thread that began with a mention of
+# the bot and drops the rest unrecorded. Remove the three lines for a bot that should hear
+# only direct messages and @mentions; people will then have to mention it on every reply.
 display_information:
   name: "<Bot name>"
   description: "<One line: what the bot does>. It is an AI."
@@ -58,6 +58,9 @@ settings:
     bot_events:
       - app_mention          # someone @mentions the bot
       - message.im           # a direct message to the bot
+      - message.channels     # a reply in a thread it was mentioned in (public channels it is in)
+      - message.groups       # the same, in private channels it has been invited to
+      - message.mpim         # and in group direct messages
       - reaction_added       # a reaction (the listener keeps only those on its own messages)
       - team_join            # a new member joined the workspace
   interactivity:
