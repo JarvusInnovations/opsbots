@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "ba5d330" : "dev";
+    VERSION = true ? "d3eb4b5" : "dev";
   }
 });
 
@@ -2261,7 +2261,8 @@ function validateSettings(raw) {
     "repo_sync",
     "wake",
     "host",
-    "commit_paths"
+    "commit_paths",
+    "sleep"
   ]);
   str2(raw, "name", "", true, NAME_RE, "must be lowercase letters, digits and dashes, starting with a letter");
   str2(raw, "mark", "", true);
@@ -2356,6 +2357,17 @@ function validateSettings(raw) {
     }
   }
   if (raw.commit_paths !== void 0) problems.push(...commitPathProblems(raw.commit_paths));
+  const sleep = obj(raw, "sleep", "", false);
+  if (sleep) {
+    allow(sleep, "sleep.", ["after_minutes", "probe_minutes", "max_minutes", "compact"]);
+    for (const k of ["after_minutes", "probe_minutes", "max_minutes"]) posInt(sleep, k, "sleep.");
+    if (sleep.compact !== void 0 && typeof sleep.compact !== "boolean") problems.push("sleep.compact must be true or false");
+    if (typeof sleep.probe_minutes === "number" && sleep.probe_minutes > 60) problems.push("sleep.probe_minutes must be 60 or less");
+    const loopSchedule = isObj(raw.loop) ? raw.loop.schedule : void 0;
+    if (loopSchedule !== "monitor") {
+      problems.push("sleep requires loop.schedule to be monitor: the prompt is then a plain message the sleep timer can type, and there is no self-paced loop to end");
+    }
+  }
   return problems;
 }
 function commitPathProblems(v) {
@@ -2439,7 +2451,13 @@ function withDefaults(raw) {
     streams,
     repo_sync: pick(raw.repo_sync, "pull-on-clean"),
     wake: { files: wakeList },
-    commit_paths: Array.isArray(raw.commit_paths) ? raw.commit_paths : []
+    commit_paths: Array.isArray(raw.commit_paths) ? raw.commit_paths : [],
+    sleep: isObj(raw.sleep) ? {
+      after_minutes: pick(raw.sleep.after_minutes, DEFAULT_SLEEP.after_minutes),
+      probe_minutes: pick(raw.sleep.probe_minutes, DEFAULT_SLEEP.probe_minutes),
+      max_minutes: pick(raw.sleep.max_minutes, DEFAULT_SLEEP.max_minutes),
+      compact: pick(raw.sleep.compact, DEFAULT_SLEEP.compact)
+    } : null
   };
 }
 function parseSettingsText(text, where) {
@@ -2478,7 +2496,7 @@ function trySettings(root) {
   const p = join3(root, SETTINGS_FILE);
   return existsSync4(p) ? tryText(readFileSync2(p, "utf8")) : null;
 }
-var SETTINGS_FILE, LOOP_MODES, MODE_AUTOCOMPACT, LOOP_SCHEDULES, MODE_MODEL, DEFAULT_CADENCE, DEFAULT_LIVENESS, MONITOR_NUDGE_MINUTES, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR;
+var SETTINGS_FILE, LOOP_MODES, MODE_AUTOCOMPACT, LOOP_SCHEDULES, MODE_MODEL, DEFAULT_SLEEP, DEFAULT_CADENCE, DEFAULT_LIVENESS, MONITOR_NUDGE_MINUTES, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR;
 var init_settings = __esm({
   "src/opsbot-core/settings.ts"() {
     "use strict";
@@ -2489,6 +2507,7 @@ var init_settings = __esm({
     MODE_AUTOCOMPACT = { strategist: "750k", dispatcher: "300k" };
     LOOP_SCHEDULES = ["self", "monitor"];
     MODE_MODEL = { strategist: "fable", dispatcher: "opus" };
+    DEFAULT_SLEEP = { after_minutes: 60, probe_minutes: 10, max_minutes: 480, compact: true };
     DEFAULT_CADENCE = {
       hot: 180,
       warm: 600,
@@ -2942,14 +2961,15 @@ var init_lifecycle = __esm({
     "use strict";
     init_repo();
     OPSBOT_D = "opsbot.d";
-    POINTS = ["heartbeat", "monitor", "cycle.begin", "cycle.end", "wake", "escalate"];
+    POINTS = ["heartbeat", "monitor", "cycle.begin", "cycle.end", "wake", "escalate", "due"];
     POINT_DIRS = {
       heartbeat: "heartbeat.d",
       monitor: "monitor.d",
       "cycle.begin": "cycle.d/begin",
       "cycle.end": "cycle.d/end",
       wake: "wake.d",
-      escalate: "escalate.d"
+      escalate: "escalate.d",
+      due: "due.d"
     };
     SCRIPT_TIMEOUT_MS = 3e5;
   }
@@ -8414,8 +8434,188 @@ var init_wake = __esm({
   }
 });
 
+// src/opsbot-core/sleep.ts
+import { existsSync as existsSync10, readFileSync as readFileSync6, rmSync as rmSync3, writeFileSync as writeFileSync3 } from "node:fs";
+function sleepFile(root) {
+  return gitPath(root, SLEEP_STATE);
+}
+function readSleep(root) {
+  try {
+    const v = JSON.parse(readFileSync6(sleepFile(root), "utf8"));
+    return v && typeof v === "object" && typeof v.decided_at === "string" ? v : null;
+  } catch {
+    return null;
+  }
+}
+function activeSleep(root, s) {
+  return s.sleep ? readSleep(root) : null;
+}
+function writeSleep(root, st) {
+  writeFileSync3(sleepFile(root), `${JSON.stringify(st)}
+`);
+}
+function clearSleep(root) {
+  rmSync3(sleepFile(root), { force: true });
+}
+function lineCount(file) {
+  try {
+    const t = readFileSync6(file, "utf8");
+    if (!t) return 0;
+    return t.split("\n").length - (t.endsWith("\n") ? 1 : 0);
+  } catch {
+    return 0;
+  }
+}
+function wakeLineCounts(s) {
+  return Object.fromEntries(wakeFiles(s).map((f) => [f, lineCount(f)]));
+}
+function lastOperatorAt(evs, loopPrompt, after) {
+  const prompt = loopPrompt.trim();
+  let last = null;
+  for (const m of humanMessages2(evs)) {
+    if (m.text.startsWith(prompt) || m.text.startsWith("<task-notification") || m.text.startsWith("<system-reminder")) continue;
+    if (after && m.at <= after) continue;
+    if (!last || m.at > last) last = m.at;
+  }
+  return last;
+}
+function dueTimes(root, s, settingsText) {
+  const scripts = discover(root, "due").scripts;
+  if (scripts.length === 0) return { due: [], problem: null };
+  const configPath = configSnapshot(root, settingsText);
+  const due = [];
+  for (const sc of scripts) {
+    const r = runScript(sc, root, baseEnv(root, s, configPath, "due"));
+    if (r.code !== 0) return { due, problem: `due.d/${sc.name} failed, exit ${r.code}` };
+    for (const line of r.stdout.split("\n")) {
+      if (!line.trim()) continue;
+      const [t, ...rest] = line.trim().split(/\s+/);
+      const ms = parseIso(t ?? "");
+      if (ms === null) return { due, problem: `due.d/${sc.name} printed a line that does not open with a time: ${line.slice(0, 80)}` };
+      due.push({ at: iso(ms), what: rest.join(" ") || sc.name });
+    }
+  }
+  due.sort((a, b) => a.at < b.at ? -1 : a.at > b.at ? 1 : 0);
+  return { due, problem: null };
+}
+function firstCycleAt(lines) {
+  for (const l of lines) if (CYCLE_OUTCOMES.includes(l.outcome)) return l.at;
+  return null;
+}
+function decideSleep(root, s, settingsText, lines, now, evs, by) {
+  const sl = s.sleep;
+  if (!sl) return { sleep: false, why: "sleep is not set" };
+  const check = lastCheck(lines);
+  if (check?.outcome === "degraded") return { sleep: false, why: "the last check was degraded" };
+  const candidates2 = [lastArrival(lines), lastOperatorAt(evs, s.loop.prompt)].filter((t) => !!t);
+  if (candidates2.length === 0) {
+    const first = firstCycleAt(lines);
+    if (first) candidates2.push(first);
+  }
+  const quietSince = candidates2.sort().pop() ?? iso(now);
+  const quietMs = now - (parseIso(quietSince) ?? now);
+  const after = sl.after_minutes * 6e4;
+  if (quietMs < after) return { sleep: false, why: `quiet for ${Math.floor(quietMs / 6e4)} of ${sl.after_minutes} minutes` };
+  const { due, problem } = dueTimes(root, s, settingsText);
+  if (problem) return { sleep: false, why: problem };
+  const next3 = due[0] ?? null;
+  if (next3 && (parseIso(next3.at) ?? 0) < now + after) {
+    return { sleep: false, why: `due at ${hhmm3(next3.at)}: ${next3.what}` };
+  }
+  return {
+    sleep: true,
+    state: {
+      decided_at: iso(now),
+      by,
+      quiet_since: quietSince,
+      due: next3?.at ?? null,
+      due_what: next3?.what ?? null,
+      wake_lines: wakeLineCounts(s),
+      began: null,
+      compacted: false,
+      looked_at: null,
+      woken: null,
+      escalated: false
+    }
+  };
+}
+function wakeBy(s, st) {
+  const max = (parseIso(st.decided_at) ?? 0) + (s.sleep?.max_minutes ?? 0) * 6e4;
+  const due = st.due ? parseIso(st.due) : null;
+  if (due !== null && due < max) return { at: iso(due), why: `due: ${st.due_what ?? "something"}` };
+  return { at: iso(max), why: `${s.sleep?.max_minutes ?? 0} minutes asleep` };
+}
+function sleepFieldLines(s, st) {
+  const by = wakeBy(s, st);
+  const quietMin = Math.floor(((parseIso(st.decided_at) ?? 0) - (parseIso(st.quiet_since) ?? 0)) / 6e4);
+  return [
+    `sleep now: quiet since ${hhmm3(st.quiet_since)} (${quietMin} min), and nothing is due before ${hhmm3(by.at)}`,
+    "arm no monitor, call no ScheduleWakeup, start nothing in the background, and end your turn now",
+    `the sleep timer ${s.sleep?.compact ? "compacts this session once it is idle, then " : ""}wakes it with the loop prompt when a stream has something, and by ${hhmm3(by.at)} at the latest (${by.why})`,
+    "when the loop prompt arrives, run `cycle begin` as after any wake"
+  ];
+}
+function sleepLogLine(st) {
+  return { at: st.decided_at, outcome: "sleep", by: st.by, quiet_since: st.quiet_since, due: st.due };
+}
+function wakeLogLine(st, now) {
+  const w = st.woken;
+  const ev = w ? parseIso(w.event_at) : null;
+  return {
+    at: iso(now),
+    outcome: "wake",
+    reason: w ? w.reason : st.began ? "a cycle began with no wake recorded (the operator, or the session itself)" : "a cycle began before the sleep did",
+    latency_s: ev !== null ? Math.max(0, Math.round((now - ev) / 1e3)) : null,
+    slept_from: st.began ?? st.decided_at,
+    woken_at: w?.at ?? null
+  };
+}
+function silenceFrom(lines, st, now, lastCycle) {
+  if (st) return st.woken ? st.woken.at : iso(now);
+  let last = lastCycle;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i];
+    if (l.outcome !== "wake") continue;
+    const w = typeof l.woken_at === "string" ? l.woken_at : l.at;
+    if (!last || w > last) last = w;
+    break;
+  }
+  return last;
+}
+function sleepSpans(lines) {
+  const spans2 = [];
+  for (const l of lines) {
+    if (l.outcome === "sleep") spans2.push({ from: l.at, to: null });
+    else if (l.outcome === "wake" && spans2.length && spans2[spans2.length - 1].to === null) {
+      spans2[spans2.length - 1].to = typeof l.woken_at === "string" ? l.woken_at : l.at;
+    }
+  }
+  return spans2;
+}
+function sleepStatusLine(s, st) {
+  if (st.woken) return `woken at ${hhmm3(st.woken.at)} for: ${st.woken.reason}${st.woken.sent ? "" : " (the prompt has not landed yet)"}; waiting for cycle begin`;
+  if (!st.began) return `going down since ${hhmm3(st.decided_at)}: the sleep timer ${s.sleep?.compact ? "compacts the session" : "marks the sleep begun"} once it is idle`;
+  const lastLook = st.looked_at ?? st.began;
+  const next3 = iso((parseIso(lastLook) ?? 0) + (s.sleep?.probe_minutes ?? 10) * 6e4);
+  return `asleep since ${hhmm3(st.began)}, next look ${hhmm3(next3)}, wake by ${hhmm3(wakeBy(s, st).at)}`;
+}
+var SLEEP_STATE, hhmm3;
+var init_sleep = __esm({
+  "src/opsbot-core/sleep.ts"() {
+    "use strict";
+    init_lifecycle();
+    init_repo();
+    init_state();
+    init_cadence();
+    init_transcript();
+    init_wake();
+    SLEEP_STATE = "opsbot-sleep";
+    hhmm3 = (t) => `${t.slice(11, 16)}Z`;
+  }
+});
+
 // src/opsbot-core/commands/coldstart.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync10, mkdirSync as mkdirSync3, readdirSync as readdirSync2, readFileSync as readFileSync6, rmSync as rmSync3, statSync as statSync5, writeFileSync as writeFileSync3 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync11, mkdirSync as mkdirSync3, readdirSync as readdirSync2, readFileSync as readFileSync7, rmSync as rmSync4, statSync as statSync5, writeFileSync as writeFileSync4 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
 import { dirname as dirname9, join as join16, resolve as resolve6 } from "node:path";
 function legacyCacheDir(name) {
@@ -8424,12 +8624,12 @@ function legacyCacheDir(name) {
 }
 function ensureScratch(root) {
   const dir = join16(root, SCRATCH_DIR);
-  const created = !existsSync10(dir);
+  const created = !existsSync11(dir);
   mkdirSync3(dir, { recursive: true });
   const exclude = gitPath(root, "info/exclude");
   let text = "";
   try {
-    text = readFileSync6(exclude, "utf8");
+    text = readFileSync7(exclude, "utf8");
   } catch {
   }
   const present = text.split("\n").some((l) => ["/.scratch", "/.scratch/", ".scratch", ".scratch/"].includes(l.trim()));
@@ -8442,14 +8642,14 @@ function ensureScratch(root) {
 }
 function writeSessionPointer(root, p) {
   try {
-    writeFileSync3(gitPath(root, "opsbot-session"), `${JSON.stringify(p)}
+    writeFileSync4(gitPath(root, "opsbot-session"), `${JSON.stringify(p)}
 `);
   } catch {
   }
 }
 function sessionPointer(root) {
   try {
-    const v = JSON.parse(readFileSync6(gitPath(root, "opsbot-session"), "utf8"));
+    const v = JSON.parse(readFileSync7(gitPath(root, "opsbot-session"), "utf8"));
     return v && typeof v.transcript_path === "string" ? v : null;
   } catch {
     return null;
@@ -8499,16 +8699,25 @@ function logSummary(root, now) {
     out.push(
       `cycles ${checks.length} \xB7 nothing new ${count2("nothing-new")} \xB7 new ${count2("new")} \xB7 degraded ${count2("degraded")} \xB7 items ${items}`
     );
-    const times = all.filter((l) => CYCLE_OUTCOMES.includes(l.outcome)).map((l) => parseIso(l.at)).sort((a, b) => a - b);
+    const times = all.filter((l) => CYCLE_OUTCOMES.includes(l.outcome) || l.outcome === "sleep" || l.outcome === "wake").map((l) => ({
+      t: parseIso(l.outcome === "wake" && typeof l.woken_at === "string" ? l.woken_at : l.at) ?? parseIso(l.at),
+      sleep: l.outcome === "sleep"
+    })).sort((a, b) => a.t - b.t);
     let gap = 0;
     let from = 0;
     for (let i = 1; i < times.length; i++) {
-      if (times[i] - times[i - 1] > gap) {
-        gap = times[i] - times[i - 1];
-        from = times[i - 1];
+      if (times[i - 1].sleep) continue;
+      if (times[i].t - times[i - 1].t > gap) {
+        gap = times[i].t - times[i - 1].t;
+        from = times[i - 1].t;
       }
     }
     if (times.length > 1) out.push(`longest gap ${Math.floor(gap / 6e4)} min, from ${iso(from)}`);
+    const spans2 = sleepSpans(all);
+    if (spans2.length) {
+      const asleep = spans2.reduce((a, sp) => a + ((sp.to ? parseIso(sp.to) : now) - parseIso(sp.from)), 0);
+      out.push(`slept ${spans2.length} time${spans2.length === 1 ? "" : "s"}, ${Math.floor(asleep / 6e4)} min in all${spans2[spans2.length - 1].to ? "" : ", asleep now"}`);
+    }
     const last = checks[checks.length - 1];
     out.push(`last cycle ${last.at} \xB7 ${last.outcome}`);
     const lastDeg = [...checks].reverse().find((c) => c.outcome === "degraded");
@@ -8534,12 +8743,12 @@ function logSummary(root, now) {
 }
 function kitSections(mode) {
   const dir = process.env.OPSBOT_PACK_DIR || join16(skillDir(), "references", "pack");
-  if (!existsSync10(dir)) return [];
+  if (!existsSync11(dir)) return [];
   return readdirSync2(dir).filter((f) => f.endsWith(".md")).filter((f) => {
     const m = f.match(/^\d+[-_]mode-([a-z]+)\.md$/);
     return !m || m[1] === (mode ?? "strategist");
   }).sort().map((f) => {
-    let text = readFileSync6(join16(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
+    let text = readFileSync7(join16(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
     const m = text.match(/^#\s+(.+)$/m);
     const title = m ? m[1].trim() : f.replace(/^\d+[-_]/, "").replace(/\.md$/, "");
     if (m) text = text.replace(m[0], "").replace(/^\n+/, "");
@@ -8640,11 +8849,11 @@ async function coldStartCommand(args) {
   ensureScratch(root);
   const { dir, pack: packFile, pending } = packPaths(root);
   mkdirSync3(dir, { recursive: true });
-  writeFileSync3(packFile, pack);
-  writeFileSync3(pending, `${nowIso()}
+  writeFileSync4(packFile, pack);
+  writeFileSync4(pending, `${nowIso()}
 `);
   try {
-    rmSync3(legacyPackPaths(s.name).pending, { force: true });
+    rmSync4(legacyPackPaths(s.name).pending, { force: true });
   } catch {
   }
   return [
@@ -8673,8 +8882,8 @@ async function gateCommand(args) {
   if (!s) return { gate: "open (no settings)" };
   const current = packPaths(root);
   const legacy = legacyPackPaths(s.name);
-  const { pack, pending } = existsSync10(current.pending) ? current : existsSync10(legacy.pending) ? legacy : current;
-  if (!existsSync10(pending)) return { gate: "open" };
+  const { pack, pending } = existsSync11(current.pending) ? current : existsSync11(legacy.pending) ? legacy : current;
+  if (!existsSync11(pending)) return { gate: "open" };
   let packSize = 0;
   try {
     packSize = statSync5(pack).size;
@@ -8682,7 +8891,7 @@ async function gateCommand(args) {
     packSize = 0;
   }
   if (packSize === 0) {
-    rmSync3(pending, { force: true });
+    rmSync4(pending, { force: true });
     return { gate: "open (no pack to read; flag cleared)" };
   }
   let input = {};
@@ -8696,7 +8905,7 @@ async function gateCommand(args) {
   const path = typeof ti.file_path === "string" ? ti.file_path : "";
   const partial = ti.offset !== void 0 || ti.limit !== void 0 || ti.pages !== void 0;
   if (tool === "Read" && path && resolve6(path) === resolve6(pack) && !partial) {
-    rmSync3(pending, { force: true });
+    rmSync4(pending, { force: true });
     return { gate: "open (pack read whole; flag cleared)" };
   }
   const reason = `Reground first: Read ${pack} whole (no offset or limit) before any other tool. The hook output you saw may have been cut short; the file holds the rule card, what is owed and the live state.`;
@@ -8718,6 +8927,7 @@ var init_coldstart = __esm({
     init_repo();
     init_settings();
     init_state();
+    init_sleep();
     WAKE_BUDGET = 6e3;
     SESSION_LOG_CAP = 4e3;
     MIN_SECTION = 300;
@@ -8789,7 +8999,7 @@ var init_start = __esm({
 });
 
 // src/opsbot-core/drift.ts
-import { readFileSync as readFileSync7, writeFileSync as writeFileSync4 } from "node:fs";
+import { readFileSync as readFileSync8, writeFileSync as writeFileSync5 } from "node:fs";
 function modelMatches(want, have) {
   const w = cls(want);
   const h = cls(have);
@@ -8816,19 +9026,19 @@ ${lines.join("\n")}
 `;
   let prev2 = "";
   try {
-    prev2 = readFileSync7(marker, "utf8");
+    prev2 = readFileSync8(marker, "utf8");
   } catch {
   }
   if (lines.length === 0) {
     if (prev2) try {
-      writeFileSync4(marker, "");
+      writeFileSync5(marker, "");
     } catch {
     }
     return [];
   }
   if (prev2 === sig) return [];
   try {
-    writeFileSync4(marker, sig);
+    writeFileSync5(marker, sig);
   } catch {
   }
   return [
@@ -8849,7 +9059,7 @@ var init_drift = __esm({
 });
 
 // src/opsbot-core/commands/cycle.ts
-import { existsSync as existsSync11, rmSync as rmSync4 } from "node:fs";
+import { existsSync as existsSync12, rmSync as rmSync5 } from "node:fs";
 function next2(root, s) {
   return delayLine(nextDelay(s, readCycleLog(root), nowMs()));
 }
@@ -8865,6 +9075,15 @@ function scheduleReport(root, s) {
   const ptr = sessionPointer(root);
   const evs = ptr ? readEvents(ptr.transcript_path) : [];
   return scheduleLines(s, evs.length ? evs : null, nowMs(), nextDelay(s, readCycleLog(root), nowMs()).seconds);
+}
+function sessionEvents(root) {
+  const ptr = sessionPointer(root);
+  return ptr ? readEvents(ptr.transcript_path) : [];
+}
+function sleepDecision(root, s, text, by) {
+  if (!s.sleep) return null;
+  const d = decideSleep(root, s, text, readCycleLog(root), nowMs(), sessionEvents(root), by);
+  return d.sleep ? d.state : null;
 }
 function driftLines(root, s) {
   const ptr = sessionPointer(root);
@@ -8907,7 +9126,8 @@ function cycleBegin() {
   }
   if (!takeLock(root)) return wait(root, settings, "another cycle took the checkout at the same moment");
   const lines = readCycleLog(root);
-  const last = lastCycleAt(lines);
+  const slept = readSleep(root);
+  const last = silenceFrom(lines, slept, nowMs(), lastCycleAt(lines));
   if (last && !openOutage(root)) {
     const gap = nowMs() - (parseIso(last) ?? nowMs());
     if (gap >= settings.liveness.watchdog_minutes * 6e4) {
@@ -8915,9 +9135,13 @@ function cycleBegin() {
         kind: "stopped",
         started: last,
         ended: nowIso(),
-        note: `no cycle logged for ${Math.floor(gap / 6e4)} minutes; cause not seen from here`
+        note: slept?.woken ? `woken at ${slept.woken.at} for: ${slept.woken.reason}; no cycle began for ${Math.floor(gap / 6e4)} minutes` : `no cycle logged for ${Math.floor(gap / 6e4)} minutes; cause not seen from here`
       });
     }
+  }
+  if (slept) {
+    clearSleep(root);
+    appendJsonl(paths(root).log, wakeLogLine(slept, nowMs()));
   }
   const configPath = configSnapshot(root, text);
   for (const s of discover(root, "cycle.begin").scripts) {
@@ -8955,11 +9179,23 @@ function cycleBegin() {
     else process.env.OPSBOT_COMMIT_TRAILERS = prev2;
   }
   if (r.code === 0) {
+    let sleep = sleepDecision(root, settings, text, "cycle begin");
+    if (sleep) {
+      const p = paths(root);
+      const size = fileSize(p.log);
+      appendJsonl(p.log, sleepLogLine(sleep));
+      if (commitOnly(root, [p.log], "chore(cycle): sleep") === null) writeSleep(root, sleep);
+      else {
+        truncateTo(p.log, size);
+        sleep = null;
+      }
+    }
     const why = pushCommits(root);
     releaseLock(root);
     setExit(0);
     const out = { cycle: `${r.line}${why ? ` \xB7 not pushed: ${why}` : ""} \xB7 next ${next2(root, settings)}` };
-    const wake2 = wakeReport(root, settings, true);
+    const wake2 = sleep ? [] : wakeReport(root, settings, true);
+    if (sleep) out.sleep = sleepFieldLines(settings, sleep);
     if (wake2.length) out.wake = wake2;
     const drift2 = driftLines(root, settings);
     if (drift2.length) out.session = drift2;
@@ -9048,19 +9284,22 @@ function cycleEnd(args) {
   };
   if (summary !== void 0) line.summary = summary;
   appendJsonl(p.log, line);
+  const sleep = sleepDecision(root, settings, text, "cycle end");
+  if (sleep) appendJsonl(p.log, sleepLogLine(sleep));
   const files = [p.log];
-  if (existsSync11(p.watermark)) files.push(p.watermark);
-  if (existsSync11(p.outages)) files.push(p.outages);
+  if (existsSync12(p.watermark)) files.push(p.watermark);
+  if (existsSync12(p.outages)) files.push(p.outages);
   files.push(...changedCommitPaths(root, settings.commit_paths, files));
   const why = commitOnly(root, files, `chore(cycle): finished, ${records} records`);
   if (why) {
     truncateTo(p.log, logSize);
     if (oldWm) writeWatermark(root, oldWm);
-    else if (!degraded) rmSync4(p.watermark, { force: true });
+    else if (!degraded) rmSync5(p.watermark, { force: true });
     throw new AxiError(`cannot commit the cycle log (${why}); nothing written, the checkout still held`, "CANNOT_COMMIT", [
       "Fix the repo, then run cycle end again"
     ]);
   }
+  if (sleep) writeSleep(root, sleep);
   const pushed = pushCommits(root);
   releaseLock(root);
   const out = {
@@ -9068,6 +9307,10 @@ function cycleEnd(args) {
   };
   if (notes.length) out.notes = notes;
   out.next = next2(root, settings);
+  if (sleep) {
+    out.sleep = sleepFieldLines(settings, sleep);
+    return out;
+  }
   const wake = wakeReport(root, settings, true);
   if (wake.length) out.wake = wake;
   return out;
@@ -9088,6 +9331,7 @@ var init_cycle = __esm({
     init_transcript();
     init_drift();
     init_wake();
+    init_sleep();
   }
 });
 
@@ -9149,7 +9393,7 @@ var init_outage = __esm({
 });
 
 // src/opsbot-core/runtime.ts
-import { appendFileSync as appendFileSync3, readFileSync as readFileSync8 } from "node:fs";
+import { appendFileSync as appendFileSync3, readFileSync as readFileSync9 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
 import { join as join17 } from "node:path";
 function normStatus(s) {
@@ -9212,7 +9456,7 @@ ${r.stdout}`) };
 function fakeAdapter(file) {
   const state = () => {
     try {
-      return JSON.parse(readFileSync8(file, "utf8"));
+      return JSON.parse(readFileSync9(file, "utf8"));
     } catch {
       return {};
     }
@@ -9271,7 +9515,7 @@ ${r.stdout}`) };
 });
 
 // src/opsbot-core/commands/liveness.ts
-import { existsSync as existsSync12, readFileSync as readFileSync9, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync13, readFileSync as readFileSync10, writeFileSync as writeFileSync6 } from "node:fs";
 function watchdogCommand(args) {
   const { flags } = parseArgs(args, { bool: ["dry-run"] }, "watchdog [--dry-run]");
   const dry = flags["dry-run"] === true;
@@ -9280,6 +9524,8 @@ function watchdogCommand(args) {
   const now = nowMs();
   const watch = settings.liveness.watchdog_minutes;
   const told = gitPath(root, "opsbot-watchdog");
+  const asleep = activeSleep(root, settings);
+  if (asleep) return { watchdog: `asleep \xB7 ${sleepStatusLine(settings, asleep)}; the sleep timer watches` };
   const blocked = blockedBy(root);
   const lines = readCycleLog(root);
   const last = lastCycleAt(lines);
@@ -9296,7 +9542,7 @@ function watchdogCommand(args) {
     return { watchdog: `alive \xB7 last cycle ${last}, ${Math.floor(gap / 6e4)} min ago` };
   }
   const started = last ?? "never";
-  if (existsSync12(told) && readFileSync9(told, "utf8").split("\n")[0] === started) {
+  if (existsSync13(told) && readFileSync10(told, "utf8").split("\n")[0] === started) {
     return { watchdog: `stopped since ${started} \xB7 the operator already told` };
   }
   const seen = [];
@@ -9316,26 +9562,20 @@ function watchdogCommand(args) {
   const first = last ? `${settings.mark} ${settings.name} has logged no cycle since ${humanTime(parseIso(last), settings.timezone)}, over ${watch} minutes ago, so nothing is being read or answered.` : `${settings.mark} ${settings.name} has never logged a cycle in this checkout, so nothing is being read or answered.`;
   const message = [first, ...seen, "The watchdog will not repeat this for the same stop."].join("\n");
   if (dry) return { watchdog: `stopped since ${started} \xB7 would tell the operator`, message: message.split("\n") };
-  const scripts = discover(root, "escalate").scripts;
-  if (scripts.length === 0) {
+  const results = escalate(root, settings, text, message);
+  if (results === null) {
     setExit(1);
     return {
       watchdog: `stopped since ${started} \xB7 cannot tell the operator: no script in opsbot.d/escalate.d/`,
       help: ["Install an escalation script (a channel skill provides one) so the watchdog can reach the operator"]
     };
   }
-  const configPath = configSnapshot(root, text);
-  const results = scripts.map((s) => {
-    const r = runScript(s, root, baseEnv(root, settings, configPath, "escalate"), `${message}
-`);
-    return { script: s.name, ok: r.code === 0, error: r.code === 0 ? "" : `exit ${r.code}: ${firstLine(r.stderr) || "no message"}` };
-  });
   const sent = results.filter((r) => r.ok);
   if (sent.length === 0) {
     setExit(1);
     return { watchdog: `stopped since ${started} \xB7 cannot tell the operator: every escalation script failed`, escalations: results };
   }
-  writeFileSync5(told, `${started}
+  writeFileSync6(told, `${started}
 `);
   if (blocked) {
     return { watchdog: `stopped since ${started} \xB7 the operator told \xB7 outage not recorded while ${blocked}`, escalations: results };
@@ -9348,6 +9588,16 @@ function watchdogCommand(args) {
     });
   }
   return { watchdog: `stopped since ${started} \xB7 the operator told \xB7 outage recorded`, escalations: results };
+}
+function escalate(root, settings, text, message) {
+  const scripts = discover(root, "escalate").scripts;
+  if (scripts.length === 0) return null;
+  const configPath = configSnapshot(root, text);
+  return scripts.map((s) => {
+    const r = runScript(s, root, baseEnv(root, settings, configPath, "escalate"), `${message}
+`);
+    return { script: s.name, ok: r.code === 0, error: r.code === 0 ? "" : `exit ${r.code}: ${firstLine(r.stderr) || "no message"}` };
+  });
 }
 function nudgeCommand(args) {
   const usage = "nudge [--now [--reason TEXT]] [--dry-run]";
@@ -9364,6 +9614,9 @@ function nudgeCommand(args) {
   const quiet = wake ? settings.liveness.wake_cooldown_minutes : settings.liveness.nudge_minutes;
   const cooldown = wake ? settings.liveness.wake_cooldown_minutes : settings.liveness.nudge_cooldown_minutes;
   const marker = gitPath(root, wake ? "opsbot-nudge-now" : "opsbot-nudge");
+  const asleep = activeSleep(root, settings);
+  if (asleep && !wake) return { nudge: `nothing \xB7 ${sleepStatusLine(settings, asleep)}` };
+  const firstWake = !!asleep && !asleep.woken;
   const v = judgeLock(root, settings.lock_max_minutes);
   if (v.state === "held") return { nudge: `nothing \xB7 a cycle holds the checkout since ${v.hold.started}` };
   const blocked = blockedBy(root);
@@ -9372,8 +9625,8 @@ function nudgeCommand(args) {
   if (!wake && last && now - (parseIso(last) ?? 0) < quiet * 6e4) {
     return { nudge: `nothing \xB7 last cycle ${last}` };
   }
-  if (existsSync12(marker)) {
-    const [prev2, why] = readFileSync9(marker, "utf8").split("\n");
+  if (existsSync13(marker) && !firstWake) {
+    const [prev2, why] = readFileSync10(marker, "utf8").split("\n");
     if (prev2 && /^\d+$/.test(prev2) && now - Number(prev2) * 1e3 < cooldown * 6e4) {
       const ago = Math.floor((now - Number(prev2) * 1e3) / 6e4);
       return { nudge: wake ? `nothing \xB7 woke ${ago} min ago${why ? ` for: ${why}` : ""}` : `nothing \xB7 nudged ${ago} min ago and no cycle since` };
@@ -9410,12 +9663,16 @@ function nudgeCommand(args) {
 ${reason}
 `;
   const r = rt.prompt(agent, line);
+  if (asleep && (r.ok || r.code !== "agent_blocked" && r.code !== "agent_not_found") && !asleep.woken) {
+    const at = nowIso();
+    writeSleep(root, { ...asleep, woken: { at, reason: `nudge --now${reason ? `: ${reason}` : ""}`, event_at: at, sent: true } });
+  }
   if (!r.ok) {
-    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") writeFileSync5(marker, stamp);
+    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") writeFileSync6(marker, stamp);
     setExit(1);
     return { nudge: `cannot \xB7 ${rt.name} prompt ${agent}: ${r.code}: ${r.message}` };
   }
-  writeFileSync5(marker, stamp);
+  writeFileSync6(marker, stamp);
   return { nudge: `${wake ? `woke ${agent}${reason ? ` for: ${reason}` : ""}` : `nudged ${agent}: ${line}`}${via}`, at: nowIso() };
 }
 var init_liveness = __esm({
@@ -9429,12 +9686,13 @@ var init_liveness = __esm({
     init_runtime();
     init_transcript();
     init_coldstart();
+    init_sleep();
     init_state();
   }
 });
 
 // src/opsbot-core/commands/infra.ts
-import { existsSync as existsSync13, mkdirSync as mkdirSync4, readFileSync as readFileSync10, readdirSync as readdirSync3, rmSync as rmSync5, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync14, mkdirSync as mkdirSync4, readFileSync as readFileSync11, readdirSync as readdirSync3, rmSync as rmSync6, writeFileSync as writeFileSync7 } from "node:fs";
 import { homedir as homedir11 } from "node:os";
 import { join as join18 } from "node:path";
 function unitDir() {
@@ -9448,12 +9706,12 @@ function templatesDir() {
 }
 function template(name) {
   const p = join18(templatesDir(), name);
-  if (!existsSync13(p)) {
+  if (!existsSync14(p)) {
     throw new AxiError(`the unit template ${name} is missing from ${templatesDir()}`, "CANNOT_RUN", [
       "Reinstall the skill: npx skills add JarvusInnovations/opsbots --skill opsbot-core"
     ]);
   }
-  return readFileSync10(p, "utf8");
+  return readFileSync11(p, "utf8");
 }
 function fill(t, vars) {
   return t.replace(/@([A-Z_]+)@/g, (m, k) => k in vars ? vars[k] : m);
@@ -9511,7 +9769,7 @@ function systemctl(args) {
 }
 function installed(s) {
   const dir = unitDir();
-  if (!existsSync13(dir)) return [];
+  if (!existsSync14(dir)) return [];
   return readdirSync3(dir).filter((f) => f.startsWith(prefix(s))).sort();
 }
 function infraCommand(args) {
@@ -9529,7 +9787,7 @@ function infraCommand(args) {
     const want = new Set(units.map((u) => u.file));
     const rows = units.map((u) => {
       const p = join18(dir, u.file);
-      const state = !existsSync13(p) ? "missing" : samePathless(readFileSync10(p, "utf8"), u.content) ? "current" : "stale";
+      const state = !existsSync14(p) ? "missing" : samePathless(readFileSync11(p, "utf8"), u.content) ? "current" : "stale";
       let active = "-";
       if (u.enable && state !== "missing") {
         const r = systemctl(["is-active", u.file]);
@@ -9569,9 +9827,9 @@ function infraCommand(args) {
     mkdirSync4(dir, { recursive: true });
     if (stale.length) {
       systemctl(["disable", "--now", ...stale]);
-      for (const f of stale) rmSync5(join18(dir, f), { force: true });
+      for (const f of stale) rmSync6(join18(dir, f), { force: true });
     }
-    for (const u of units) writeFileSync6(join18(dir, u.file), u.content);
+    for (const u of units) writeFileSync7(join18(dir, u.file), u.content);
     const steps = [];
     const reload2 = systemctl(["daemon-reload"]);
     steps.push({ step: "daemon-reload", ok: reload2.ok, detail: firstLine(reload2.out) });
@@ -9588,7 +9846,7 @@ function infraCommand(args) {
   if (files.length === 0) return { infra: `no ${prefix(settings)}* units installed (no-op)` };
   if (dry) return { infra: `would disable and remove ${files.length} units from ${dir}`, units: files };
   const dis = systemctl(["disable", "--now", ...files]);
-  for (const f of files) rmSync5(join18(dir, f), { force: true });
+  for (const f of files) rmSync6(join18(dir, f), { force: true });
   const reload = systemctl(["daemon-reload"]);
   if (!reload.ok) setExit(1);
   return {
@@ -9615,7 +9873,7 @@ var init_infra = __esm({
 });
 
 // src/opsbot-core/commands/hook.ts
-import { existsSync as existsSync14, mkdirSync as mkdirSync5, readFileSync as readFileSync11, writeFileSync as writeFileSync7 } from "node:fs";
+import { existsSync as existsSync15, mkdirSync as mkdirSync5, readFileSync as readFileSync12, writeFileSync as writeFileSync8 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
 import { dirname as dirname10, join as join19, relative as relative2 } from "node:path";
 function settingsPath(scope, dir) {
@@ -9631,16 +9889,16 @@ function hookBase(scope, dir) {
   return JSON.stringify(shim);
 }
 function readSettings(p) {
-  if (!existsSync14(p)) return {};
+  if (!existsSync15(p)) return {};
   try {
-    return JSON.parse(readFileSync11(p, "utf8"));
+    return JSON.parse(readFileSync12(p, "utf8"));
   } catch {
     throw new AxiError(`${p} is not valid JSON; not touching it`, "CANNOT_RUN", ["Fix the file by hand, then run hook install again"]);
   }
 }
 function writeSettings(p, s) {
   mkdirSync5(dirname10(p), { recursive: true });
-  writeFileSync7(p, `${JSON.stringify(s, null, 2)}
+  writeFileSync8(p, `${JSON.stringify(s, null, 2)}
 `);
 }
 function upsertPreTool(settings, command) {
@@ -9745,7 +10003,7 @@ var init_hook = __esm({
 });
 
 // src/opsbot-core/commands/simple.ts
-import { existsSync as existsSync15, readFileSync as readFileSync12 } from "node:fs";
+import { existsSync as existsSync16, readFileSync as readFileSync13 } from "node:fs";
 import { join as join20 } from "node:path";
 function nextDelayCommand(args) {
   parseArgs(args, {}, "next-delay");
@@ -9807,6 +10065,10 @@ function detail2(l) {
       return `${l.kind ?? ""} from ${l.started ?? ""}`;
     case "outage-end":
       return `outage from ${l.started ?? ""} ended ${l.ended ?? ""}`;
+    case "sleep":
+      return `quiet since ${l.quiet_since ?? ""}${l.due ? ` \xB7 due ${String(l.due)}` : ""}`;
+    case "wake":
+      return `${l.reason ?? ""}${typeof l.latency_s === "number" ? ` \xB7 ${l.latency_s} s after the event` : ""}`;
     default:
       return "";
   }
@@ -9874,7 +10136,7 @@ function settingsCommand(args) {
     where = `${SETTINGS_FILE} at HEAD`;
   } else {
     const p = join20(root, SETTINGS_FILE);
-    text = existsSync15(p) ? readFileSync12(p, "utf8") : null;
+    text = existsSync16(p) ? readFileSync13(p, "utf8") : null;
     where = SETTINGS_FILE;
   }
   if (text === null) {
@@ -9884,9 +10146,9 @@ function settingsCommand(args) {
   }
   const { raw, problems } = parseSettingsText(text, where);
   const claude = join20(root, ".claude", "settings.json");
-  if (raw && existsSync15(claude)) {
+  if (raw && existsSync16(claude)) {
     try {
-      const cs = JSON.parse(readFileSync12(claude, "utf8"));
+      const cs = JSON.parse(readFileSync13(claude, "utf8"));
       const loop = raw.loop ?? {};
       if (cs && cs.autoCompactWindow !== void 0 && String(cs.autoCompactWindow) !== String(loop.autocompact ?? "")) {
         problems.push(

@@ -14,7 +14,7 @@ import type { Settings } from "./settings.js";
 
 export const OPSBOT_D = "opsbot.d";
 
-export const POINTS = ["heartbeat", "monitor", "cycle.begin", "cycle.end", "wake", "escalate"] as const;
+export const POINTS = ["heartbeat", "monitor", "cycle.begin", "cycle.end", "wake", "escalate", "due"] as const;
 export type Point = (typeof POINTS)[number];
 
 export const POINT_DIRS: Record<Point, string> = {
@@ -24,6 +24,7 @@ export const POINT_DIRS: Record<Point, string> = {
   "cycle.end": "cycle.d/end",
   wake: "wake.d",
   escalate: "escalate.d",
+  due: "due.d",
 };
 
 /** Accept either the point name or its directory spelling. */

@@ -21,13 +21,13 @@ The bot's own files the skill reads and writes:
 | --- | --- |
 | `opsbot.json` | the settings file; committed; the only place any loop *value* is set |
 | `opsbot.d/` | the lifecycle directories; every executable in them is picked up (see below) |
-| `logs/cycle.jsonl` | one line per cycle outcome; committed |
+| `logs/cycle.jsonl` | one line per cycle outcome; committed. With `sleep` set it also holds `{at, outcome: "sleep", by, quiet_since, due}` and `{at, outcome: "wake", reason, latency_s, slept_from, woken_at}` |
 | `logs/intake/seen` | typed seen keys; committed |
 | `logs/intake/watermark` | one UTC ISO line; committed |
 | `logs/outages.jsonl` | outage events `{at, outcome: "outage"\|"outage-end", kind, started, ended, note}`; committed with the next cycle; readers also accept outage lines found in `logs/cycle.jsonl`, where an earlier bot wrote them |
 | `.git/opsbot-cycle.lock` | the writer lock; never committed |
 | `.git/opsbot-{watchdog,nudge,nudge-now}` | the watchdog's told-once marker and the nudge cooldowns; never committed |
-| `.git/opsbot-sleep` | present while the bot is going down or asleep: when it was decided, when the sleep began, the earliest due time; removed by `cycle begin`; never committed |
+| `.git/opsbot-sleep` | present while the bot is going down, asleep, or woken and not yet answered: when it was decided and by which command, quiet since when, the earliest due time and what it is, each wake file's line count at the decision, when the sleep began and whether it compacted, the sleep timer's last look, the wake (when, why, when the event was, whether the prompt landed) and whether an unanswered wake was escalated; removed by `cycle begin`; never committed; ignored while `sleep` is absent from `opsbot.json` |
 | `.scratch/` | the bot's scratch directory for files written to look at and throw away; `cold-start --write` creates it and adds a `.scratch/` line to the repository's `info/exclude` (`git rev-parse --git-path info/exclude`, so a worktree checkout works), never to `.gitignore`; never committed |
 | `.scratch/opsbot-core/reground.md` + `reground.pending` | the cold-start pack and its flag; inside the working directory, so reading the pack needs no permission beyond the checkout |
 
@@ -132,6 +132,7 @@ file, since a unit outlives any one commit.
 | `cycle.d/begin/` | after the lock, before `check` | housekeeping that must run first (a repo sync, a cache warm); non-zero aborts the cycle as degraded |
 | `cycle.d/end/` | after records, before the commit | what to show at the close: due promises, fixes not yet told, anything the operator should see this cycle; stdout is appended to the closing line |
 | `wake.d/` | every cold start | one section of the reground pack each (what is owed, open escalations, …); each capped to its share of the byte budget |
+| `due.d/` | when a sleep is being decided | prints one line per thing due, `<ISO-8601 time> <what>` (a promise, the start of working hours for a bot with routines there); the earliest is the sleep's wake time; a script that exits non-zero, or a line that does not open with a time, keeps the bot awake, since what is due cannot be known |
 | `escalate.d/` | when the core must reach the operator | receives the message on stdin; every script runs (a chat DM, a push notification); the core needs at least one or `watchdog` reports itself unable to escalate |
 
 The core runs nothing from these directories that the bot's repo did not put there; it ships one adapter as a template to copy (`templates/heartbeat.d/50-peer-sessions`, below) and test fixtures. A channel skill
@@ -265,18 +266,23 @@ dispatcher, 77 of every 100 calls were quiet ticks, each re-reading the whole co
 further call, and is woken from outside the model only when there is something to do.
 
 - **Going down.** `cycle end` and a `cycle begin` that finds nothing decide it: the last
-  cycle that found anything, or the operator's last message, is `after_minutes` or more ago,
-  and no promise is due before then. The command writes `.git/opsbot-sleep` (when it was
-  decided, and the earliest time something is due: a promise, the start of working hours
-  when the bot has routines there) and prints a `sleep` field in place of the `wake` field:
-  arm nothing, schedule nothing, end the turn. The log gets a `sleep` entry.
+  cycle that found anything, or the operator's last message, is `after_minutes` or more ago
+  (with neither, the first cycle the log holds); the last check was not degraded; and nothing
+  `due.d/` prints falls within the next `after_minutes`. The operator's message is read from
+  the session log; the loop prompt, which the nudge and the sleep timer type, is not the
+  operator. The command writes `.git/opsbot-sleep` (when it was decided, and the earliest
+  time something is due) and prints a `sleep` field in place of the `wake` field: arm
+  nothing, schedule nothing, end the turn. The log gets a `sleep` entry, committed with the
+  cycle (`cycle begin` makes its own `chore(cycle): sleep` commit); a commit that fails
+  means no sleep.
 - **Compacting.** The session cannot compact itself. The sleep timer does it: at its next
   tick, with the session idle, it types `/compact` through the runtime adapter while the
   cache is still warm. The SessionStart hook writes the cold-start pack as after any
   compaction. No call follows, so the smaller context is written to the cache only at the
   wake, once.
 - **Asleep.** The nudge and the watchdog stand down: `nudge` without `--now` does nothing
-  and `watchdog` does not count the silence. The sleep timer is the only clock. Every
+  and `watchdog` does not count the silence. `nudge --now` wakes, and its cooldown does not
+  hold back the first wake of a sleep. The sleep timer is the only clock. Every
   `probe_minutes` it reads the wake files and runs `check --peek`, which costs no model
   call.
 - **Waking.** Any of: a new line in a wake file (a listener's `nudge --now` wakes at once
@@ -284,6 +290,11 @@ further call, and is woken from outside the model only when there is something t
   the recorded due time, `max_minutes`, or the operator typing into the session. The wake
   types `loop.prompt` with the reason. `cycle begin` removes `.git/opsbot-sleep`, logs a
   `wake` entry with the reason and the seconds since the event, and the loop runs as usual.
+  A cycle that wakes to nothing new may decide a new sleep at once: the stretch is still
+  quiet.
+- **Readers.** A `sleep`…`wake` span in the log is intended silence. The stopped-outage test
+  at `cycle begin` counts only the time since the wake; the 48-hour summary's longest gap
+  skips the span and adds a line, `slept N times, M min in all`.
 - **Never asleep unseen.** A bot can sleep at most `max_minutes` without one full cycle. A
   wake the session does not answer becomes an outage through `escalate.d/`, as a stopped
   loop does today. `infra status` and the home view say `asleep since HH:MMZ, next look
