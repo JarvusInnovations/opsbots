@@ -7,6 +7,7 @@
  *   opsbot-<name>-nudge.{service,timer}      the same interval, half an interval later
  *   opsbot-<name>-monitor-<m>.service        per opsbot.d/monitor.d/<m> (always on)
  *   opsbot-<name>-probe-<m>.{service,timer}  per opsbot.d/monitor.d/<m>@<interval>
+ *   opsbot-<name>-sleep.{service,timer}      every sleep.probe_minutes, only when `sleep` is set
  *
  * Units go to $XDG_CONFIG_HOME/systemd/user (~/.config/systemd/user).
  * `status` re-renders and compares, so a unit that no longer matches
@@ -22,6 +23,7 @@ import { absoluteInvocation, cliInvocation, skillDir } from "../invocation.js";
 import { discover } from "../lifecycle.js";
 import { firstLine, requireRoot, run } from "../repo.js";
 import { loadSettings, type Settings } from "../settings.js";
+import { readSleep, sleepStatusLine } from "../sleep.js";
 
 export const INFRA_USAGE = "infra install|uninstall|status [--dry-run]";
 
@@ -82,6 +84,13 @@ export function renderUnits(root: string, s: Settings): { units: Unit[]; problem
     { file: `${pre}nudge.service`, content: fill(template("opsbot-nudge.service"), base), enable: false },
     { file: `${pre}nudge.timer`, content: fill(template("opsbot-nudge.timer"), base), enable: true },
   ];
+  if (s.sleep) {
+    const vars = { ...base, PROBE: String(s.sleep.probe_minutes) };
+    units.push(
+      { file: `${pre}sleep.service`, content: fill(template("opsbot-sleep.service"), vars), enable: false },
+      { file: `${pre}sleep.timer`, content: fill(template("opsbot-sleep.timer"), vars), enable: true },
+    );
+  }
   const problems: string[] = [];
   for (const sc of discover(root, "monitor").scripts) {
     const at = sc.name.lastIndexOf("@");
@@ -158,6 +167,10 @@ export function infraCommand(args: string[]): Record<string, unknown> {
       units: rows,
     };
     if (problems.length) out.problems = problems;
+    if (settings.sleep) {
+      const st = readSleep(root);
+      out.sleep = st ? sleepStatusLine(settings, st) : "awake";
+    }
     if (bad) out.help = [`Run \`${cliInvocation()} infra install\` to render them from opsbot.json`];
     return out;
   }

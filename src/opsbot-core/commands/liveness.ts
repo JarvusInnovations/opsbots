@@ -24,7 +24,7 @@ import { parseArgs, setExit } from "../args.js";
 import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
 import { blockedBy, firstLine, gitPath, humanTime, nowIso, nowMs, parseIso, requireRoot } from "../repo.js";
 import { loadSettings, type Settings } from "../settings.js";
-import { runtimeFor } from "../runtime.js";
+import { runtimeFor, type Found } from "../runtime.js";
 import { readEvents, turnEnded } from "../transcript.js";
 import { sessionPointer } from "./coldstart.js";
 import { activeSleep, sleepStatusLine, writeSleep } from "../sleep.js";
@@ -40,13 +40,22 @@ export function watchdogCommand(args: string[]): Record<string, unknown> {
   const now = nowMs();
   const watch = settings.liveness.watchdog_minutes;
   const told = gitPath(root, "opsbot-watchdog");
-  // asleep, the silence is intended; the sleep timer is the clock and escalates a wake left unanswered
-  const asleep = activeSleep(root, settings);
-  if (asleep) return { watchdog: `asleep · ${sleepStatusLine(settings, asleep)}; the sleep timer watches` };
   const blocked = blockedBy(root);
   const lines = readCycleLog(root);
   const last = lastCycleAt(lines);
   const open = openOutage(root);
+  // asleep, the silence is intended; the sleep timer is the clock and escalates a wake left
+  // unanswered. An outage that cycles ended before this sleep is still closed here.
+  const asleep = activeSleep(root, settings);
+  if (asleep) {
+    const said = `asleep · ${sleepStatusLine(settings, asleep)}; the sleep timer watches`;
+    if (open && last && last > open && !blocked && !dry) {
+      const resumed = lines.find((l) => CYCLE_OUTCOMES.includes(l.outcome) && l.at > open)?.at ?? last;
+      recordOutageEnd(root, open, resumed);
+      return { watchdog: `${said} · outage from ${open} ended ${resumed}` };
+    }
+    return { watchdog: said };
+  }
   const gap = last ? now - (parseIso(last) ?? now) : null;
 
   if (gap !== null && gap < watch * 60_000) {
@@ -127,6 +136,36 @@ export function escalate(root: string, settings: Settings, text: string, message
   });
 }
 
+// ------------------------------------------------------------------ idle
+
+/**
+ * Whether a prompt typed now lands on an idle session. The runtime's `idle` and `done` are
+ * trusted, and `blocked` (a prompt would land in a dialog). Its `working` is not trusted alone:
+ * the herdr adapter reads the terminal title, which keeps its spinner while background work runs
+ * after the turn ended, so the session log decides. Shared by the nudge and the sleep timer.
+ */
+export function sessionIdle(root: string, agent: string, found: Extract<Found, { ok: true }>): { idle: true; via: string } | { idle: false; why: string; blocked: boolean } {
+  switch (found.status) {
+    case "idle":
+    case "done":
+      return { idle: true, via: "" };
+    case "working": {
+      const log = found.log ?? sessionPointer(root)?.transcript_path ?? null;
+      const evs = log ? readEvents(log) : [];
+      if (evs.length === 0) return { idle: false, why: `${agent} is working (mid-turn; no session log to check)`, blocked: false };
+      // a log tail with no assistant entry in it (one enormous line) says nothing about the turn
+      if (!evs.some((e) => e.type === "assistant")) return { idle: false, why: `${agent} is working (mid-turn; the session log's tail shows no turn)`, blocked: false };
+      const t = turnEnded(evs);
+      if (!t.ended) return { idle: false, why: `${agent} is working (mid-turn since ${t.since.slice(11, 16)}Z)`, blocked: false };
+      return { idle: true, via: ` · the runtime said working, but the session log shows the turn ended${t.at ? ` at ${t.at.slice(11, 16)}Z` : ""} (background work only)` };
+    }
+    case "blocked":
+      return { idle: false, why: `${agent} is blocked at a dialog; a prompt would land in it`, blocked: true };
+    default:
+      return { idle: false, why: `the runtime cannot tell what ${agent} is doing (${found.status}); treated as busy`, blocked: false };
+  }
+}
+
 // ------------------------------------------------------------------ nudge
 
 export function nudgeCommand(args: string[]): Record<string, unknown> {
@@ -174,29 +213,9 @@ export function nudgeCommand(args: string[]): Record<string, unknown> {
     setExit(1);
     return { nudge: found.code === "agent_not_found" ? `cannot · the runtime has no agent named ${agent}` : `cannot · ${rt.name}: ${found.code}: ${found.message}` };
   }
-  let via = "";
-  switch (found.status) {
-    case "idle":
-    case "done":
-      break;
-    case "working": {
-      // The runtime reads the terminal title, and the title keeps its spinner while background
-      // work runs after the turn has ended. The session log knows the difference.
-      const log = found.log ?? sessionPointer(root)?.transcript_path ?? null;
-      const evs = log ? readEvents(log) : [];
-      if (evs.length === 0) return { nudge: `nothing · ${agent} is working (mid-turn; no session log to check)` };
-      // a log tail with no assistant entry in it (one enormous line) says nothing about the turn
-      if (!evs.some((e) => e.type === "assistant")) return { nudge: `nothing · ${agent} is working (mid-turn; the session log's tail shows no turn)` };
-      const t = turnEnded(evs);
-      if (!t.ended) return { nudge: `nothing · ${agent} is working (mid-turn since ${t.since.slice(11, 16)}Z)` };
-      via = ` · the runtime said working, but the session log shows the turn ended${t.at ? ` at ${t.at.slice(11, 16)}Z` : ""} (background work only)`;
-      break;
-    }
-    case "blocked":
-      return { nudge: `nothing · ${agent} is blocked at a dialog; a prompt would land in it` };
-    default:
-      return { nudge: `nothing · the runtime cannot tell what ${agent} is doing (${found.status}); treated as busy` };
-  }
+  const idle = sessionIdle(root, agent, found);
+  if (!idle.idle) return { nudge: `nothing · ${idle.why}` };
+  const via = idle.via;
 
   if (dry) return { nudge: `would prompt ${agent} (${found.pane}, ${found.status})${wake ? ` now${reason ? `, for: ${reason}` : ""}` : ""}: ${line}` };
   const stamp = `${Math.floor(now / 1000)}\n${reason}\n`;

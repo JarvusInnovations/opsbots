@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "d3eb4b5" : "dev";
+    VERSION = true ? "4a0c5d8" : "dev";
   }
 });
 
@@ -2346,10 +2346,10 @@ function validateSettings(raw) {
     }
   }
   obj(raw, "host", "", false);
-  const wake = obj(raw, "wake", "", false);
-  if (wake) {
-    allow(wake, "wake.", ["files"]);
-    const files = wake.files;
+  const wake2 = obj(raw, "wake", "", false);
+  if (wake2) {
+    allow(wake2, "wake.", ["files"]);
+    const files = wake2.files;
     if (files !== void 0) {
       if (!Array.isArray(files) || files.some((f) => typeof f !== "string" || !f.trim())) {
         problems.push("wake.files must be an array of file paths (strings)");
@@ -2535,20 +2535,111 @@ var init_settings = __esm({
   }
 });
 
+// src/opsbot-core/lifecycle.ts
+import { accessSync as accessSync2, constants as constants2, existsSync as existsSync5, mkdirSync, readdirSync, realpathSync as realpathSync2, statSync, writeFileSync } from "node:fs";
+import { join as join4, relative } from "node:path";
+function parsePoint(s) {
+  const t = s.replace(/\/+$/, "");
+  for (const p of POINTS) {
+    if (p === t || POINT_DIRS[p] === t || POINT_DIRS[p] === `${t}.d` || `cycle.d/${t}` === POINT_DIRS[p]) return p;
+  }
+  return null;
+}
+function discover(root, point) {
+  const dir = join4(root, OPSBOT_D, POINT_DIRS[point]);
+  const scripts = [];
+  const skipped = [];
+  if (!existsSync5(dir)) return { scripts, skipped };
+  const names = readdirSync(dir).sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+  for (const name of names) {
+    if (name.startsWith(".")) continue;
+    const path = join4(dir, name);
+    let st;
+    try {
+      st = statSync(path);
+    } catch {
+      skipped.push({ point, name, reason: "a broken link" });
+      continue;
+    }
+    if (st.isDirectory()) continue;
+    if (!st.isFile()) {
+      skipped.push({ point, name, reason: "not a regular file" });
+      continue;
+    }
+    try {
+      accessSync2(path, constants2.X_OK);
+    } catch {
+      skipped.push({ point, name, reason: "not executable" });
+      continue;
+    }
+    let real2 = path;
+    try {
+      real2 = realpathSync2(path);
+    } catch {
+    }
+    const rel = relative(root, real2);
+    scripts.push({ point, name, path, source: rel.startsWith("..") ? real2 : rel });
+  }
+  return { scripts, skipped };
+}
+function configSnapshot(root, text) {
+  const p = gitPath(root, "opsbot-config.json");
+  try {
+    writeFileSync(p, text);
+  } catch {
+    mkdirSync(join4(root, ".git"), { recursive: true });
+    writeFileSync(p, text);
+  }
+  return p;
+}
+function baseEnv(root, settings, configPath, point, extra = {}) {
+  return {
+    ...process.env,
+    OPSBOT_ROOT: root,
+    OPSBOT_CONFIG: configPath,
+    OPSBOT_NAME: settings.name,
+    OPSBOT_MARK: settings.mark,
+    OPSBOT_HOOK: point,
+    ...extra
+  };
+}
+function runScript(script, root, env, input) {
+  return run(script.path, [], { cwd: root, env, input, timeoutMs: SCRIPT_TIMEOUT_MS });
+}
+var OPSBOT_D, POINTS, POINT_DIRS, SCRIPT_TIMEOUT_MS;
+var init_lifecycle = __esm({
+  "src/opsbot-core/lifecycle.ts"() {
+    "use strict";
+    init_repo();
+    OPSBOT_D = "opsbot.d";
+    POINTS = ["heartbeat", "monitor", "cycle.begin", "cycle.end", "wake", "escalate", "due"];
+    POINT_DIRS = {
+      heartbeat: "heartbeat.d",
+      monitor: "monitor.d",
+      "cycle.begin": "cycle.d/begin",
+      "cycle.end": "cycle.d/end",
+      wake: "wake.d",
+      escalate: "escalate.d",
+      due: "due.d"
+    };
+    SCRIPT_TIMEOUT_MS = 3e5;
+  }
+});
+
 // src/opsbot-core/state.ts
-import { appendFileSync, existsSync as existsSync5, mkdirSync, readFileSync as readFileSync3, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
-import { dirname as dirname3, join as join4 } from "node:path";
+import { appendFileSync, existsSync as existsSync6, mkdirSync as mkdirSync2, readFileSync as readFileSync3, rmSync, statSync as statSync2, truncateSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { dirname as dirname3, join as join5 } from "node:path";
 function paths(root) {
   return {
-    log: join4(root, CYCLE_LOG),
-    seen: join4(root, SEEN_FILE),
-    watermark: join4(root, WATERMARK_FILE),
-    outages: join4(root, OUTAGES_FILE),
+    log: join5(root, CYCLE_LOG),
+    seen: join5(root, SEEN_FILE),
+    watermark: join5(root, WATERMARK_FILE),
+    outages: join5(root, OUTAGES_FILE),
     lock: gitPath(root, LOCK_NAME)
   };
 }
 function readJsonl(file) {
-  if (!existsSync5(file)) return [];
+  if (!existsSync6(file)) return [];
   const out = [];
   for (const line of readFileSync3(file, "utf8").split("\n")) {
     if (!line.trim()) continue;
@@ -2561,19 +2652,19 @@ function readJsonl(file) {
   return out;
 }
 function appendJsonl(file, obj) {
-  mkdirSync(dirname3(file), { recursive: true });
+  mkdirSync2(dirname3(file), { recursive: true });
   appendFileSync(file, `${JSON.stringify(obj)}
 `);
 }
 function fileSize(file) {
   try {
-    return statSync(file).size;
+    return statSync2(file).size;
   } catch {
     return 0;
   }
 }
 function truncateTo(file, size) {
-  if (!existsSync5(file)) return;
+  if (!existsSync6(file)) return;
   if (size === 0 && fileSize(file) > 0) truncateSync(file, 0);
   else truncateSync(file, size);
 }
@@ -2637,7 +2728,7 @@ function recordOutageEnd(root, started, ended) {
 }
 function readWatermark(root) {
   const f = paths(root).watermark;
-  if (!existsSync5(f)) return null;
+  if (!existsSync6(f)) return null;
   const line = readFileSync3(f, "utf8").split("\n")[0]?.trim() ?? "";
   return line || null;
 }
@@ -2646,26 +2737,26 @@ function validWatermark(wm) {
 }
 function writeWatermark(root, wm) {
   const f = paths(root).watermark;
-  mkdirSync(dirname3(f), { recursive: true });
-  writeFileSync(f, `${wm}
+  mkdirSync2(dirname3(f), { recursive: true });
+  writeFileSync2(f, `${wm}
 `);
 }
 function readSeen(root) {
   const f = paths(root).seen;
-  if (!existsSync5(f)) return /* @__PURE__ */ new Set();
+  if (!existsSync6(f)) return /* @__PURE__ */ new Set();
   return new Set(
     readFileSync3(f, "utf8").split("\n").filter((l) => l !== "")
   );
 }
 function appendSeen(root, keys) {
   const f = paths(root).seen;
-  mkdirSync(dirname3(f), { recursive: true });
+  mkdirSync2(dirname3(f), { recursive: true });
   appendFileSync(f, keys.map((k) => `${k}
 `).join(""));
 }
 function readLock(root) {
   const f = paths(root).lock;
-  if (!existsSync5(f)) return { hold: null, raw: false };
+  if (!existsSync6(f)) return { hold: null, raw: false };
   try {
     const v = JSON.parse(readFileSync3(f, "utf8"));
     return {
@@ -2737,10 +2828,10 @@ function takeLock(root) {
     started: nowIso()
   };
   try {
-    writeFileSync(f, `${JSON.stringify(hold)}
+    writeFileSync2(f, `${JSON.stringify(hold)}
 `, { flag: "wx" });
     if (hold.session) try {
-      writeFileSync(loopSessionFile(root), `${hold.session}
+      writeFileSync2(loopSessionFile(root), `${hold.session}
 `);
     } catch {
     }
@@ -2765,431 +2856,6 @@ var init_state = __esm({
     OUTAGE_KINDS = ["failed-turn", "refused", "plan-limit", "session-ended", "stopped"];
     CHECK_OUTCOMES = ["nothing-new", "new", "degraded"];
     CYCLE_OUTCOMES = [...CHECK_OUTCOMES, "finished"];
-  }
-});
-
-// src/opsbot-core/commands/home.ts
-function age(ms) {
-  const m = Math.floor(ms / 6e4);
-  if (m < 60) return `${m} min ago`;
-  const h = Math.floor(m / 60);
-  if (h < 48) return `${h} h ${m % 60} min ago`;
-  return `${Math.floor(h / 24)} days ago`;
-}
-function homeCommand() {
-  const cli = cliInvocation();
-  const root = findRoot();
-  if (!root) {
-    return {
-      bot: "not inside a git checkout",
-      help: [`Run \`${cli}\` from the bot's repo (or set OPSBOT_ROOT)`]
-    };
-  }
-  const s = trySettings(root);
-  if (!s) {
-    return {
-      bot: "no valid opsbot.json in this repo",
-      help: [
-        "Copy the skill's templates/opsbot.json to the repo root as opsbot.json, fill it in, and commit it",
-        `Run \`${cli} settings validate\` to see what is wrong`
-      ]
-    };
-  }
-  const now = nowMs();
-  const lines = readCycleLog(root);
-  const last = [...lines].reverse().find((l) => ["nothing-new", "new", "degraded", "finished"].includes(l.outcome));
-  const check = lastCheck(lines);
-  const lock = judgeLock(root, s.lock_max_minutes);
-  const open5 = outages(root).filter((o) => o.ended === null).length;
-  const failed = check && Array.isArray(check.failed) ? check.failed.length : 0;
-  const lastAt = last ? parseIso(last.at) : null;
-  return {
-    bot: `${s.mark} ${s.name}`,
-    last_cycle: last ? `${last.outcome} \xB7 ${last.at}${lastAt !== null ? ` (${age(now - lastAt)})` : ""}` : "none logged yet",
-    lock: lock.state === "free" ? "free" : lock.state === "held" ? `held by session ${lock.hold.session || "unknown"} since ${lock.hold.started}` : `abandoned: ${lock.note}`,
-    next_wake: delayLine(nextDelay(s, lines, now)),
-    failed_inputs: failed,
-    open_outages: open5,
-    help: [
-      `Run \`${cli} cycle begin\` to start a cycle`,
-      `Run \`${cli} log tail\` for recent cycles, \`${cli} hooks list\` for what runs at each point`,
-      `Run \`${cli} --help\` for every command`
-    ]
-  };
-}
-var init_home = __esm({
-  "src/opsbot-core/commands/home.ts"() {
-    "use strict";
-    init_cadence();
-    init_invocation();
-    init_repo();
-    init_settings();
-    init_state();
-  }
-});
-
-// src/opsbot-core/args.ts
-function parseArgs(args, spec, usage) {
-  const bool = spec.bool ?? [];
-  const value = spec.value ?? [];
-  const positionals = [];
-  const flags = {};
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.startsWith("--")) {
-      const eq = a.indexOf("=");
-      const name = eq > 0 ? a.slice(2, eq) : a.slice(2);
-      if (bool.includes(name)) {
-        if (eq > 0) throw usageError(`--${name} takes no value`, usage);
-        flags[name] = true;
-      } else if (value.includes(name)) {
-        const v = eq > 0 ? a.slice(eq + 1) : args[++i];
-        if (v === void 0 || eq < 0 && v.startsWith("--")) throw usageError(`--${name} needs a value`, usage);
-        flags[name] = v;
-      } else {
-        const valid = [...value, ...bool].map((f) => `--${f}`).join(", ");
-        throw usageError(`unknown flag --${name}`, usage, valid ? `valid flags here: ${valid}` : "this command takes no flags");
-      }
-    } else {
-      positionals.push(a);
-    }
-  }
-  if (positionals.length > (spec.maxPositionals ?? 0)) {
-    throw usageError(`unexpected argument ${JSON.stringify(positionals[spec.maxPositionals ?? 0])}`, usage);
-  }
-  return { positionals, flags };
-}
-function usageError(message, usage, extra) {
-  const help = [`${cliInvocation()} ${usage}`];
-  if (extra) help.unshift(extra);
-  return new AxiError(message, "VALIDATION_ERROR", help);
-}
-function intFlag(flags, name, usage, opts = {}) {
-  const v = flags[name];
-  if (v === void 0) return void 0;
-  if (typeof v !== "string" || !/^\d+$/.test(v)) throw usageError(`--${name} must be a whole number`, usage);
-  const n = Number(v);
-  if (opts.min !== void 0 && n < opts.min) throw usageError(`--${name} must be at least ${opts.min}`, usage);
-  if (opts.max !== void 0 && n > opts.max) throw usageError(`--${name} must be at most ${opts.max}`, usage);
-  return n;
-}
-function setExit(code) {
-  process.exitCode = code;
-}
-var init_args = __esm({
-  "src/opsbot-core/args.ts"() {
-    "use strict";
-    init_dist2();
-    init_invocation();
-  }
-});
-
-// src/opsbot-core/lifecycle.ts
-import { accessSync as accessSync2, constants as constants2, existsSync as existsSync6, mkdirSync as mkdirSync2, readdirSync, realpathSync as realpathSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join5, relative } from "node:path";
-function parsePoint(s) {
-  const t = s.replace(/\/+$/, "");
-  for (const p of POINTS) {
-    if (p === t || POINT_DIRS[p] === t || POINT_DIRS[p] === `${t}.d` || `cycle.d/${t}` === POINT_DIRS[p]) return p;
-  }
-  return null;
-}
-function discover(root, point) {
-  const dir = join5(root, OPSBOT_D, POINT_DIRS[point]);
-  const scripts = [];
-  const skipped = [];
-  if (!existsSync6(dir)) return { scripts, skipped };
-  const names = readdirSync(dir).sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
-  for (const name of names) {
-    if (name.startsWith(".")) continue;
-    const path = join5(dir, name);
-    let st;
-    try {
-      st = statSync2(path);
-    } catch {
-      skipped.push({ point, name, reason: "a broken link" });
-      continue;
-    }
-    if (st.isDirectory()) continue;
-    if (!st.isFile()) {
-      skipped.push({ point, name, reason: "not a regular file" });
-      continue;
-    }
-    try {
-      accessSync2(path, constants2.X_OK);
-    } catch {
-      skipped.push({ point, name, reason: "not executable" });
-      continue;
-    }
-    let real2 = path;
-    try {
-      real2 = realpathSync2(path);
-    } catch {
-    }
-    const rel = relative(root, real2);
-    scripts.push({ point, name, path, source: rel.startsWith("..") ? real2 : rel });
-  }
-  return { scripts, skipped };
-}
-function configSnapshot(root, text) {
-  const p = gitPath(root, "opsbot-config.json");
-  try {
-    writeFileSync2(p, text);
-  } catch {
-    mkdirSync2(join5(root, ".git"), { recursive: true });
-    writeFileSync2(p, text);
-  }
-  return p;
-}
-function baseEnv(root, settings, configPath, point, extra = {}) {
-  return {
-    ...process.env,
-    OPSBOT_ROOT: root,
-    OPSBOT_CONFIG: configPath,
-    OPSBOT_NAME: settings.name,
-    OPSBOT_MARK: settings.mark,
-    OPSBOT_HOOK: point,
-    ...extra
-  };
-}
-function runScript(script, root, env, input) {
-  return run(script.path, [], { cwd: root, env, input, timeoutMs: SCRIPT_TIMEOUT_MS });
-}
-var OPSBOT_D, POINTS, POINT_DIRS, SCRIPT_TIMEOUT_MS;
-var init_lifecycle = __esm({
-  "src/opsbot-core/lifecycle.ts"() {
-    "use strict";
-    init_repo();
-    OPSBOT_D = "opsbot.d";
-    POINTS = ["heartbeat", "monitor", "cycle.begin", "cycle.end", "wake", "escalate", "due"];
-    POINT_DIRS = {
-      heartbeat: "heartbeat.d",
-      monitor: "monitor.d",
-      "cycle.begin": "cycle.d/begin",
-      "cycle.end": "cycle.d/end",
-      wake: "wake.d",
-      escalate: "escalate.d",
-      due: "due.d"
-    };
-    SCRIPT_TIMEOUT_MS = 3e5;
-  }
-});
-
-// src/opsbot-core/commands/check.ts
-import { existsSync as existsSync7, rmSync as rmSync2 } from "node:fs";
-function gateWordIn(text, word) {
-  if (!/^[A-Z]{3,}$/.test(word)) return false;
-  return new RegExp(`(?<![\\p{L}\\p{N}])${word}(?![\\p{L}\\p{N}])`, "u").test(text ?? "");
-}
-function parseItems(stdout, input) {
-  const items = [];
-  let bad = 0;
-  for (const line of stdout.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const v = JSON.parse(line);
-      const keysOk = v?.keys === void 0 || Array.isArray(v.keys) && v.keys.every((k) => typeof k === "string" && k !== "");
-      if (v && typeof v === "object" && !Array.isArray(v) && typeof v.key === "string" && v.key !== "" && keysOk) {
-        items.push({ ...v, input });
-      } else bad++;
-    } catch {
-      bad++;
-    }
-  }
-  return { items, bad };
-}
-function itemKeys(it) {
-  return [it.key, ...it.keys ?? []];
-}
-function renderItem(it, n, total2, gateWord) {
-  const out = { n: `${n}/${total2}`, input: it.input };
-  for (const f of CORE_FIELDS) {
-    if (it[f] === void 0) continue;
-    out[f] = f === "kind" && typeof it.kind === "string" ? it.kind.toUpperCase() : it[f];
-  }
-  if (gateWord && typeof it.text === "string" && gateWordIn(it.text, gateWord)) out.gate_word = "present";
-  for (const [k, v] of Object.entries(it)) {
-    if (k === "input" || k === "text" || k === "report" || CORE_FIELDS.includes(k)) continue;
-    out[k] = v;
-  }
-  if (it.text !== void 0) out.text = it.text;
-  return out;
-}
-function runPeek(root) {
-  const r = sweep(root, { commit: false, peek: true });
-  if (!("peek" in r)) throw new Error("unreachable: a peek returned a check");
-  return r.peek;
-}
-function runCheck(root, opts) {
-  const r = sweep(root, { commit: opts.commit, peek: false });
-  if (!("check" in r)) throw new Error("unreachable: a check returned a peek");
-  return r.check;
-}
-function sweep(root, opts) {
-  if (!hasHead(root)) {
-    throw new AxiError("no commit at HEAD in this checkout", "CANNOT_RUN", ["Commit opsbot.json first"]);
-  }
-  const { settings, text } = loadSettings(root);
-  const p = paths(root);
-  const startMs = nowMs();
-  const NOW = iso(startMs);
-  const inputs = [];
-  const failed = (input, error, n2 = 0, quiet = 0) => inputs.push({ input, ok: false, new: n2, quiet, error });
-  let wm = readWatermark(root);
-  let sinceMs;
-  if (wm !== null && validWatermark(wm)) {
-    sinceMs = parseIso(wm) - MARGIN_MINUTES * 6e4;
-  } else {
-    if (wm !== null) failed("watermark", "the watermark file does not hold one ISO-8601 UTC time");
-    wm = null;
-    sinceMs = startMs - FIRST_RUN_HOURS * 36e5;
-  }
-  const SINCE = iso(sinceMs);
-  const seen = readSeen(root);
-  const configPath = configSnapshot(root, text);
-  const { scripts } = discover(root, "heartbeat");
-  if (scripts.length === 0) {
-    failed("heartbeat.d", "no heartbeat scripts are installed, so no stream can be read");
-  }
-  const items = [];
-  const recorded = [];
-  const recordedSet = /* @__PURE__ */ new Set();
-  for (const s of scripts) {
-    const env = baseEnv(root, settings, configPath, "heartbeat", {
-      OPSBOT_SINCE: SINCE,
-      OPSBOT_SEEN: p.seen,
-      OPSBOT_WATERMARK: wm ?? "",
-      ...opts.peek ? { OPSBOT_PEEK: "1" } : {}
-    });
-    const r = runScript(s, root, env);
-    const { items: got, bad } = parseItems(r.stdout, s.name);
-    const fresh = [];
-    let quiet = 0;
-    for (const it of got) {
-      const ks = itemKeys(it);
-      if (!ks.some((k) => !seen.has(k) && !recordedSet.has(k))) continue;
-      for (const k of ks) {
-        if (seen.has(k) || recordedSet.has(k)) continue;
-        recordedSet.add(k);
-        recorded.push(k);
-      }
-      if (it.report === false) quiet++;
-      else fresh.push(it);
-    }
-    items.push(...fresh);
-    if (r.code !== 0) {
-      failed(s.name, `exit ${r.code}: ${firstLine(r.stderr) || "no message"}`, fresh.length, quiet);
-    } else if (bad > 0) {
-      failed(s.name, `${bad} line${bad === 1 ? "" : "s"} of output not a heartbeat item ({key, at, conv, kind, from, text})`, fresh.length, quiet);
-    } else {
-      inputs.push({ input: s.name, ok: true, new: fresh.length, quiet });
-    }
-  }
-  const NEW = items.length;
-  const realInputs = () => inputs.filter((i) => i.input !== "watermark" && i.input !== "commit" && i.input !== "heartbeat.d");
-  if (opts.peek) {
-    const bad = inputs.filter((i) => !i.ok);
-    const code2 = bad.length ? 20 : NEW > 0 ? 10 : 0;
-    const outcome2 = code2 === 20 ? "degraded" : code2 === 10 ? "new" : "nothing-new";
-    const ats = items.map((it) => typeof it.at === "string" ? parseIso(it.at) : null).filter((t) => t !== null);
-    const n2 = realInputs().length;
-    const line2 = code2 === 0 ? `nothing new \xB7 ${n2} inputs \xB7 nothing recorded` : code2 === 10 ? `new \xB7 ${NEW} new \xB7 ${n2} inputs \xB7 nothing recorded` : `degraded \xB7 ${bad.length} failed \xB7 ${NEW} new \xB7 ${n2} inputs \xB7 nothing recorded`;
-    return { peek: { code: code2, outcome: outcome2, line: line2, inputs, new: NEW, earliest: ats.length ? iso(Math.min(...ats)) : null } };
-  }
-  const blocked = opts.commit ? blockedBy(root) : null;
-  if (blocked) failed("commit", `cannot commit: ${blocked}`);
-  const failedList = () => inputs.filter((i) => !i.ok).map((i) => ({ input: i.input, error: i.error ?? "" }));
-  let outcome = failedList().length ? "degraded" : NEW > 0 ? "new" : "nothing-new";
-  const logSize = fileSize(p.log);
-  const seenSize = fileSize(p.seen);
-  const oldWm = readWatermark(root);
-  const writeState = () => {
-    appendSeen(root, recorded);
-    if (outcome === "nothing-new") writeWatermark(root, NOW);
-    const cur2 = readWatermark(root);
-    const inputsObj = {};
-    for (const i of realInputs()) {
-      inputsObj[i.input] = { ok: i.ok, new: i.new };
-      if (i.quiet > 0) inputsObj[i.input].quiet = i.quiet;
-    }
-    appendJsonl(p.log, {
-      at: NOW,
-      outcome,
-      inputs: inputsObj,
-      new: NEW,
-      failed: failedList(),
-      watermark: cur2 ?? null
-    });
-  };
-  writeState();
-  if (opts.commit && !blocked) {
-    const subject = outcome === "nothing-new" ? "nothing new" : outcome === "new" ? `${NEW} new` : `degraded, ${NEW} new`;
-    const files = [p.seen, p.log];
-    if (existsSync7(p.watermark)) files.push(p.watermark);
-    if (existsSync7(p.outages)) files.push(p.outages);
-    files.push(...changedCommitPaths(root, settings.commit_paths, files));
-    const why = commitOnly(root, files, `chore(cycle): ${subject}`);
-    if (why) {
-      truncateTo(p.log, logSize);
-      truncateTo(p.seen, seenSize);
-      if (oldWm !== null) writeWatermark(root, oldWm);
-      else rmSync2(p.watermark, { force: true });
-      failed("commit", `cannot commit: ${why}`);
-      outcome = "degraded";
-      writeState();
-    }
-  }
-  const cur = readWatermark(root);
-  const n = realInputs().length;
-  const code = outcome === "nothing-new" ? 0 : outcome === "new" ? 10 : 20;
-  if (outcome === "nothing-new") {
-    const line2 = `nothing new \xB7 ${n} inputs \xB7 watermark ${cur}`;
-    return { check: { code, outcome, line: line2, output: { check: line2 } } };
-  }
-  const fl = failedList();
-  const line = outcome === "degraded" ? `degraded \xB7 ${fl.length} failed \xB7 ${NEW} new \xB7 ${n} inputs \xB7 watermark ${cur ?? "none"} (not advanced)` : `new \xB7 ${NEW} new \xB7 ${n} inputs \xB7 watermark ${cur ?? "none"} (not advanced)`;
-  const output = { check: line };
-  if (fl.length) output.failed = fl;
-  if (NEW > 0) output.items = items.map((it, i) => renderItem(it, i + 1, NEW, settings.gate_word));
-  return { check: { code, outcome, line, output } };
-}
-function checkCommand(args) {
-  const { flags } = parseArgs(args, { bool: ["no-commit", "peek"] }, CHECK_USAGE);
-  const root = requireRoot();
-  if (flags.peek) {
-    if (flags["no-commit"]) throw new AxiError("--peek commits nothing already; drop --no-commit", "VALIDATION_ERROR", [CHECK_USAGE]);
-    if (!hasHead(root)) throw new AxiError("no commit at HEAD in this checkout", "CANNOT_RUN", ["Commit opsbot.json first"]);
-    const r2 = runPeek(root);
-    setExit(r2.code);
-    const out = {
-      peek: r2.line,
-      inputs: r2.inputs.map((i) => ({ input: i.input, ok: i.ok, new: i.new, error: i.error ?? "" }))
-    };
-    if (r2.code !== 0) out.help = [`Nothing was recorded; run \`${cliInvocation()} cycle begin\` to work the items`];
-    return out;
-  }
-  const r = runCheck(root, { commit: !flags["no-commit"] });
-  setExit(r.code);
-  if (r.code !== 0) {
-    r.output.help = [`Work the items, then run \`${cliInvocation()} cycle end --records <n>\`${r.code === 20 ? " (add --degraded when an input could not be read)" : ""}`];
-  }
-  return r.output;
-}
-var MARGIN_MINUTES, FIRST_RUN_HOURS, CHECK_USAGE, CORE_FIELDS;
-var init_check = __esm({
-  "src/opsbot-core/commands/check.ts"() {
-    "use strict";
-    init_dist2();
-    init_args();
-    init_invocation();
-    init_lifecycle();
-    init_repo();
-    init_settings();
-    init_state();
-    MARGIN_MINUTES = 30;
-    FIRST_RUN_HOURS = 24;
-    CHECK_USAGE = "check [--no-commit] | check --peek";
-    CORE_FIELDS = ["key", "at", "conv", "kind", "from"];
   }
 });
 
@@ -3473,7 +3139,7 @@ var init_reader = __esm({
 
 // node_modules/agent-recall-axi/dist/src/lib/adapters/claude-code/classify.js
 import { basename as basename3, join as join6 } from "node:path";
-import { existsSync as existsSync8 } from "node:fs";
+import { existsSync as existsSync7 } from "node:fs";
 function isSilentType(type) {
   if (type === void 0)
     return true;
@@ -3712,10 +3378,10 @@ function parsePointer(text, sidecar) {
     preview = text.slice(pv.index + pv[0].length);
   preview = preview.replace(/\s*<\/persisted-output>\s*$/, "").replace(/\n?\.\.\.\s*$/, "");
   let path = stored;
-  let exists = existsSync8(stored);
+  let exists = existsSync7(stored);
   if (sidecar) {
     const relocated = join6(sidecar, "tool-results", basename3(stored));
-    if (relocated !== stored && existsSync8(relocated)) {
+    if (relocated !== stored && existsSync7(relocated)) {
       path = relocated;
       exists = true;
     }
@@ -5261,15 +4927,15 @@ async function indexEntry(session, mtimeMs) {
   const e = (await readSessionsIndex(dir)).get(session.id);
   if (e?.fileMtime === void 0)
     return void 0;
-  let mtime = mtimeMs;
-  if (mtime === void 0) {
+  let mtime2 = mtimeMs;
+  if (mtime2 === void 0) {
     try {
-      mtime = (await stat5(session.path)).mtimeMs;
+      mtime2 = (await stat5(session.path)).mtimeMs;
     } catch {
       return void 0;
     }
   }
-  return Math.trunc(e.fileMtime) === Math.trunc(mtime) ? e : void 0;
+  return Math.trunc(e.fileMtime) === Math.trunc(mtime2) ? e : void 0;
 }
 async function headerTitle(session) {
   return await customTitleFile(session) ?? (await indexEntry(session))?.summary ?? await headHuman(session);
@@ -5309,13 +4975,13 @@ async function humanAt(session, loc) {
     return void 0;
   }
 }
-async function build(session, m, size, mtime) {
+async function build(session, m, size, mtime2) {
   const out = {
     ...m.counts,
     lines: m.seq,
     bytes: size,
-    mtime: mtime.toISOString(),
-    last: m.stats.max ?? mtime.toISOString()
+    mtime: mtime2.toISOString(),
+    last: m.stats.max ?? mtime2.toISOString()
   };
   if (m.stats.first)
     out.started = m.stats.first;
@@ -5588,14 +5254,14 @@ async function latest(scope) {
   let best;
   for (const project of resolved.projects) {
     for await (const s of claudeCode.listSessions(project, { subagents: false })) {
-      let mtime;
+      let mtime2;
       try {
-        mtime = (await stat7(s.path)).mtimeMs;
+        mtime2 = (await stat7(s.path)).mtimeMs;
       } catch {
         continue;
       }
-      if (!best || mtime > best.mtime || mtime === best.mtime && s.id > best.s.id)
-        best = { s, mtime };
+      if (!best || mtime2 > best.mtime || mtime2 === best.mtime && s.id > best.s.id)
+        best = { s, mtime: mtime2 };
     }
   }
   if (!best)
@@ -7659,8 +7325,8 @@ async function homeListing(scope, opts = {}) {
   const indexes = /* @__PURE__ */ new Map();
   const sessions = [];
   const budget = { left: STATS_APPEND };
-  for (const { s, mtime } of found2.slice(0, limit)) {
-    const mtimeIso = new Date(mtime).toISOString();
+  for (const { s, mtime: mtime2 } of found2.slice(0, limit)) {
+    const mtimeIso = new Date(mtime2).toISOString();
     const stats = await cachedStats(s, { cache: opts.cache ?? {}, budget }).catch(() => void 0);
     if (stats) {
       const row2 = { session: s, mtime: mtimeIso, last: stats.last, turns: stats.turns, source: "stats" };
@@ -7675,7 +7341,7 @@ async function homeListing(scope, opts = {}) {
       if (!indexes.has(dir))
         indexes.set(dir, await readSessionsIndex(dir));
       const e = indexes.get(dir).get(s.id);
-      if (e?.fileMtime !== void 0 && Math.trunc(e.fileMtime) === Math.trunc(mtime))
+      if (e?.fileMtime !== void 0 && Math.trunc(e.fileMtime) === Math.trunc(mtime2))
         entry = e;
     }
     const row = { session: s, mtime: mtimeIso, last: entry?.modified ?? mtimeIso, source: entry ? "index" : "file" };
@@ -7692,7 +7358,7 @@ async function homeListing(scope, opts = {}) {
   return out;
 }
 var LAST_HUMAN_BYTES, STATS_APPEND;
-var init_home2 = __esm({
+var init_home = __esm({
   "node_modules/agent-recall-axi/dist/src/lib/home.js"() {
     init_adapter();
     init_claude_code();
@@ -8080,18 +7746,18 @@ var init_lib = __esm({
     init_tools();
     init_resume();
     init_stats();
-    init_home2();
+    init_home();
     init_find();
     init_recall();
   }
 });
 
 // src/opsbot-core/transcript.ts
-import { closeSync, existsSync as existsSync9, openSync, readFileSync as readFileSync5, readSync, statSync as statSync4 } from "node:fs";
+import { closeSync, existsSync as existsSync8, openSync, readFileSync as readFileSync5, readSync, statSync as statSync4 } from "node:fs";
 function readEvents(path, maxBytes = TAIL_BYTES) {
   let text;
   try {
-    if (!existsSync9(path)) return [];
+    if (!existsSync8(path)) return [];
     const size = statSync4(path).size;
     if (size <= maxBytes) text = readFileSync5(path, "utf8");
     else {
@@ -8435,7 +8101,7 @@ var init_wake = __esm({
 });
 
 // src/opsbot-core/sleep.ts
-import { existsSync as existsSync10, readFileSync as readFileSync6, rmSync as rmSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync9, readFileSync as readFileSync6, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "node:fs";
 function sleepFile(root) {
   return gitPath(root, SLEEP_STATE);
 }
@@ -8455,7 +8121,7 @@ function writeSleep(root, st) {
 `);
 }
 function clearSleep(root) {
-  rmSync3(sleepFile(root), { force: true });
+  rmSync2(sleepFile(root), { force: true });
 }
 function lineCount(file) {
   try {
@@ -8611,6 +8277,342 @@ var init_sleep = __esm({
     init_wake();
     SLEEP_STATE = "opsbot-sleep";
     hhmm3 = (t) => `${t.slice(11, 16)}Z`;
+  }
+});
+
+// src/opsbot-core/commands/home.ts
+function age(ms) {
+  const m = Math.floor(ms / 6e4);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h} h ${m % 60} min ago`;
+  return `${Math.floor(h / 24)} days ago`;
+}
+function homeCommand() {
+  const cli = cliInvocation();
+  const root = findRoot();
+  if (!root) {
+    return {
+      bot: "not inside a git checkout",
+      help: [`Run \`${cli}\` from the bot's repo (or set OPSBOT_ROOT)`]
+    };
+  }
+  const s = trySettings(root);
+  if (!s) {
+    return {
+      bot: "no valid opsbot.json in this repo",
+      help: [
+        "Copy the skill's templates/opsbot.json to the repo root as opsbot.json, fill it in, and commit it",
+        `Run \`${cli} settings validate\` to see what is wrong`
+      ]
+    };
+  }
+  const now = nowMs();
+  const lines = readCycleLog(root);
+  const last = [...lines].reverse().find((l) => ["nothing-new", "new", "degraded", "finished"].includes(l.outcome));
+  const check = lastCheck(lines);
+  const lock = judgeLock(root, s.lock_max_minutes);
+  const open5 = outages(root).filter((o) => o.ended === null).length;
+  const failed = check && Array.isArray(check.failed) ? check.failed.length : 0;
+  const lastAt = last ? parseIso(last.at) : null;
+  return {
+    bot: `${s.mark} ${s.name}`,
+    last_cycle: last ? `${last.outcome} \xB7 ${last.at}${lastAt !== null ? ` (${age(now - lastAt)})` : ""}` : "none logged yet",
+    lock: lock.state === "free" ? "free" : lock.state === "held" ? `held by session ${lock.hold.session || "unknown"} since ${lock.hold.started}` : `abandoned: ${lock.note}`,
+    next_wake: delayLine(nextDelay(s, lines, now)),
+    failed_inputs: failed,
+    open_outages: open5,
+    ...s.sleep ? { sleep: ((st) => st ? sleepStatusLine(s, st) : "awake")(readSleep(root)) } : {},
+    help: [
+      `Run \`${cli} cycle begin\` to start a cycle`,
+      `Run \`${cli} log tail\` for recent cycles, \`${cli} hooks list\` for what runs at each point`,
+      `Run \`${cli} --help\` for every command`
+    ]
+  };
+}
+var init_home2 = __esm({
+  "src/opsbot-core/commands/home.ts"() {
+    "use strict";
+    init_cadence();
+    init_invocation();
+    init_repo();
+    init_settings();
+    init_sleep();
+    init_state();
+  }
+});
+
+// src/opsbot-core/args.ts
+function parseArgs(args, spec, usage) {
+  const bool = spec.bool ?? [];
+  const value = spec.value ?? [];
+  const positionals = [];
+  const flags = {};
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith("--")) {
+      const eq = a.indexOf("=");
+      const name = eq > 0 ? a.slice(2, eq) : a.slice(2);
+      if (bool.includes(name)) {
+        if (eq > 0) throw usageError(`--${name} takes no value`, usage);
+        flags[name] = true;
+      } else if (value.includes(name)) {
+        const v = eq > 0 ? a.slice(eq + 1) : args[++i];
+        if (v === void 0 || eq < 0 && v.startsWith("--")) throw usageError(`--${name} needs a value`, usage);
+        flags[name] = v;
+      } else {
+        const valid = [...value, ...bool].map((f) => `--${f}`).join(", ");
+        throw usageError(`unknown flag --${name}`, usage, valid ? `valid flags here: ${valid}` : "this command takes no flags");
+      }
+    } else {
+      positionals.push(a);
+    }
+  }
+  if (positionals.length > (spec.maxPositionals ?? 0)) {
+    throw usageError(`unexpected argument ${JSON.stringify(positionals[spec.maxPositionals ?? 0])}`, usage);
+  }
+  return { positionals, flags };
+}
+function usageError(message, usage, extra) {
+  const help = [`${cliInvocation()} ${usage}`];
+  if (extra) help.unshift(extra);
+  return new AxiError(message, "VALIDATION_ERROR", help);
+}
+function intFlag(flags, name, usage, opts = {}) {
+  const v = flags[name];
+  if (v === void 0) return void 0;
+  if (typeof v !== "string" || !/^\d+$/.test(v)) throw usageError(`--${name} must be a whole number`, usage);
+  const n = Number(v);
+  if (opts.min !== void 0 && n < opts.min) throw usageError(`--${name} must be at least ${opts.min}`, usage);
+  if (opts.max !== void 0 && n > opts.max) throw usageError(`--${name} must be at most ${opts.max}`, usage);
+  return n;
+}
+function setExit(code) {
+  process.exitCode = code;
+}
+var init_args = __esm({
+  "src/opsbot-core/args.ts"() {
+    "use strict";
+    init_dist2();
+    init_invocation();
+  }
+});
+
+// src/opsbot-core/commands/check.ts
+import { existsSync as existsSync10, rmSync as rmSync3 } from "node:fs";
+function gateWordIn(text, word) {
+  if (!/^[A-Z]{3,}$/.test(word)) return false;
+  return new RegExp(`(?<![\\p{L}\\p{N}])${word}(?![\\p{L}\\p{N}])`, "u").test(text ?? "");
+}
+function parseItems(stdout, input) {
+  const items = [];
+  let bad = 0;
+  for (const line of stdout.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const v = JSON.parse(line);
+      const keysOk = v?.keys === void 0 || Array.isArray(v.keys) && v.keys.every((k) => typeof k === "string" && k !== "");
+      if (v && typeof v === "object" && !Array.isArray(v) && typeof v.key === "string" && v.key !== "" && keysOk) {
+        items.push({ ...v, input });
+      } else bad++;
+    } catch {
+      bad++;
+    }
+  }
+  return { items, bad };
+}
+function itemKeys(it) {
+  return [it.key, ...it.keys ?? []];
+}
+function renderItem(it, n, total2, gateWord) {
+  const out = { n: `${n}/${total2}`, input: it.input };
+  for (const f of CORE_FIELDS) {
+    if (it[f] === void 0) continue;
+    out[f] = f === "kind" && typeof it.kind === "string" ? it.kind.toUpperCase() : it[f];
+  }
+  if (gateWord && typeof it.text === "string" && gateWordIn(it.text, gateWord)) out.gate_word = "present";
+  for (const [k, v] of Object.entries(it)) {
+    if (k === "input" || k === "text" || k === "report" || CORE_FIELDS.includes(k)) continue;
+    out[k] = v;
+  }
+  if (it.text !== void 0) out.text = it.text;
+  return out;
+}
+function runPeek(root) {
+  const r = sweep(root, { commit: false, peek: true });
+  if (!("peek" in r)) throw new Error("unreachable: a peek returned a check");
+  return r.peek;
+}
+function runCheck(root, opts) {
+  const r = sweep(root, { commit: opts.commit, peek: false });
+  if (!("check" in r)) throw new Error("unreachable: a check returned a peek");
+  return r.check;
+}
+function sweep(root, opts) {
+  if (!hasHead(root)) {
+    throw new AxiError("no commit at HEAD in this checkout", "CANNOT_RUN", ["Commit opsbot.json first"]);
+  }
+  const { settings, text } = loadSettings(root);
+  const p = paths(root);
+  const startMs = nowMs();
+  const NOW = iso(startMs);
+  const inputs = [];
+  const failed = (input, error, n2 = 0, quiet = 0) => inputs.push({ input, ok: false, new: n2, quiet, error });
+  let wm = readWatermark(root);
+  let sinceMs;
+  if (wm !== null && validWatermark(wm)) {
+    sinceMs = parseIso(wm) - MARGIN_MINUTES * 6e4;
+  } else {
+    if (wm !== null) failed("watermark", "the watermark file does not hold one ISO-8601 UTC time");
+    wm = null;
+    sinceMs = startMs - FIRST_RUN_HOURS * 36e5;
+  }
+  const SINCE = iso(sinceMs);
+  const seen = readSeen(root);
+  const configPath = configSnapshot(root, text);
+  const { scripts } = discover(root, "heartbeat");
+  if (scripts.length === 0) {
+    failed("heartbeat.d", "no heartbeat scripts are installed, so no stream can be read");
+  }
+  const items = [];
+  const recorded = [];
+  const recordedSet = /* @__PURE__ */ new Set();
+  for (const s of scripts) {
+    const env = baseEnv(root, settings, configPath, "heartbeat", {
+      OPSBOT_SINCE: SINCE,
+      OPSBOT_SEEN: p.seen,
+      OPSBOT_WATERMARK: wm ?? "",
+      ...opts.peek ? { OPSBOT_PEEK: "1" } : {}
+    });
+    const r = runScript(s, root, env);
+    const { items: got, bad } = parseItems(r.stdout, s.name);
+    const fresh = [];
+    let quiet = 0;
+    for (const it of got) {
+      const ks = itemKeys(it);
+      if (!ks.some((k) => !seen.has(k) && !recordedSet.has(k))) continue;
+      for (const k of ks) {
+        if (seen.has(k) || recordedSet.has(k)) continue;
+        recordedSet.add(k);
+        recorded.push(k);
+      }
+      if (it.report === false) quiet++;
+      else fresh.push(it);
+    }
+    items.push(...fresh);
+    if (r.code !== 0) {
+      failed(s.name, `exit ${r.code}: ${firstLine(r.stderr) || "no message"}`, fresh.length, quiet);
+    } else if (bad > 0) {
+      failed(s.name, `${bad} line${bad === 1 ? "" : "s"} of output not a heartbeat item ({key, at, conv, kind, from, text})`, fresh.length, quiet);
+    } else {
+      inputs.push({ input: s.name, ok: true, new: fresh.length, quiet });
+    }
+  }
+  const NEW = items.length;
+  const realInputs = () => inputs.filter((i) => i.input !== "watermark" && i.input !== "commit" && i.input !== "heartbeat.d");
+  if (opts.peek) {
+    const bad = inputs.filter((i) => !i.ok);
+    const code2 = bad.length ? 20 : NEW > 0 ? 10 : 0;
+    const outcome2 = code2 === 20 ? "degraded" : code2 === 10 ? "new" : "nothing-new";
+    const ats = items.map((it) => typeof it.at === "string" ? parseIso(it.at) : null).filter((t) => t !== null);
+    const n2 = realInputs().length;
+    const line2 = code2 === 0 ? `nothing new \xB7 ${n2} inputs \xB7 nothing recorded` : code2 === 10 ? `new \xB7 ${NEW} new \xB7 ${n2} inputs \xB7 nothing recorded` : `degraded \xB7 ${bad.length} failed \xB7 ${NEW} new \xB7 ${n2} inputs \xB7 nothing recorded`;
+    return { peek: { code: code2, outcome: outcome2, line: line2, inputs, new: NEW, earliest: ats.length ? iso(Math.min(...ats)) : null } };
+  }
+  const blocked = opts.commit ? blockedBy(root) : null;
+  if (blocked) failed("commit", `cannot commit: ${blocked}`);
+  const failedList = () => inputs.filter((i) => !i.ok).map((i) => ({ input: i.input, error: i.error ?? "" }));
+  let outcome = failedList().length ? "degraded" : NEW > 0 ? "new" : "nothing-new";
+  const logSize = fileSize(p.log);
+  const seenSize = fileSize(p.seen);
+  const oldWm = readWatermark(root);
+  const writeState = () => {
+    appendSeen(root, recorded);
+    if (outcome === "nothing-new") writeWatermark(root, NOW);
+    const cur2 = readWatermark(root);
+    const inputsObj = {};
+    for (const i of realInputs()) {
+      inputsObj[i.input] = { ok: i.ok, new: i.new };
+      if (i.quiet > 0) inputsObj[i.input].quiet = i.quiet;
+    }
+    appendJsonl(p.log, {
+      at: NOW,
+      outcome,
+      inputs: inputsObj,
+      new: NEW,
+      failed: failedList(),
+      watermark: cur2 ?? null
+    });
+  };
+  writeState();
+  if (opts.commit && !blocked) {
+    const subject = outcome === "nothing-new" ? "nothing new" : outcome === "new" ? `${NEW} new` : `degraded, ${NEW} new`;
+    const files = [p.seen, p.log];
+    if (existsSync10(p.watermark)) files.push(p.watermark);
+    if (existsSync10(p.outages)) files.push(p.outages);
+    files.push(...changedCommitPaths(root, settings.commit_paths, files));
+    const why = commitOnly(root, files, `chore(cycle): ${subject}`);
+    if (why) {
+      truncateTo(p.log, logSize);
+      truncateTo(p.seen, seenSize);
+      if (oldWm !== null) writeWatermark(root, oldWm);
+      else rmSync3(p.watermark, { force: true });
+      failed("commit", `cannot commit: ${why}`);
+      outcome = "degraded";
+      writeState();
+    }
+  }
+  const cur = readWatermark(root);
+  const n = realInputs().length;
+  const code = outcome === "nothing-new" ? 0 : outcome === "new" ? 10 : 20;
+  if (outcome === "nothing-new") {
+    const line2 = `nothing new \xB7 ${n} inputs \xB7 watermark ${cur}`;
+    return { check: { code, outcome, line: line2, output: { check: line2 } } };
+  }
+  const fl = failedList();
+  const line = outcome === "degraded" ? `degraded \xB7 ${fl.length} failed \xB7 ${NEW} new \xB7 ${n} inputs \xB7 watermark ${cur ?? "none"} (not advanced)` : `new \xB7 ${NEW} new \xB7 ${n} inputs \xB7 watermark ${cur ?? "none"} (not advanced)`;
+  const output = { check: line };
+  if (fl.length) output.failed = fl;
+  if (NEW > 0) output.items = items.map((it, i) => renderItem(it, i + 1, NEW, settings.gate_word));
+  return { check: { code, outcome, line, output } };
+}
+function checkCommand(args) {
+  const { flags } = parseArgs(args, { bool: ["no-commit", "peek"] }, CHECK_USAGE);
+  const root = requireRoot();
+  if (flags.peek) {
+    if (flags["no-commit"]) throw new AxiError("--peek commits nothing already; drop --no-commit", "VALIDATION_ERROR", [CHECK_USAGE]);
+    if (!hasHead(root)) throw new AxiError("no commit at HEAD in this checkout", "CANNOT_RUN", ["Commit opsbot.json first"]);
+    const r2 = runPeek(root);
+    setExit(r2.code);
+    const out = {
+      peek: r2.line,
+      inputs: r2.inputs.map((i) => ({ input: i.input, ok: i.ok, new: i.new, error: i.error ?? "" }))
+    };
+    if (r2.code !== 0) out.help = [`Nothing was recorded; run \`${cliInvocation()} cycle begin\` to work the items`];
+    return out;
+  }
+  const r = runCheck(root, { commit: !flags["no-commit"] });
+  setExit(r.code);
+  if (r.code !== 0) {
+    r.output.help = [`Work the items, then run \`${cliInvocation()} cycle end --records <n>\`${r.code === 20 ? " (add --degraded when an input could not be read)" : ""}`];
+  }
+  return r.output;
+}
+var MARGIN_MINUTES, FIRST_RUN_HOURS, CHECK_USAGE, CORE_FIELDS;
+var init_check = __esm({
+  "src/opsbot-core/commands/check.ts"() {
+    "use strict";
+    init_dist2();
+    init_args();
+    init_invocation();
+    init_lifecycle();
+    init_repo();
+    init_settings();
+    init_state();
+    MARGIN_MINUTES = 30;
+    FIRST_RUN_HOURS = 24;
+    CHECK_USAGE = "check [--no-commit] | check --peek";
+    CORE_FIELDS = ["key", "at", "conv", "kind", "from"];
   }
 });
 
@@ -9194,9 +9196,9 @@ function cycleBegin() {
     releaseLock(root);
     setExit(0);
     const out = { cycle: `${r.line}${why ? ` \xB7 not pushed: ${why}` : ""} \xB7 next ${next2(root, settings)}` };
-    const wake2 = sleep ? [] : wakeReport(root, settings, true);
+    const wake3 = sleep ? [] : wakeReport(root, settings, true);
     if (sleep) out.sleep = sleepFieldLines(settings, sleep);
-    if (wake2.length) out.wake = wake2;
+    if (wake3.length) out.wake = wake3;
     const drift2 = driftLines(root, settings);
     if (drift2.length) out.session = drift2;
     return out;
@@ -9208,8 +9210,8 @@ function cycleBegin() {
       `Work the items; then \`${cliInvocation()} cycle end --records <n>${r.code === 20 ? " --degraded" : ""}\` (the checkout stays held until then)`
     ]
   };
-  const wake = wakeReport(root, settings, false);
-  if (wake.length) held.wake = wake;
+  const wake2 = wakeReport(root, settings, false);
+  if (wake2.length) held.wake = wake2;
   const drift = driftLines(root, settings);
   if (drift.length) held.session = drift;
   return held;
@@ -9311,8 +9313,8 @@ function cycleEnd(args) {
     out.sleep = sleepFieldLines(settings, sleep);
     return out;
   }
-  const wake = wakeReport(root, settings, true);
-  if (wake.length) out.wake = wake;
+  const wake2 = wakeReport(root, settings, true);
+  if (wake2.length) out.wake = wake2;
   return out;
 }
 var init_cycle = __esm({
@@ -9524,12 +9526,20 @@ function watchdogCommand(args) {
   const now = nowMs();
   const watch = settings.liveness.watchdog_minutes;
   const told = gitPath(root, "opsbot-watchdog");
-  const asleep = activeSleep(root, settings);
-  if (asleep) return { watchdog: `asleep \xB7 ${sleepStatusLine(settings, asleep)}; the sleep timer watches` };
   const blocked = blockedBy(root);
   const lines = readCycleLog(root);
   const last = lastCycleAt(lines);
   const open5 = openOutage(root);
+  const asleep = activeSleep(root, settings);
+  if (asleep) {
+    const said = `asleep \xB7 ${sleepStatusLine(settings, asleep)}; the sleep timer watches`;
+    if (open5 && last && last > open5 && !blocked && !dry) {
+      const resumed = lines.find((l) => CYCLE_OUTCOMES.includes(l.outcome) && l.at > open5)?.at ?? last;
+      recordOutageEnd(root, open5, resumed);
+      return { watchdog: `${said} \xB7 outage from ${open5} ended ${resumed}` };
+    }
+    return { watchdog: said };
+  }
   const gap = last ? now - (parseIso(last) ?? now) : null;
   if (gap !== null && gap < watch * 6e4) {
     if (open5 && last > open5) {
@@ -9599,37 +9609,57 @@ function escalate(root, settings, text, message) {
     return { script: s.name, ok: r.code === 0, error: r.code === 0 ? "" : `exit ${r.code}: ${firstLine(r.stderr) || "no message"}` };
   });
 }
+function sessionIdle(root, agent, found2) {
+  switch (found2.status) {
+    case "idle":
+    case "done":
+      return { idle: true, via: "" };
+    case "working": {
+      const log = found2.log ?? sessionPointer(root)?.transcript_path ?? null;
+      const evs = log ? readEvents(log) : [];
+      if (evs.length === 0) return { idle: false, why: `${agent} is working (mid-turn; no session log to check)`, blocked: false };
+      if (!evs.some((e) => e.type === "assistant")) return { idle: false, why: `${agent} is working (mid-turn; the session log's tail shows no turn)`, blocked: false };
+      const t = turnEnded(evs);
+      if (!t.ended) return { idle: false, why: `${agent} is working (mid-turn since ${t.since.slice(11, 16)}Z)`, blocked: false };
+      return { idle: true, via: ` \xB7 the runtime said working, but the session log shows the turn ended${t.at ? ` at ${t.at.slice(11, 16)}Z` : ""} (background work only)` };
+    }
+    case "blocked":
+      return { idle: false, why: `${agent} is blocked at a dialog; a prompt would land in it`, blocked: true };
+    default:
+      return { idle: false, why: `the runtime cannot tell what ${agent} is doing (${found2.status}); treated as busy`, blocked: false };
+  }
+}
 function nudgeCommand(args) {
   const usage = "nudge [--now [--reason TEXT]] [--dry-run]";
   const { flags } = parseArgs(args, { bool: ["now", "dry-run"], value: ["reason"] }, usage);
-  const wake = flags.now === true;
+  const wake2 = flags.now === true;
   const reason = typeof flags.reason === "string" ? flags.reason : "";
-  if (reason && !wake) throw new AxiError("--reason goes with --now", "VALIDATION_ERROR", [usage]);
+  if (reason && !wake2) throw new AxiError("--reason goes with --now", "VALIDATION_ERROR", [usage]);
   const dry = flags["dry-run"] === true;
   const root = requireRoot();
   const { settings } = loadSettings(root);
   const agent = settings.runtime.agent;
   const line = settings.loop.prompt;
   const now = nowMs();
-  const quiet = wake ? settings.liveness.wake_cooldown_minutes : settings.liveness.nudge_minutes;
-  const cooldown = wake ? settings.liveness.wake_cooldown_minutes : settings.liveness.nudge_cooldown_minutes;
-  const marker = gitPath(root, wake ? "opsbot-nudge-now" : "opsbot-nudge");
+  const quiet = wake2 ? settings.liveness.wake_cooldown_minutes : settings.liveness.nudge_minutes;
+  const cooldown = wake2 ? settings.liveness.wake_cooldown_minutes : settings.liveness.nudge_cooldown_minutes;
+  const marker = gitPath(root, wake2 ? "opsbot-nudge-now" : "opsbot-nudge");
   const asleep = activeSleep(root, settings);
-  if (asleep && !wake) return { nudge: `nothing \xB7 ${sleepStatusLine(settings, asleep)}` };
+  if (asleep && !wake2) return { nudge: `nothing \xB7 ${sleepStatusLine(settings, asleep)}` };
   const firstWake = !!asleep && !asleep.woken;
   const v = judgeLock(root, settings.lock_max_minutes);
   if (v.state === "held") return { nudge: `nothing \xB7 a cycle holds the checkout since ${v.hold.started}` };
   const blocked = blockedBy(root);
   if (blocked) return { nudge: `nothing \xB7 ${blocked}` };
   const last = lastCycleAt(readCycleLog(root));
-  if (!wake && last && now - (parseIso(last) ?? 0) < quiet * 6e4) {
+  if (!wake2 && last && now - (parseIso(last) ?? 0) < quiet * 6e4) {
     return { nudge: `nothing \xB7 last cycle ${last}` };
   }
   if (existsSync13(marker) && !firstWake) {
     const [prev2, why] = readFileSync10(marker, "utf8").split("\n");
     if (prev2 && /^\d+$/.test(prev2) && now - Number(prev2) * 1e3 < cooldown * 6e4) {
       const ago = Math.floor((now - Number(prev2) * 1e3) / 6e4);
-      return { nudge: wake ? `nothing \xB7 woke ${ago} min ago${why ? ` for: ${why}` : ""}` : `nothing \xB7 nudged ${ago} min ago and no cycle since` };
+      return { nudge: wake2 ? `nothing \xB7 woke ${ago} min ago${why ? ` for: ${why}` : ""}` : `nothing \xB7 nudged ${ago} min ago and no cycle since` };
     }
   }
   const rt = runtimeFor(settings);
@@ -9638,27 +9668,10 @@ function nudgeCommand(args) {
     setExit(1);
     return { nudge: found2.code === "agent_not_found" ? `cannot \xB7 the runtime has no agent named ${agent}` : `cannot \xB7 ${rt.name}: ${found2.code}: ${found2.message}` };
   }
-  let via = "";
-  switch (found2.status) {
-    case "idle":
-    case "done":
-      break;
-    case "working": {
-      const log = found2.log ?? sessionPointer(root)?.transcript_path ?? null;
-      const evs = log ? readEvents(log) : [];
-      if (evs.length === 0) return { nudge: `nothing \xB7 ${agent} is working (mid-turn; no session log to check)` };
-      if (!evs.some((e) => e.type === "assistant")) return { nudge: `nothing \xB7 ${agent} is working (mid-turn; the session log's tail shows no turn)` };
-      const t = turnEnded(evs);
-      if (!t.ended) return { nudge: `nothing \xB7 ${agent} is working (mid-turn since ${t.since.slice(11, 16)}Z)` };
-      via = ` \xB7 the runtime said working, but the session log shows the turn ended${t.at ? ` at ${t.at.slice(11, 16)}Z` : ""} (background work only)`;
-      break;
-    }
-    case "blocked":
-      return { nudge: `nothing \xB7 ${agent} is blocked at a dialog; a prompt would land in it` };
-    default:
-      return { nudge: `nothing \xB7 the runtime cannot tell what ${agent} is doing (${found2.status}); treated as busy` };
-  }
-  if (dry) return { nudge: `would prompt ${agent} (${found2.pane}, ${found2.status})${wake ? ` now${reason ? `, for: ${reason}` : ""}` : ""}: ${line}` };
+  const idle = sessionIdle(root, agent, found2);
+  if (!idle.idle) return { nudge: `nothing \xB7 ${idle.why}` };
+  const via = idle.via;
+  if (dry) return { nudge: `would prompt ${agent} (${found2.pane}, ${found2.status})${wake2 ? ` now${reason ? `, for: ${reason}` : ""}` : ""}: ${line}` };
   const stamp = `${Math.floor(now / 1e3)}
 ${reason}
 `;
@@ -9673,7 +9686,7 @@ ${reason}
     return { nudge: `cannot \xB7 ${rt.name} prompt ${agent}: ${r.code}: ${r.message}` };
   }
   writeFileSync6(marker, stamp);
-  return { nudge: `${wake ? `woke ${agent}${reason ? ` for: ${reason}` : ""}` : `nudged ${agent}: ${line}`}${via}`, at: nowIso() };
+  return { nudge: `${wake2 ? `woke ${agent}${reason ? ` for: ${reason}` : ""}` : `nudged ${agent}: ${line}`}${via}`, at: nowIso() };
 }
 var init_liveness = __esm({
   "src/opsbot-core/commands/liveness.ts"() {
@@ -9737,6 +9750,13 @@ function renderUnits(root, s) {
     { file: `${pre}nudge.service`, content: fill(template("opsbot-nudge.service"), base), enable: false },
     { file: `${pre}nudge.timer`, content: fill(template("opsbot-nudge.timer"), base), enable: true }
   ];
+  if (s.sleep) {
+    const vars = { ...base, PROBE: String(s.sleep.probe_minutes) };
+    units.push(
+      { file: `${pre}sleep.service`, content: fill(template("opsbot-sleep.service"), vars), enable: false },
+      { file: `${pre}sleep.timer`, content: fill(template("opsbot-sleep.timer"), vars), enable: true }
+    );
+  }
   const problems = [];
   for (const sc of discover(root, "monitor").scripts) {
     const at = sc.name.lastIndexOf("@");
@@ -9805,6 +9825,10 @@ function infraCommand(args) {
       units: rows
     };
     if (problems.length) out.problems = problems;
+    if (settings.sleep) {
+      const st = readSleep(root);
+      out.sleep = st ? sleepStatusLine(settings, st) : "awake";
+    }
     if (bad) out.help = [`Run \`${cliInvocation()} infra install\` to render them from opsbot.json`];
     return out;
   }
@@ -9867,6 +9891,7 @@ var init_infra = __esm({
     init_lifecycle();
     init_repo();
     init_settings();
+    init_sleep();
     INFRA_USAGE = "infra install|uninstall|status [--dry-run]";
     SPAN_RE = /^(\d+)(s|sec|m|min|h|hr)$/;
   }
@@ -9999,6 +10024,183 @@ var init_hook = __esm({
     init_repo();
     MARKER = "opsbot-core";
     HOOK_USAGE = "hook install|uninstall|status [--scope project|global] [--dir PATH]";
+  }
+});
+
+// src/opsbot-core/commands/sleep.ts
+import { statSync as statSync6 } from "node:fs";
+import { basename as basename7 } from "node:path";
+function wakePrompt(s, reason) {
+  return `${s.loop.prompt} (woken: ${reason})`;
+}
+function sleepCommand(args) {
+  const [sub, ...rest] = args;
+  if (sub !== "tick") {
+    throw new AxiError(sub ? `unknown sleep subcommand ${sub}` : "sleep needs a subcommand", "VALIDATION_ERROR", [`${cliInvocation()} ${SLEEP_USAGE}`]);
+  }
+  const { flags } = parseArgs(rest, { bool: ["dry-run"] }, SLEEP_USAGE);
+  return sleepTick(flags["dry-run"] === true);
+}
+function cheapReason(root, s, st, now) {
+  const ptr = sessionPointer(root);
+  const op = ptr ? lastOperatorAt(readEvents(ptr.transcript_path), s.loop.prompt, st.decided_at) : null;
+  if (op) return { reason: "the operator wrote to the session", event_at: op };
+  for (const [file, base] of Object.entries(st.wake_lines)) {
+    const n = lineCount(file);
+    if (n > base || n < base && n > 0) return { reason: `a new line in ${basename7(file)}`, event_at: mtime(file) ?? iso(now) };
+  }
+  const by = wakeBy(s, st);
+  if ((parseIso(by.at) ?? Infinity) <= now) return { reason: by.why, event_at: by.at };
+  return null;
+}
+function peekReason(root, now) {
+  try {
+    const p = runPeek(root);
+    if (p.code === 10) {
+      const where = p.inputs.filter((i) => i.new > 0).map((i) => i.input).join(", ");
+      return { reason: `a peek found ${p.new} new (${where})`, event_at: p.earliest ?? iso(now) };
+    }
+    if (p.code === 20) {
+      const bad = p.inputs.filter((i) => !i.ok).map((i) => i.input).join(", ");
+      return { reason: `a peek found a stream failing (${bad})`, event_at: iso(now) };
+    }
+    return null;
+  } catch (e) {
+    return { reason: `the peek could not run: ${e.message}`, event_at: iso(now) };
+  }
+}
+function sleepTick(dry) {
+  const root = requireRoot();
+  const { settings: s, text } = loadSettings(root);
+  if (!s.sleep) return { sleep: "sleep is not set in opsbot.json (no-op)" };
+  const st = readSleep(root);
+  if (!st) return { sleep: "awake (no-op)" };
+  const now = nowMs();
+  const save2 = (next3) => {
+    if (!dry) writeSleep(root, next3);
+  };
+  if (st.woken) return answerWatch(root, s, text, st, now, dry, save2);
+  const cheap = cheapReason(root, s, st, now);
+  const reason = cheap ?? (st.began ? peekReason(root, now) : null);
+  if (reason) return wake(root, s, st, reason, now, dry, save2);
+  if (!st.began) return goDown(root, s, st, now, dry, save2);
+  save2({ ...st, looked_at: iso(now) });
+  return { sleep: sleepStatusLine(s, { ...st, looked_at: iso(now) }) };
+}
+function goDown(root, s, st, now, dry, save2) {
+  const agent = s.runtime.agent;
+  const rt = runtimeFor(s);
+  const found2 = rt.get(agent);
+  if (!found2.ok) {
+    setExit(1);
+    return { sleep: `going down \xB7 cannot reach the session: ${found2.code === "agent_not_found" ? `the runtime has no agent named ${agent}` : `${rt.name}: ${found2.code}: ${found2.message}`}` };
+  }
+  const idle = sessionIdle(root, agent, found2);
+  if (!idle.idle) return { sleep: `going down \xB7 waiting: ${idle.why}` };
+  const compact = s.sleep.compact;
+  if (dry) return { sleep: compact ? `going down \xB7 would type ${COMPACT} into ${agent} (${found2.pane})${idle.via}` : "going down \xB7 would mark the sleep begun (sleep.compact is false)" };
+  if (!compact) {
+    save2({ ...st, began: iso(now), looked_at: iso(now) });
+    return { sleep: `asleep \xB7 began without compacting (sleep.compact is false)` };
+  }
+  const r = rt.prompt(agent, COMPACT);
+  if (!r.ok) {
+    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") save2({ ...st, began: iso(now), compacted: true, looked_at: iso(now) });
+    setExit(1);
+    return { sleep: `going down \xB7 cannot \xB7 ${rt.name} prompt ${agent}: ${r.code}: ${r.message}` };
+  }
+  save2({ ...st, began: iso(now), compacted: true, looked_at: iso(now) });
+  return { sleep: `asleep \xB7 typed ${COMPACT} into ${agent}${idle.via}`, at: iso(now) };
+}
+function wake(root, s, st, why, now, dry, save2) {
+  const agent = s.runtime.agent;
+  const text = wakePrompt(s, why.reason);
+  const record = (sent) => save2({ ...st, woken: { at: st.woken?.at ?? iso(now), reason: why.reason, event_at: why.event_at, sent } });
+  const rt = runtimeFor(s);
+  const found2 = rt.get(agent);
+  if (!found2.ok) {
+    if (!dry) record(false);
+    setExit(1);
+    return { sleep: `wake for: ${why.reason} \xB7 cannot reach the session: ${found2.code === "agent_not_found" ? `the runtime has no agent named ${agent}` : `${rt.name}: ${found2.code}: ${found2.message}`}` };
+  }
+  const idle = sessionIdle(root, agent, found2);
+  if (!idle.idle) {
+    if (idle.blocked && !dry) record(false);
+    return { sleep: `wake for: ${why.reason} \xB7 waiting: ${idle.why}` };
+  }
+  if (dry) return { sleep: `would wake ${agent} (${found2.pane}) for: ${why.reason}`, prompt: text };
+  const r = rt.prompt(agent, text);
+  if (!r.ok) {
+    record(r.code !== "agent_blocked" && r.code !== "agent_not_found");
+    setExit(1);
+    return { sleep: `wake for: ${why.reason} \xB7 cannot \xB7 ${rt.name} prompt ${agent}: ${r.code}: ${r.message}` };
+  }
+  record(true);
+  return { sleep: `woke ${agent} for: ${why.reason}${idle.via}`, at: iso(now) };
+}
+function answerWatch(root, s, text, st, now, dry, save2) {
+  const w = st.woken;
+  const wokenMs = parseIso(w.at) ?? now;
+  const mins = Math.floor((now - wokenMs) / 6e4);
+  const watch = s.liveness.watchdog_minutes;
+  if (mins < watch || st.escalated) {
+    if (!w.sent) return wake(root, s, st, { reason: w.reason, event_at: w.event_at }, now, dry, save2);
+    return { sleep: `${sleepStatusLine(s, st)} (${mins} min)${st.escalated ? " \xB7 the operator already told" : ""}` };
+  }
+  const seen = [];
+  const rt = runtimeFor(s);
+  const found2 = rt.get(s.runtime.agent);
+  if (found2.ok) {
+    if (found2.status === "blocked") seen.push("The bot's session is waiting at a permission or question dialog.");
+    else seen.push(`The runtime says the session is ${found2.status}.`);
+  } else if (found2.code === "agent_not_found") seen.push(`The runtime has no agent named ${s.runtime.agent}, so the session itself is not running.`);
+  if (!w.sent) seen.push("The wake could not be typed into the session.");
+  const message = [
+    `${s.mark} ${s.name} was asleep and was woken at ${humanTime(wokenMs, s.timezone)} for: ${w.reason}. No cycle has begun since, over ${watch} minutes ago, so nothing is being read or answered.`,
+    ...seen,
+    "The sleep timer will not repeat this for the same wake."
+  ].join("\n");
+  if (dry) return { sleep: `woken ${mins} min ago and unanswered \xB7 would tell the operator`, message: message.split("\n") };
+  const results = escalate(root, s, text, message);
+  if (results === null) {
+    setExit(1);
+    return { sleep: `woken ${mins} min ago and unanswered \xB7 cannot tell the operator: no script in opsbot.d/escalate.d/` };
+  }
+  if (!results.some((r) => r.ok)) {
+    setExit(1);
+    return { sleep: `woken ${mins} min ago and unanswered \xB7 cannot tell the operator: every escalation script failed`, escalations: results };
+  }
+  save2({ ...st, escalated: true });
+  if (!openOutage(root)) {
+    recordOutage(root, { kind: "stopped", started: w.at, note: `woken for: ${w.reason}; no cycle began within ${watch} minutes. ${seen.join(" ")}`.trim() });
+  }
+  return { sleep: `woken ${mins} min ago and unanswered \xB7 the operator told \xB7 outage recorded`, escalations: results };
+}
+var SLEEP_USAGE, COMPACT, mtime;
+var init_sleep2 = __esm({
+  "src/opsbot-core/commands/sleep.ts"() {
+    "use strict";
+    init_dist2();
+    init_args();
+    init_invocation();
+    init_repo();
+    init_runtime();
+    init_settings();
+    init_sleep();
+    init_state();
+    init_transcript();
+    init_check();
+    init_coldstart();
+    init_liveness();
+    SLEEP_USAGE = "sleep tick [--dry-run]";
+    COMPACT = "/compact";
+    mtime = (f) => {
+      try {
+        return iso(statSync6(f).mtimeMs);
+      } catch {
+        return null;
+      }
+    };
   }
 });
 
@@ -10219,7 +10421,7 @@ var init_cli2 = __esm({
     init_invocation();
     init_reference();
     init_version();
-    init_home();
+    init_home2();
     init_check();
     init_cycle();
     init_coldstart();
@@ -10228,6 +10430,7 @@ var init_cli2 = __esm({
     init_infra();
     init_hook();
     init_start();
+    init_sleep2();
     init_simple();
     CLI = cliInvocation();
     TOP_HELP = `usage: ${CLI} <command> [subcommand] [args] [flags]
@@ -10248,6 +10451,7 @@ env:   OPSBOT_ROOT (the bot's repo; default: the git top level of the working di
       outage: (a) => outageCommand(a),
       watchdog: (a) => watchdogCommand(a),
       nudge: (a) => nudgeCommand(a),
+      sleep: (a) => sleepCommand(a),
       infra: (a) => infraCommand(a),
       hook: (a) => hookCommand(a),
       hooks: (a) => hooksCommand(a),

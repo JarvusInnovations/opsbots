@@ -248,3 +248,215 @@ describe("asleep: the nudge and the watchdog stand down", () => {
   });
 });
 
+
+describe("sleep tick, against a stub runtime", () => {
+  const PROMPT = MON_LOOP.prompt;
+  const assistant = (when: string) => JSON.stringify({ type: "assistant", timestamp: when, message: { content: [{ type: "text", text: "working" }] } });
+  const turnDone = (when: string) => JSON.stringify({ type: "system", subtype: "turn_duration", durationMs: 1000, timestamp: when });
+
+  test("going down: types /compact once, only when idle; asleep with nothing new it types nothing", () => {
+    bot = sleepyBot();
+    const sessionLog = join(bot.home, "session.jsonl");
+    writeFileSync(sessionLog, `${assistant(at(61))}\n`);
+    const f = fakeRuntime(bot, { status: "working", session_log: sessionLog });
+    putToSleep(bot);
+    const busy = cli(bot, ["sleep", "tick"], { now: at(65) });
+    expect(busy.code).toBe(0);
+    expect(busy.out).toContain("going down · waiting: testbot is working (mid-turn since 16:01Z)");
+    expect(prompts(f)).toHaveLength(0);
+
+    // the title still spins, but the session log shows the turn ended: idle
+    writeFileSync(sessionLog, `${assistant(at(61))}\n${turnDone(at(62))}\n`);
+    const dry = cli(bot, ["sleep", "tick", "--dry-run"], { now: at(70) });
+    expect(dry.out).toContain("would type /compact into testbot");
+    expect(prompts(f)).toHaveLength(0);
+    expect(state(bot).began).toBeNull();
+
+    const down = cli(bot, ["sleep", "tick"], { now: at(71) });
+    expect(down.out).toContain("asleep · typed /compact into testbot");
+    expect(prompts(f)).toEqual(["/compact"]);
+    expect(state(bot)).toMatchObject({ began: at(71), compacted: true });
+
+    writeFileSync(f, JSON.stringify({ status: "idle" }));
+    const quiet = cli(bot, ["sleep", "tick"], { now: at(81) });
+    expect(quiet.code).toBe(0);
+    expect(quiet.out).toContain("asleep since 16:11Z, next look 16:31Z, wake by 00:01Z");
+    expect(prompts(f)).toEqual(["/compact"]);
+    expect(state(bot).looked_at).toBe(at(81));
+    expect(cli(bot, [], { now: at(82) }).out).toContain("sleep: \"asleep since 16:11Z, next look 16:31Z");
+  });
+
+  test("sleep.compact false: the sleep begins without a compaction", () => {
+    bot = sleepyBot({ compact: false });
+    const f = fakeRuntime(bot, { status: "idle" });
+    putToSleep(bot);
+    expect(cli(bot, ["sleep", "tick"], { now: at(62) }).out).toContain("began without compacting");
+    expect(prompts(f)).toHaveLength(0);
+    expect(state(bot)).toMatchObject({ began: at(62), compacted: false });
+  });
+
+  /** Asleep (compacted at :62), with the stub idle; returns the stub's file. */
+  function asleep(sleep: Record<string, unknown> = {}): string {
+    bot = sleepyBot(sleep, ["heartbeat.d", "escalate.d"]);
+    const f = fakeRuntime(bot, { status: "idle" });
+    putToSleep(bot);
+    cli(bot, ["sleep", "tick"], { now: at(62) });
+    expect(prompts(f)).toEqual(["/compact"]);
+    return f;
+  }
+
+  test("wakes on a new line in a wake file; --dry-run types nothing", () => {
+    const f = asleep();
+    appendFileSync(wakeFileOf(bot), '{"event":"dm"}\n');
+    const dry = cli(bot, ["sleep", "tick", "--dry-run"], { now: at(72) });
+    expect(dry.out).toContain("would wake testbot");
+    expect(dry.out).toContain("a new line in events.jsonl");
+    expect(prompts(f)).toEqual(["/compact"]);
+    expect(state(bot).woken).toBeNull();
+    const r = cli(bot, ["sleep", "tick"], { now: at(72) });
+    expect(r.out).toContain("woke testbot for: a new line in events.jsonl");
+    expect(prompts(f)).toEqual(["/compact", `${PROMPT} (woken: a new line in events.jsonl)`]);
+    expect(state(bot).woken).toMatchObject({ at: at(72), reason: "a new line in events.jsonl", sent: true });
+    // woken: the next tick waits for cycle begin and types nothing more
+    expect(cli(bot, ["sleep", "tick"], { now: at(82) }).out).toContain("waiting for cycle begin (10 min)");
+    expect(prompts(f)).toHaveLength(2);
+  });
+
+  test("wakes on a peek that exits 10, and cycle begin logs the latency from the item", () => {
+    const f = asleep();
+    writeStream(bot, [item(1, at(70))]);
+    const r = cli(bot, ["sleep", "tick"], { now: at(72) });
+    expect(r.out).toContain("woke testbot for: a peek found 1 new (10-file-stream)");
+    expect(prompts(f).at(-1)).toBe(`${PROMPT} (woken: a peek found 1 new (10-file-stream))`);
+    // the peek recorded nothing: the cycle sees the item
+    const b = cli(bot, ["cycle", "begin"], { now: at(73) });
+    expect(b.code).toBe(10);
+    expect(b.out).toContain("chat:c:1");
+    expect(log(bot).find((l) => l.outcome === "wake")).toMatchObject({ reason: "a peek found 1 new (10-file-stream)", latency_s: 180, slept_from: at(62), woken_at: at(72) });
+  });
+
+  test("wakes on a peek that exits 20", () => {
+    const f = asleep();
+    bot.env.FIXTURE_STREAM_EXIT = "3";
+    expect(cli(bot, ["sleep", "tick"], { now: at(72) }).out).toContain("woke testbot for: a peek found a stream failing (10-file-stream)");
+    expect(prompts(f)).toHaveLength(2);
+  });
+
+  test("wakes at the due time", () => {
+    bot = sleepyBot({}, ["heartbeat.d"]);
+    dueScript(bot, [`${at(200)} the weekly report`]);
+    const f = fakeRuntime(bot, { status: "idle" });
+    putToSleep(bot);
+    cli(bot, ["sleep", "tick"], { now: at(62) });
+    expect(cli(bot, ["sleep", "tick"], { now: at(190) }).out).toContain("asleep since");
+    expect(cli(bot, ["sleep", "tick"], { now: at(201) }).out).toContain("woke testbot for: due: the weekly report");
+    expect(prompts(f)).toEqual(["/compact", `${PROMPT} (woken: due: the weekly report)`]);
+  });
+
+  test("wakes at max_minutes", () => {
+    const f = asleep({ max_minutes: 120 });
+    expect(cli(bot, ["sleep", "tick"], { now: at(180) }).out).toContain("asleep since");
+    expect(cli(bot, ["sleep", "tick"], { now: at(181) }).out).toContain("woke testbot for: 120 minutes asleep");
+    expect(prompts(f)).toHaveLength(2);
+  });
+
+  test("the operator writing while it goes down is a wake, not a compaction", () => {
+    bot = sleepyBot();
+    const sessionLog = join(bot.home, "session.jsonl");
+    writeFileSync(sessionLog, "");
+    cli(bot, ["cold-start", "--write"], { now: T0, input: JSON.stringify({ transcript_path: sessionLog }) });
+    const f = fakeRuntime(bot, { status: "idle" });
+    putToSleep(bot);
+    appendFileSync(sessionLog, `${JSON.stringify({ type: "user", timestamp: at(63), message: { content: "are you there?" } })}\n${assistant(at(63))}\n${turnDone(at(64))}\n`);
+    expect(cli(bot, ["sleep", "tick"], { now: at(65) }).out).toContain("woke testbot for: the operator wrote to the session");
+    expect(prompts(f)).toEqual([`${PROMPT} (woken: the operator wrote to the session)`]);
+  });
+
+  test("does nothing while awake, and with sleep unset", () => {
+    bot = sleepyBot();
+    const f = fakeRuntime(bot, { status: "idle" });
+    expect(cli(bot, ["sleep", "tick"], { now: T0 }).out).toContain("awake (no-op)");
+    const plain = makeBot();
+    try {
+      expect(cli(plain, ["sleep", "tick"], { now: T0 }).out).toContain("sleep is not set in opsbot.json (no-op)");
+    } finally {
+      plain.cleanup();
+    }
+    expect(prompts(f)).toHaveLength(0);
+  });
+
+  test("a wake with no cycle begin inside watchdog_minutes is told to the operator once and recorded", () => {
+    const f = asleep();
+    const sink = join(bot.home, "sink.txt");
+    bot.env.FIXTURE_SINK = sink;
+    appendFileSync(wakeFileOf(bot), "{}\n");
+    cli(bot, ["sleep", "tick"], { now: at(72) });
+    expect(cli(bot, ["sleep", "tick"], { now: at(131) }).out).toContain("waiting for cycle begin (59 min)");
+    expect(existsSync(sink)).toBe(false);
+    const dry = cli(bot, ["sleep", "tick", "--dry-run"], { now: at(132) });
+    expect(dry.out).toContain("would tell the operator");
+    expect(existsSync(sink)).toBe(false);
+    const told = cli(bot, ["sleep", "tick"], { now: at(132) });
+    expect(told.code).toBe(0);
+    expect(told.out).toContain("the operator told · outage recorded");
+    const msg = readFileSync(sink, "utf8");
+    expect(msg).toContain("🧪 testbot was asleep and was woken at Mon Mar 2, 4:12 PM UTC for: a new line in events.jsonl");
+    expect(msg).toContain("The runtime says the session is idle.");
+    expect(outagesOf(bot)).toEqual([expect.objectContaining({ kind: "stopped", started: at(72) })]);
+    // once
+    expect(cli(bot, ["sleep", "tick"], { now: at(142) }).out).toContain("the operator already told");
+    expect(readFileSync(sink, "utf8").split("---").length - 1).toBe(1);
+    expect(prompts(f)).toHaveLength(2);
+    // the session answers at last: no second outage, and the watchdog closes the first
+    writeStream(bot, [item(1, at(150))]);
+    expect(cli(bot, ["cycle", "begin"], { now: at(150) }).code).toBe(10);
+    expect(outagesOf(bot)).toHaveLength(1);
+    cli(bot, ["cycle", "end", "--records", "1"], { now: at(151) });
+    expect(cli(bot, ["watchdog"], { now: at(155) }).out).toContain(`outage from ${at(72)} ended ${at(150)}`);
+  });
+
+  test("a session that cannot be reached is recorded as woken unsent, retried, and told after watchdog_minutes", () => {
+    const f = asleep();
+    bot.env.FIXTURE_SINK = join(bot.home, "sink.txt");
+    writeFileSync(f, JSON.stringify({ error: { code: "agent_not_found", message: "gone" } }));
+    appendFileSync(wakeFileOf(bot), "{}\n");
+    const r = cli(bot, ["sleep", "tick"], { now: at(72) });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("no agent named testbot");
+    expect(state(bot).woken).toMatchObject({ at: at(72), sent: false });
+    expect(cli(bot, ["sleep", "tick"], { now: at(82) }).code).toBe(1);
+    expect(state(bot).woken.at).toBe(at(72));
+    const told = cli(bot, ["sleep", "tick"], { now: at(133) });
+    expect(told.out).toContain("the operator told");
+    const msg = readFileSync(join(bot.home, "sink.txt"), "utf8");
+    expect(msg).toContain("The runtime has no agent named testbot");
+    expect(msg).toContain("The wake could not be typed into the session.");
+  });
+});
+
+describe("infra and home with sleep", () => {
+  test("the sleep timer is rendered only when sleep is set, at probe_minutes; status and home show the state", () => {
+    bot = makeBot();
+    const calls = join(bot.home, "systemctl.log");
+    makeExecutable(join(bot.home, "systemctl"), `#!/usr/bin/env bash\necho "$*" >>"${calls}"\n[ "$2" = is-active ] && echo active\nexit 0\n`);
+    bot.env.OPSBOT_SYSTEMCTL = join(bot.home, "systemctl");
+    expect(cli(bot, ["infra", "install", "--dry-run"]).out).not.toContain("opsbot-testbot-sleep");
+    expect(cli(bot, ["infra", "status"]).out).not.toContain("sleep:");
+    expect(cli(bot, []).out).not.toContain("sleep:");
+
+    setSettings(bot, { loop: MON_LOOP, wake: { files: [join(bot.home, "events.jsonl")] }, sleep: { probe_minutes: 7 } });
+    const dry = cli(bot, ["infra", "install", "--dry-run"]).out;
+    expect(dry).toContain("opsbot-testbot-sleep.timer");
+    expect(dry).toContain("OnUnitActiveSec=7min");
+    expect(dry).toMatch(/ExecStart=\S+opsbot-core sleep tick/);
+    expect(cli(bot, ["infra", "install"]).code).toBe(0);
+    expect(readFileSync(calls, "utf8")).toContain("opsbot-testbot-sleep.timer");
+    const st = cli(bot, ["infra", "status"]);
+    expect(st.out).toContain("all 6 units current");
+    expect(st.out).toContain("sleep: awake");
+    expect(cli(bot, []).out).toContain("sleep: awake");
+    putToSleep(bot);
+    expect(cli(bot, ["infra", "status"], { now: at(62) }).out).toContain("sleep: \"going down since 16:01Z");
+  });
+});
+
