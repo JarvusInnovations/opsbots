@@ -31,6 +31,7 @@ Outside the repo, on the bot's user:
 | `~/.config/<bot>/slack-app-token` | the app-level token (`xapp-`, `connections:write`), mode 600 |
 | slack-axi's own store | the bot token (`xoxb-`), set by `slack-axi auth login` |
 | `~/.cache/<bot>/slack-events.jsonl` | the events file: the listener appends, the reader reads, the session's monitor wakes on it |
+| `slack-own-threads.jsonl`, beside the events file | the bot's own top-level channel posts, remembered as thread roots: one `{conv, ts, recorded_at}` line each, written and read by the listener only, never items, never in `wake.files` |
 
 ## Settings (`streams.slack` in `opsbot.json`)
 
@@ -53,9 +54,27 @@ Outside the repo, on the bot's user:
 ## The pieces
 
 **`monitor.d/10-slack-listener`.** A Socket Mode client on the app-level token. It keeps a DM to
-the bot, an `app_mention`, a reply in a thread holding a recorded @mention (when the app
-subscribes to channel messages), a `reaction_added` on the bot's own message, and a
-`team_join`. Each kept event is one line in `events_file`:
+the bot, an `app_mention`, a thread reply in a channel or private channel the bot is in (when
+the app subscribes to channel messages), a `reaction_added` on the bot's own message, and a
+`team_join`. A thread reply without an @mention of the bot is kept when any of these holds:
+
+- the events file holds a recorded @mention, or an already kept reply, in that thread;
+- the thread's root is one of the bot's own top-level posts, remembered in the own-threads
+  file;
+- the event's `parent_user_id` is `bot_user`. Slack sets it on thread replies but does not
+  document it on message events, so it is a backstop, never the only record. It covers a root
+  posted while the listener was down.
+
+A reply that @mentions the bot is left to its `app_mention` event. A thread the bot only
+replied in, with no mention and not rooted on its own post, does not count, so a busy thread it
+answered once stays quiet. The bot's own messages are never items. Its own top-level post in a
+channel or private channel (no `thread_ts`, or `thread_ts` equal to `ts`; no subtype other than
+`file_share` or `bot_message`) is appended to the own-threads file and nothing else is done
+with it; its replies are not roots. On each append, roots whose `ts` is more than 90 days old
+are dropped from the file, so it holds at most 90 days of the bot's posts. A reply under an
+older root is kept only through `parent_user_id`.
+
+Each kept event is one line in `events_file`:
 `{key, at, event, kind, conv, from, text, ts, thread_ts, reaction?, recorded_at}`, keyed
 `slack:<conv>:<ts>:msg`, `slack:<conv>:<ts>:<emoji>:<user>` or `slack:team_join:<user>`. On a
 message it reacts `receipt_emoji`. It runs `$OPSBOT_CORE nudge --now --reason …`, again every
@@ -86,7 +105,8 @@ message is empty, slack-axi is not in bot mode, or the draft or send fails.
 `app_mention`, `message.im`, `message.channels`, `message.groups`, `message.mpim`,
 `reaction_added`, `team_join`. The three channel message events are what let a reply in a
 thread reach the bot without a new @mention; the listener keeps only replies in a thread that
-began with a mention and drops every other channel message unrecorded. Listed as options in a
+began with a mention or that the bot started, and drops every other channel message
+unrecorded. Listed as options in a
 comment, off by default: `users:read.email`, `files:write`, `channels:join`,
 `chat:write.public`.
 
@@ -119,6 +139,9 @@ Exit 2 is an unknown command or flag, or no `opsbot.json` at the repo root.
 - The listener records only what it keeps and logs every event type it receives. Why: the
   first @mention test did nothing because the app lacked `app_mentions:read`; a log of every
   event is what shows such a gap.
+- The bot's own messages are never items; its own top-level channel posts are only remembered
+  as thread roots. Why: a bot posted in a channel, a person replied under the post without an
+  @mention, and the listener dropped the reply because the thread held no mention.
 - The second reaction means read, by construction: it waits for the seen key. Why: a reaction
   added on arrival promised a read that a busy agent had not done.
 - `install` prints settings and never writes them; the operator commits `opsbot.json`.
