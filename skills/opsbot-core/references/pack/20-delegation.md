@@ -25,7 +25,14 @@ filtered form, and its columns are the addresses (see *Reading the digest*).
 Class and context are two axes. Your own class in a subagent is a real cell: a long
 document whose verdict must be as good as your own; an unanchored second read of something
 you wrote before it commits the company; untrusted content that must not steer you;
-several heavy reads in parallel. A fork inherits your whole window and costs what you cost.
+several heavy reads in parallel.
+
+**Building is briefed, never forked.** Writing code, opening a pull request, drafting a long
+document or a design: hand it to an Opus agent (the Agent tool, model `opus`) with a written
+brief: the goal, the repo and branch, what done means, what to return. It works in its own
+worktree. Never a fork for this. A fork carries your whole window and runs at your class, so
+it costs many times what the work needs, and nothing about building needs your window. A fork
+is for the four cases above and nothing else; when you make one, say which case it is.
 
 Your strength is the connections, which is what delegation fragments. The deciding
 question for any read is how much of the current picture each input token needs to be
