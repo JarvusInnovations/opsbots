@@ -4,6 +4,7 @@ done: 2026-11-10
 depends: [kit-pack-sections]
 specs:
   - specs/skills/opsbot-core.md
+pr: 56
 ---
 
 # The wake sections get their own budget
