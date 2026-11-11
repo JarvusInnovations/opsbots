@@ -6,6 +6,7 @@ specs:
   - specs/skills/opsbot-slack.md
   - specs/architecture.md
 issues: [77]
+pr: 79
 ---
 
 # Plan: one post command that classifies the destination and screens the draft
