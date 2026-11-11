@@ -6,7 +6,8 @@
 #   .agents/skills/opsbot-host/scripts/bootstrap.sh --tools "gh-axi agent-recall-axi"
 #
 # Installs, each only when missing: ~/.local/bin and the asdf shims on PATH (above .bashrc's
-# interactive guard), asdf, node, the GitHub CLI, the AXI tools, Claude Code, herdr with its
+# interactive guard), asdf, node, the GitHub CLI, the AXI tools (with agent-recall-axi's session
+# hook installed for the user), Claude Code, herdr with its
 # agent skill (installed for the user, so every project has it), and the skills of the repo it
 # is run in (skills-lock.json). Plain bash on purpose: it has to run
 # before node exists. It never signs in to anything; the sign-ins are printed at the end.
@@ -111,6 +112,11 @@ done
 
 # 6. Claude Code, herdr
 step claude 'claude --version' 'curl -fsSL https://claude.ai/install.sh | bash'
+# agent-recall-axi's session hook, for every project this user opens: an agent starts each
+# session with its past sessions in reach, and gets a resume pack after a compaction.
+case " $TOOLS " in *" agent-recall-axi "*)
+  step recall-hook 'grep -q agent-recall-axi "$HOME/.claude/settings.json" 2>/dev/null && echo "~/.claude/settings.json"' 'agent-recall-axi hook install --scope user --agent claude </dev/null'
+;; esac
 if [ "$HERDR" = 1 ]; then
   step herdr 'herdr --version' 'curl -fsSL https://herdr.dev/install.sh | sh'
   # the herdr skill, for every project this user opens: how an agent drives herdr. Only that

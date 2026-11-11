@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "5d83414" : "dev";
+    VERSION = true ? "2d2fc76" : "dev";
   }
 });
 
@@ -2692,6 +2692,17 @@ function judgeLock(root, maxMinutes) {
   const who = `a cycle in session ${hold.session || "unknown"}${hold.pid ? ` (process ${hold.pid})` : ""} holds the checkout since ${hold.started}`;
   return { state: "held", hold, alive, why: who };
 }
+function loopSessionFile(root) {
+  return gitPath(root, "opsbot-loop-session");
+}
+function readLoopSession(root) {
+  try {
+    const v = readFileSync3(loopSessionFile(root), "utf8").trim();
+    return /^[A-Za-z0-9-]{8,}$/.test(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
 function takeLock(root) {
   const f = paths(root).lock;
   const hold = {
@@ -2702,6 +2713,11 @@ function takeLock(root) {
   try {
     writeFileSync(f, `${JSON.stringify(hold)}
 `, { flag: "wx" });
+    if (hold.session) try {
+      writeFileSync(loopSessionFile(root), `${hold.session}
+`);
+    } catch {
+    }
     return true;
   } catch {
     return false;
@@ -8657,7 +8673,7 @@ function startArgv(s, opts) {
   if (model) argv.push("--model", model);
   const window = autocompactTokens(s.loop.autocompact);
   argv.push("--settings", JSON.stringify(window ? { autoCompactEnabled: true, env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) } } : { autoCompactEnabled: true }));
-  if (opts.cont) argv.push("--continue");
+  if (opts.cont) argv.push(...opts.loopSession ? ["--resume", opts.loopSession] : ["--continue"]);
   argv.push(...opts.extra);
   argv.push(s.loop.prompt);
   return argv;
@@ -8678,7 +8694,7 @@ function startCommand(args) {
     setExit(1);
     return { error: "opsbot.json is missing or invalid", help: ["Run `settings validate`"] };
   }
-  const argv = startArgv(s, { cont: flags["continue"] === true, extra });
+  const argv = startArgv(s, { cont: flags["continue"] === true, extra, loopSession: readLoopSession(root) });
   if (flags["dry-run"]) return { start: "would run", cwd: root, argv };
   const window = autocompactTokens(s.loop.autocompact);
   const env = window ? { ...process.env, CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) } : process.env;
@@ -8695,6 +8711,7 @@ var init_start = __esm({
     init_args();
     init_repo();
     init_settings();
+    init_state();
     USAGE = "start [--continue] [--dry-run] [-- <extra claude args>]";
   }
 });

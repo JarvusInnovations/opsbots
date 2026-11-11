@@ -127,6 +127,25 @@ describe("start", () => {
     } finally { bot.cleanup(); }
   });
 
+  test("--continue resumes the session that last ran a cycle, by id, not the directory's most recent", () => {
+    const bot = makeBot({ points: ["heartbeat.d"] });
+    try {
+      expect(cli(bot, ["start", "--continue", "--dry-run"]).out).toContain('"--continue"');
+      // a cycle begun inside a session marks it as the loop's
+      const r = cli(bot, ["cycle", "begin"], { env: { CLAUDE_CODE_SESSION_ID: "11111111-2222-3333-4444-555555555555" } });
+      expect([0, 10]).toContain(r.code);
+      const c = cli(bot, ["start", "--continue", "--dry-run"]).out;
+      expect(c).toContain('"--resume",11111111-2222-3333-4444-555555555555');
+      expect(c).not.toContain('"--continue"');
+      // a cycle run outside any session (a timer, a person's shell) does not move it
+      cli(bot, ["cycle", "end", "--records", "0"], { env: { CLAUDE_CODE_SESSION_ID: "11111111-2222-3333-4444-555555555555" } });
+      cli(bot, ["cycle", "begin"]);
+      expect(cli(bot, ["start", "--continue", "--dry-run"]).out).toContain('"--resume",11111111-2222-3333-4444-555555555555');
+      // plain start never resumes
+      expect(cli(bot, ["start", "--dry-run"]).out).not.toContain("--resume");
+    } finally { bot.cleanup(); }
+  });
+
   test("with no loop.autocompact, the window follows the mode: 750k strategist, 300k dispatcher", () => {
     const bot = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "/loop go" } } });
     const disp = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "/loop go", mode: "dispatcher" } } });

@@ -9,7 +9,9 @@
  *                                                       is the env var, the one control Claude Code honors:
  *                                                       the --autocompact flag and autoCompactWindow were
  *                                                       ignored on two bots, the env var works on a third)
- *          [--continue]                                (with --continue: resume the last session here)
+ *          [--resume <id> | --continue]                (with --continue: resume the session that last
+ *                                                       ran a cycle here, by id; only when none is
+ *                                                       recorded, the directory's most recent one)
  *          [extra args after --]
  *          "<loop.prompt>"                             (the first message, so the loop starts)
  *
@@ -22,6 +24,7 @@ import { encode } from "@toon-format/toon";
 import { parseArgs, setExit } from "../args.js";
 import { findRoot } from "../repo.js";
 import { trySettings } from "../settings.js";
+import { readLoopSession } from "../state.js";
 
 const USAGE = "start [--continue] [--dry-run] [-- <extra claude args>]";
 
@@ -34,14 +37,16 @@ export function autocompactTokens(v: string | null): number | null {
   return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
 }
 
-export function startArgv(s: { loop: { prompt: string; autocompact: string | null; model: string | null; permission_mode: string; mode?: LoopMode } }, opts: { cont: boolean; extra: string[] }): string[] {
+export function startArgv(s: { loop: { prompt: string; autocompact: string | null; model: string | null; permission_mode: string; mode?: LoopMode } }, opts: { cont: boolean; extra: string[]; loopSession?: string | null }): string[] {
   const argv = ["claude", "--permission-mode", s.loop.permission_mode];
   // loop.model wins; else the mode's class (strategist → fable, dispatcher → opus)
   const model = s.loop.model ?? (s.loop.mode ? MODE_MODEL[s.loop.mode] : null);
   if (model) argv.push("--model", model);
   const window = autocompactTokens(s.loop.autocompact);
   argv.push("--settings", JSON.stringify(window ? { autoCompactEnabled: true, env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) } } : { autoCompactEnabled: true }));
-  if (opts.cont) argv.push("--continue");
+  // the loop's own session by id when one is recorded; a person's session opened in the bot's
+  // checkout would otherwise be "the most recent" and get the loop
+  if (opts.cont) argv.push(...(opts.loopSession ? ["--resume", opts.loopSession] : ["--continue"]));
   argv.push(...opts.extra);
   argv.push(s.loop.prompt);
   return argv;
@@ -57,7 +62,7 @@ export function startCommand(args: string[]): string | Record<string, unknown> {
   if (!root) { setExit(1); return { error: "not inside a git checkout", help: ["Run from the bot's repo"] }; }
   const s = trySettings(root);
   if (!s) { setExit(1); return { error: "opsbot.json is missing or invalid", help: ["Run `settings validate`"] }; }
-  const argv = startArgv(s, { cont: flags["continue"] === true, extra });
+  const argv = startArgv(s, { cont: flags["continue"] === true, extra, loopSession: readLoopSession(root) });
   if (flags["dry-run"]) return { start: "would run", cwd: root, argv };
   // the env var also goes into the process environment: certain to be read at startup
   const window = autocompactTokens(s.loop.autocompact);
