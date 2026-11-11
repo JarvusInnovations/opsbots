@@ -442,7 +442,7 @@ describe("templates/manifest.yaml", () => {
     const scopes: string[] = m.oauth_config.scopes.bot;
     expect(scopes).not.toContain("users:read.email");
     for (const s of ["app_mentions:read", "chat:write", "im:history", "reactions:write", "users:read"]) expect(scopes).toContain(s);
-    expect(m.settings.event_subscriptions.bot_events).toEqual(["app_mention", "message.im", "reaction_added", "team_join"]);
+    expect(m.settings.event_subscriptions.bot_events).toEqual(["app_mention", "message.im", "message.channels", "message.groups", "message.mpim", "reaction_added", "team_join"]);
   });
 
   test("every scope line carries a comment saying why", () => {
