@@ -79,8 +79,9 @@ curl -fsSL https://raw.githubusercontent.com/JarvusInnovations/opsbots/main/skil
   stops and says so; installing it needs root: `sudo apt install -y curl git tar`.
 - **It refuses to run as root.** Everything goes under your home directory.
 - **The browser tool needs Chrome.** `chrome-devtools-axi` drives a Chrome or Chromium that
-  is already installed. If the machine has none, installing one needs root, for example
-  `sudo apt install -y chromium`.
+  is already installed. If the machine has none, installing one needs root. On Ubuntu use
+  Google Chrome's own package, since the `chromium` package there is a snap:
+  `curl -fsSLo /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && sudo apt install -y /tmp/chrome.deb`.
 - **A node that came with the system is ignored.** Global installs under it need root, and
   the tools need node 20 or later.
 - **If a step fails,** the script stops and prints the command it was running. Fix the cause
@@ -94,4 +95,4 @@ curl -fsSL https://raw.githubusercontent.com/JarvusInnovations/opsbots/main/skil
 
 This directory is also the `opsbot-host` skill. After the bootstrap, the skill's CLI sets up
 what a bot's user needs beyond the basics: keeping session logs, a virtual desktop with VNC on
-the tailnet, and a headless browser. See [`SKILL.md`](SKILL.md).
+the tailnet, and a headless browser. See [`SKILL.md`](SKILL.md); its section *The desktop and VNC* explains how the screen is shared and how to connect.
