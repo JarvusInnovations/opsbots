@@ -6,7 +6,7 @@
   "rule_card": "protocols/rule-card.md",
   "gate_word": "GOAHEAD",
   "loop": {
-    "//": "prompt is sent verbatim by the nudge; include any cold-cache suffix your setup uses. mode (strategist or dispatcher) picks the model and the compaction window; set loop.model or loop.autocompact only to override it.",
+    "//": "prompt is sent verbatim by the nudge; include any cold-cache suffix your setup uses. mode (strategist or dispatcher) picks the model and the compaction window; set loop.model or loop.autocompact only to override it. schedule is self (the default: the session schedules its own wakeup with this prompt) or monitor (one bounded Monitor armed at the end of every cycle wakes it when a wake file grows or the next cycle is due; the prompt must then be a plain message, not a slash command, and the nudge defaults tighten to 35 minutes).",
     "prompt": "/loop examplebot cycle. Follow the opsbot-core skill: start with `cycle begin`.",
     "mode": "strategist",
     "permission_mode": "auto"

@@ -87,6 +87,11 @@ itself as its last act is not a schedule.
 
 > Why: about a hundred hours lost to loops that died silently.
 
+The session's own re-arming, by a self-paced wakeup or by a monitor, is a convenience. The
+nudge and the watchdog outside it are the schedule's guarantee. The monitor form exists
+because a wake that re-enters a slash command re-reads that command's whole body every
+time.
+
 ## Own identity, or configuration that makes it one setting
 
 A bot has its own number, accounts and host user, or, where it starts on someone else's,

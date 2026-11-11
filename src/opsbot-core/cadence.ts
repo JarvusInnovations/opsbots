@@ -8,7 +8,9 @@
  *   quiet_working  quiet, working hours
  *   quiet          quiet, otherwise
  *
- * and never more than the cap. "Arrived" is a check line with new above 0.
+ * and never more than the cap. With `loop.schedule: "monitor"` also never more than
+ * MONITOR_DELAY_CAP_S, so the schedule monitor's deadline plus its margin stays inside the
+ * harness's 30-minute Monitor limit; the reason says when that cap applied. "Arrived" is a check line with new above 0.
  * Working and night hours are read in the bot's timezone; night may cross
  * midnight.
  */
@@ -18,6 +20,9 @@ import type { LogLine } from "./state.js";
 
 export const HOT_WINDOW_S = 15 * 60;
 export const WARM_WINDOW_S = 60 * 60;
+/** The longest delay a schedule monitor can carry: 29 minutes, plus its 60-second margin, is the
+ * harness's 30-minute Monitor limit. */
+export const MONITOR_DELAY_CAP_S = 1740;
 
 export interface Delay {
   seconds: number;
@@ -57,6 +62,9 @@ export function nextDelay(s: Settings, lines: LogLine[], nowMs: number): Delay {
   else if (inWorkingHours(s, nowMs)) d = { seconds: c.quiet_working, reason: "quiet, working hours" };
   else d = { seconds: c.quiet, reason: "quiet, otherwise" };
   if (d.seconds > c.cap) d = { seconds: c.cap, reason: d.reason };
+  if (s.loop.schedule === "monitor" && d.seconds > MONITOR_DELAY_CAP_S) {
+    d = { seconds: MONITOR_DELAY_CAP_S, reason: `${d.reason} (capped at 29 min: a monitor's limit)` };
+  }
   return d;
 }
 
