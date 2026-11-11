@@ -297,6 +297,12 @@ describe("escalate.d/10-slack-dm", () => {
     expect(readFileSync(join(t.dir, "drafted.txt"), "utf8")).toBe("🧪 the loop has been quiet for 70 minutes");
   });
 
+  test("a message that already opens with the mark (the core's own) gets no second one", () => {
+    const t = sink({ escalate_dm: DM }, "🧪 examplebot has logged no cycle for 70 minutes\nlast cycle 14:00Z");
+    expect(t.run().status).toBe(0);
+    expect(readFileSync(join(t.dir, "drafted.txt"), "utf8")).toBe("🧪 examplebot has logged no cycle for 70 minutes\nlast cycle 14:00Z");
+  });
+
   test("non-zero, nothing sent: escalate_dm unset, an empty message, not in bot mode, a failed draft, a failed send", () => {
     const unset = sink({}, "x");
     expect(unset.run().status).toBe(1);
