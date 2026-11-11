@@ -119,7 +119,7 @@ describe("bootstrap", () => {
   test("--dry-run on an empty home lists every piece with its commands and writes nothing", () => {
     const r = fresh(["--dry-run"]);
     expect(r.code).toBe(0);
-    for (const piece of ["PATH", "asdf", "node", "gh-axi", "agent-recall-axi", "chrome-devtools-axi", "claude", "herdr", "herdr-skill"]) expect(r.out).toMatch(new RegExp(`^would  ${piece} `, "m"));
+    for (const piece of ["PATH", "asdf", "node", "gh-axi", "agent-recall-axi", "chrome-devtools-axi", "recall-hook", "claude", "herdr", "herdr-skill"]) expect(r.out).toMatch(new RegExp(`^would  ${piece} `, "m"));
     expect(r.out).toContain("nothing changed");
     expect(existsSync(join(r.home, ".bashrc"))).toBe(false);
     // a probed tool may write its own state under the home (gh does on some hosts); the script's own targets stay absent
@@ -131,6 +131,7 @@ describe("bootstrap", () => {
     const r = fresh(["--dry-run", "--tools", "gh-axi,npm-axi", "--no-herdr", "--node", "22.1.0"]);
     expect(r.out).toMatch(/^would  npm-axi /m);
     expect(r.out).not.toContain("slack-axi");
+    expect(r.out).not.toContain("recall-hook");
     expect(r.out).not.toMatch(/^would  herdr /m);
     expect(r.out).not.toContain("herdr-skill");
     expect(r.out).toContain("v=22.1.0");

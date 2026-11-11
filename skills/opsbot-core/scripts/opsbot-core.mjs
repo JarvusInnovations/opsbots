@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "5d83414" : "dev";
+    VERSION = true ? "6149dbb" : "dev";
   }
 });
 
@@ -2273,10 +2273,11 @@ function validateSettings(raw) {
   }
   const loop = obj(raw, "loop", "", true);
   if (loop) {
-    allow(loop, "loop.", ["prompt", "autocompact", "model", "permission_mode", "mode", "schedule"]);
+    allow(loop, "loop.", ["prompt", "autocompact", "model", "permission_mode", "mode", "session_name", "schedule"]);
     if (loop.mode !== void 0 && !LOOP_MODES.includes(loop.mode)) problems.push(`loop.mode must be one of ${LOOP_MODES.join(", ")}`);
     if (loop.schedule !== void 0 && !LOOP_SCHEDULES.includes(loop.schedule)) problems.push(`loop.schedule must be one of ${LOOP_SCHEDULES.join(", ")}`);
     str2(loop, "prompt", "loop.", true);
+    str2(loop, "session_name", "loop.", false, /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/, "must be one word of letters, digits, dots, dashes or underscores");
     if (loop.schedule === "monitor" && typeof loop.prompt === "string" && loop.prompt.trimStart().startsWith("/")) {
       problems.push("loop.prompt must not start with a slash command when loop.schedule is monitor: every wake would re-read the command's body");
     }
@@ -2423,6 +2424,8 @@ function withDefaults(raw) {
       model: loop.model === void 0 ? null : String(loop.model),
       permission_mode: loop.permission_mode === void 0 ? "auto" : String(loop.permission_mode),
       mode,
+      // the main session's name: set when it is created, and how it is found again
+      session_name: typeof loop.session_name === "string" && loop.session_name ? loop.session_name : raw.name,
       schedule
     },
     cadence,
@@ -2692,6 +2695,17 @@ function judgeLock(root, maxMinutes) {
   const who = `a cycle in session ${hold.session || "unknown"}${hold.pid ? ` (process ${hold.pid})` : ""} holds the checkout since ${hold.started}`;
   return { state: "held", hold, alive, why: who };
 }
+function loopSessionFile(root) {
+  return gitPath(root, "opsbot-loop-session");
+}
+function readLoopSession(root) {
+  try {
+    const v = readFileSync3(loopSessionFile(root), "utf8").trim();
+    return /^[A-Za-z0-9-]{8,}$/.test(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
 function takeLock(root) {
   const f = paths(root).lock;
   const hold = {
@@ -2702,6 +2716,11 @@ function takeLock(root) {
   try {
     writeFileSync(f, `${JSON.stringify(hold)}
 `, { flag: "wx" });
+    if (hold.session) try {
+      writeFileSync(loopSessionFile(root), `${hold.session}
+`);
+    } catch {
+    }
     return true;
   } catch {
     return false;
@@ -8657,7 +8676,9 @@ function startArgv(s, opts) {
   if (model) argv.push("--model", model);
   const window = autocompactTokens(s.loop.autocompact);
   argv.push("--settings", JSON.stringify(window ? { autoCompactEnabled: true, env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) } } : { autoCompactEnabled: true }));
-  if (opts.cont) argv.push("--continue");
+  const name = s.loop.session_name;
+  if (opts.cont) argv.push(...opts.loopSession ? ["--resume", opts.loopSession] : name ? ["--resume", name] : ["--continue"]);
+  if (name) argv.push("--name", name);
   argv.push(...opts.extra);
   argv.push(s.loop.prompt);
   return argv;
@@ -8678,7 +8699,7 @@ function startCommand(args) {
     setExit(1);
     return { error: "opsbot.json is missing or invalid", help: ["Run `settings validate`"] };
   }
-  const argv = startArgv(s, { cont: flags["continue"] === true, extra });
+  const argv = startArgv(s, { cont: flags["continue"] === true, extra, loopSession: readLoopSession(root) });
   if (flags["dry-run"]) return { start: "would run", cwd: root, argv };
   const window = autocompactTokens(s.loop.autocompact);
   const env = window ? { ...process.env, CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) } : process.env;
@@ -8695,6 +8716,7 @@ var init_start = __esm({
     init_args();
     init_repo();
     init_settings();
+    init_state();
     USAGE = "start [--continue] [--dry-run] [-- <extra claude args>]";
   }
 });
@@ -9629,7 +9651,7 @@ function hookCommand(args) {
     };
   }
   if (sub === "install") {
-    const [a2, c12] = computeSessionStartHookUpdate(current, { marker: MARKER, command: startCmd, timeoutSeconds: 30 });
+    const [a2, c12] = computeSessionStartHookUpdate(current, { marker: MARKER, command: startCmd, timeoutSeconds: 60 });
     const [b2, c22] = upsertPreTool(a2, gateCmd);
     if (!c12 && !c22) return { hook: `already installed in ${p} (no-op)` };
     writeSettings(p, b2);

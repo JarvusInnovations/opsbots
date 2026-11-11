@@ -54,7 +54,8 @@ It installs, each only when missing: `~/.local/bin` and the asdf shims on `PATH`
 of `.bashrc`, above the interactive guard, so non-interactive shells get them too), asdf, node,
 the GitHub CLI, the AXI tools (`gh-axi`, `gws-axi`, `slack-axi`, `gitsheets-axi`,
 `agent-recall-axi`, `chrome-devtools-axi`; `--tools "a b"` names others, `--tools none` skips
-them), Claude Code, and herdr with its agent skill installed for the user
+them), `agent-recall-axi`'s session hook for the user (`hook install --scope user`), Claude
+Code, and herdr with its agent skill installed for the user
 (`npx skills add -g ogulcancelik/herdr --skill herdr`; `--no-herdr` skips both). The browser tool drives a Chrome that is
 already on the machine; installing Chrome itself needs root. A node that came with the system does not count: global installs
 under it need root. A rerun installs nothing and says so.
@@ -103,7 +104,7 @@ Everything is idempotent. A password that exists is never regenerated (it lives 
 
 ### Install
 
-- `scripts/opsbot-host bootstrap [--dry-run] [--tools "a b"|none] [--node <version>] [--no-herdr]` — A fresh Linux user up to a session that can start, with no root: ~/.local/bin and the asdf shims on PATH above .bashrc's interactive guard, asdf, node (the repo's pinned version, else the latest 22; a system node does not count), the GitHub CLI, the AXI tools (gh-axi, gws-axi, slack-axi, gitsheets-axi, agent-recall-axi, chrome-devtools-axi unless --tools names others), Claude Code, herdr and its agent skill (user-wide: npx skills add -g ogulcancelik/herdr --skill herdr), and the repo's skills from skills-lock.json. Installs only what is missing and prints the sign-ins only a person can do. It is scripts/bootstrap.sh, plain bash, so a machine with no node yet pipes it from the repo; for a bot's user or a person's fresh VM alike.
+- `scripts/opsbot-host bootstrap [--dry-run] [--tools "a b"|none] [--node <version>] [--no-herdr]` — A fresh Linux user up to a session that can start, with no root: ~/.local/bin and the asdf shims on PATH above .bashrc's interactive guard, asdf, node (the repo's pinned version, else the latest 22; a system node does not count), the GitHub CLI, the AXI tools (gh-axi, gws-axi, slack-axi, gitsheets-axi, agent-recall-axi, chrome-devtools-axi unless --tools names others), agent-recall-axi's session hook for the user, Claude Code, herdr and its agent skill (user-wide: npx skills add -g ogulcancelik/herdr --skill herdr), and the repo's skills from skills-lock.json. Installs only what is missing and prints the sign-ins only a person can do. It is scripts/bootstrap.sh, plain bash, so a machine with no node yet pipes it from the repo; for a bot's user or a person's fresh VM alike.
 - `scripts/opsbot-host desktop install [--dry-run]` — Xvfb, Openbox and x11vnc as user units on the bot's display, VNC bound to the tailnet address only, a VNC password generated once into ~/.config/<bot>/vnc-password. Idempotent; --dry-run prints every file whole and every command.
 - `scripts/opsbot-host sessions keep [--dry-run]` — Set cleanupPeriodDays to 36500 in the bot's user-level ~/.claude/settings.json, every other key untouched, so Claude Code stops pruning its session logs after 30 days: they are its full-resolution memory.
 - `scripts/opsbot-host browser install [--dry-run]` — chrome-devtools-axi and chrome-devtools-mcp under the bot's node when missing; the bridge port, MCP path and DISPLAY into environment.d and above .bashrc's interactive guard; prints the .claude/settings.json env block for the operator to commit (never writes it).

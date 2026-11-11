@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# escalate.d: reach the operator in Slack, installed by the opsbot-slack skill. The core pipes
+# the message on stdin (the watchdog's outage notice, for one). It is posted once, opening
+# with the bot's mark, to the DM named in streams.slack.escalate_dm, through slack-axi's
+# draft and send steps, in the bot's own name: slack-axi must be signed in with the bot's
+# token (bot mode), or nothing is sent.
+#
+# Exit 1 with one line on stderr when escalate_dm is unset, the message is empty, slack-axi
+# is not in bot mode, or the draft or the send fails, so the watchdog can say it could not
+# escalate. Nothing is retried here: the core decides when to try again.
+# OPSBOT_SLACK_AXI names another slack-axi binary (a pinned copy, a test double).
+set -uo pipefail
+
+cfg="${OPSBOT_CONFIG:-${OPSBOT_ROOT:-.}/opsbot.json}"
+read_cfg() {
+  node -e 'const s=(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).streams||{}).slack||{};process.stdout.write(String(s[process.argv[2]]??""))' "$cfg" "$1" 2>/dev/null
+}
+chan=$(read_cfg escalate_dm)
+team=$(read_cfg team)
+axi="${OPSBOT_SLACK_AXI:-slack-axi}"
+[ -n "$chan" ] || { echo "streams.slack.escalate_dm is not set in opsbot.json (the id of the bot's DM with its operator)" >&2; exit 1; }
+team_args=()
+[ -n "$team" ] && team_args=(--team "$team")
+
+msg=$(cat)
+[ -n "${msg//[[:space:]]/}" ] || { echo "empty message; nothing sent" >&2; exit 1; }
+
+mode=$("$axi" auth mode "${team_args[@]}" 2>&1) || { echo "slack-axi is not signed in: $(printf '%s\n' "$mode" | head -1)" >&2; exit 1; }
+printf '%s\n' "$mode" | grep -qE '^\s*mode: bot\s*$' || { echo "slack-axi is not in bot mode; escalations go out in the bot's name only (slack-axi auth login --token xoxb-...)" >&2; exit 1; }
+
+text="${OPSBOT_MARK:-🤖} ${msg}"
+out=$("$axi" draft "$chan" "$text" "${team_args[@]}" 2>&1); rc=$?
+id=$(printf '%s\n' "$out" | grep -oE '^draft: d_[0-9a-f]{8}' | head -1 | cut -d' ' -f2)
+if [ $rc -ne 0 ] || [ -z "$id" ]; then
+  echo "slack-axi draft failed: $(printf '%s\n' "$out" | grep -m1 -E '^error:' || echo "exit $rc, no draft id")" >&2
+  exit 1
+fi
+out=$("$axi" draft send "$id" 2>&1); rc=$?
+if [ $rc -ne 0 ] || printf '%s\n' "$out" | grep -q '^error:'; then
+  echo "slack-axi draft send failed: $(printf '%s\n' "$out" | grep -m1 -E '^error:' || echo "exit $rc")" >&2
+  exit 1
+fi
+echo "sent to $chan"

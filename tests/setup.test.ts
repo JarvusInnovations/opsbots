@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { withDefaults } from "../src/opsbot-core/settings";
+import { validateSettings, withDefaults } from "../src/opsbot-core/settings";
 import { BASE_SETTINGS, cli, makeBot, makeExecutable, setSettings, type Bot } from "./helpers";
 
 let bot: Bot;
@@ -123,7 +123,38 @@ describe("start", () => {
       expect(r.out).toContain('300000');
       expect(r.out).toContain('"--effort",high,/loop go');
       const c = cli(bot, ["start", "--continue", "--dry-run"]);
-      expect(c.out).toContain('"--continue"');
+      // nothing recorded yet: resume by the session's name, never the directory's most recent
+      expect(c.out).toContain('"--resume",testbot');
+      expect(c.out).not.toContain('"--continue"');
+      expect(r.out).toContain('"--name",testbot');
+    } finally { bot.cleanup(); }
+  });
+
+  test("loop.session_name names the main session; a bad one is refused", () => {
+    const bot = makeBot({ settings: { ...BASE_SETTINGS, loop: { prompt: "p", session_name: "main-loop" } } });
+    try {
+      expect(cli(bot, ["start", "--dry-run"]).out).toContain('"--name",main-loop');
+      expect(cli(bot, ["start", "--continue", "--dry-run"]).out).toContain('"--resume",main-loop');
+    } finally { bot.cleanup(); }
+    expect(validateSettings({ name: "x", mark: "m", loop: { prompt: "p", session_name: "two words" }, runtime: { agent: "x" } }).join(" ")).toContain("session_name");
+  });
+
+  test("--continue resumes the session that last ran a cycle, by id, not the directory's most recent", () => {
+    const bot = makeBot({ points: ["heartbeat.d"] });
+    try {
+      expect(cli(bot, ["start", "--continue", "--dry-run"]).out).toContain('"--resume",testbot');
+      // a cycle begun inside a session marks it as the loop's
+      const r = cli(bot, ["cycle", "begin"], { env: { CLAUDE_CODE_SESSION_ID: "11111111-2222-3333-4444-555555555555" } });
+      expect([0, 10]).toContain(r.code);
+      const c = cli(bot, ["start", "--continue", "--dry-run"]).out;
+      expect(c).toContain('"--resume",11111111-2222-3333-4444-555555555555');
+      expect(c).not.toContain('"--continue"');
+      // a cycle run outside any session (a timer, a person's shell) does not move it
+      cli(bot, ["cycle", "end", "--records", "0"], { env: { CLAUDE_CODE_SESSION_ID: "11111111-2222-3333-4444-555555555555" } });
+      cli(bot, ["cycle", "begin"]);
+      expect(cli(bot, ["start", "--continue", "--dry-run"]).out).toContain('"--resume",11111111-2222-3333-4444-555555555555');
+      // plain start never resumes
+      expect(cli(bot, ["start", "--dry-run"]).out).not.toContain("--resume");
     } finally { bot.cleanup(); }
   });
 

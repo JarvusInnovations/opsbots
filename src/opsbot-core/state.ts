@@ -280,6 +280,22 @@ export function judgeLock(root: string, maxMinutes: number): LockVerdict {
   return { state: "held", hold, alive, why: who };
 }
 
+/**
+ * The session that last ran a cycle here: the loop's own, by what it did. `start --continue`
+ * resumes this one by id. "The most recent session in the directory" is not the loop's: a
+ * person who opens a session in the bot's checkout to try something becomes the most recent.
+ */
+export function loopSessionFile(root: string): string {
+  return gitPath(root, "opsbot-loop-session");
+}
+
+export function readLoopSession(root: string): string | null {
+  try {
+    const v = readFileSync(loopSessionFile(root), "utf8").trim();
+    return /^[A-Za-z0-9-]{8,}$/.test(v) ? v : null;
+  } catch { return null; }
+}
+
 /** Take the lock with noclobber semantics; false when another cycle got there first. */
 export function takeLock(root: string): boolean {
   const f = paths(root).lock;
@@ -290,6 +306,8 @@ export function takeLock(root: string): boolean {
   };
   try {
     writeFileSync(f, `${JSON.stringify(hold)}\n`, { flag: "wx" });
+    // a cycle begun inside a session marks that session as the loop's
+    if (hold.session) try { writeFileSync(loopSessionFile(root), `${hold.session}\n`); } catch { /* a convenience */ }
     return true;
   } catch {
     return false;

@@ -62,7 +62,7 @@ export interface Settings {
   timezone: string;
   rule_card: string | null;
   gate_word: string | null;
-  loop: { prompt: string; autocompact: string | null; model: string | null; permission_mode: string; mode: LoopMode; schedule: LoopSchedule };
+  loop: { prompt: string; autocompact: string | null; model: string | null; permission_mode: string; mode: LoopMode; session_name: string; schedule: LoopSchedule };
   cadence: Cadence;
   lock_max_minutes: number;
   liveness: Liveness;
@@ -191,10 +191,11 @@ export function validateSettings(raw: unknown): string[] {
 
   const loop = obj(raw, "loop", "", true);
   if (loop) {
-    allow(loop, "loop.", ["prompt", "autocompact", "model", "permission_mode", "mode", "schedule"]);
+    allow(loop, "loop.", ["prompt", "autocompact", "model", "permission_mode", "mode", "session_name", "schedule"]);
     if (loop.mode !== undefined && !LOOP_MODES.includes(loop.mode as LoopMode)) problems.push(`loop.mode must be one of ${LOOP_MODES.join(", ")}`);
     if (loop.schedule !== undefined && !LOOP_SCHEDULES.includes(loop.schedule as LoopSchedule)) problems.push(`loop.schedule must be one of ${LOOP_SCHEDULES.join(", ")}`);
     str(loop, "prompt", "loop.", true);
+    str(loop, "session_name", "loop.", false, /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/, "must be one word of letters, digits, dots, dashes or underscores");
     if (loop.schedule === "monitor" && typeof loop.prompt === "string" && loop.prompt.trimStart().startsWith("/")) {
       problems.push("loop.prompt must not start with a slash command when loop.schedule is monitor: every wake would re-read the command's body");
     }
@@ -357,6 +358,8 @@ export function withDefaults(raw: Json): Settings {
       model: loop.model === undefined ? null : String(loop.model),
       permission_mode: loop.permission_mode === undefined ? "auto" : String(loop.permission_mode),
       mode,
+      // the main session's name: set when it is created, and how it is found again
+      session_name: typeof loop.session_name === "string" && loop.session_name ? loop.session_name : (raw.name as string),
       schedule,
     },
     cadence,

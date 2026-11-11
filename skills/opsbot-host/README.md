@@ -32,6 +32,7 @@ Each step is skipped when the piece is already there, so it is safe to run again
 | GitHub CLI | Installs `gh` through asdf, unless the machine already has it |
 | AXI tools | `npm install -g` for `gh-axi`, `gws-axi`, `slack-axi`, `gitsheets-axi`, `agent-recall-axi` and `chrome-devtools-axi`: command-line tools agents use for GitHub, Google Workspace, Slack, structured repo data, session history and driving a browser |
 | [Claude Code](https://code.claude.com/docs) | Runs Anthropic's installer |
+| Session history hook | `agent-recall-axi hook install --scope user`: every Claude Code session starts with the user's past sessions in reach, and gets a resume pack after a compaction |
 | [herdr](https://herdr.dev) | Runs its installer. A terminal multiplexer for agent sessions |
 | herdr skill | `npx skills add -g ogulcancelik/herdr --skill herdr`: teaches agents to drive herdr, installed for the user so every project has it |
 | Skills | In a repo with a `skills-lock.json`, restores any skill that is missing |
@@ -86,7 +87,8 @@ curl -fsSL https://raw.githubusercontent.com/JarvusInnovations/opsbots/main/skil
   and run it again; it continues from that step.
 - **To undo it:** remove the block it added at the top of `~/.bashrc`, and delete
   `~/.asdf`, `~/.local/bin/asdf`, `~/.local/bin/claude`, `~/.local/share/claude`,
-  `~/.local/bin/herdr`, and `~/.agents/skills/herdr` with its link in `~/.claude/skills/`.
+  `~/.local/bin/herdr`, and `~/.agents/skills/herdr` with its link in `~/.claude/skills/`;
+  `agent-recall-axi hook uninstall` removes its hook from `~/.claude/settings.json`.
 
 ## For an ops bot's host
 

@@ -1,0 +1,67 @@
+# Slack app manifest for an ops bot: its own bot user, on Socket Mode.
+#
+# Replace the three placeholders in angle brackets, then create the app at
+# https://api.slack.com/apps?new_app=1 with "From a manifest". The skill's README walks
+# through the rest: installing it, the two tokens, and where each one goes.
+#
+# Keep this file in the bot's repo (for example slack/manifest.yaml) so a scope change is a
+# reviewed pull request, then update the app from the manifest and reinstall it.
+#
+# Optional capabilities, each off by default. Add the scope under oauth_config.scopes.bot,
+# update the app, reinstall, and log slack-axi in again with the new bot token:
+#   users:read.email   the bot must match Slack members to another system by email address
+#                      (a sender_lookup script that checks a directory, for example)
+#   files:write        the bot uploads files (slack-axi draft --file / --snippet)
+#   channels:join      the bot joins a public channel itself; without it a person adds it
+#   chat:write.public  the bot posts in a public channel it has not been added to
+#
+# One optional pair of bot events, added under settings.event_subscriptions.bot_events:
+#   message.channels, message.groups
+#                      hear a reply in a thread the bot was @mentioned in, without a new
+#                      @mention. Every message in its channels then reaches the listener,
+#                      which keeps only those replies. Needs no new scope.
+display_information:
+  name: "<Bot name>"
+  description: "<One line: what the bot does>. It is an AI."
+  long_description: >-
+    <Bot name> is an ops bot. It is an AI, run by <who is responsible for it>. It reads
+    the channels it has been added to and direct messages sent to it. A person is
+    responsible for what it does.
+features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true            # people can DM the bot
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: "<Bot name>"
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read    # hear @mentions; without it Slack never delivers app_mention
+      - chat:write           # post and reply as the bot
+      - im:history           # read direct messages sent to it
+      - im:read              # list its direct message conversations
+      - im:write             # open a DM with its operator (escalations)
+      - mpim:history         # read group DMs it is in
+      - mpim:read            # list those group DMs
+      - channels:history     # read public channels it has been added to
+      - channels:read        # list public channels and their names
+      - groups:history       # read private channels it has been invited to
+      - groups:read          # list those private channels
+      - reactions:read       # see reactions on its own messages
+      - reactions:write      # the receipt and read reactions the listener adds
+      - users:read           # names for the people it reads; no email addresses
+      - files:read           # attachments in the conversations it reads
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention          # someone @mentions the bot
+      - message.im           # a direct message to the bot
+      - reaction_added       # a reaction (the listener keeps only those on its own messages)
+      - team_join            # a new member joined the workspace
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: true  # events arrive over a websocket; no public URL needed
+  token_rotation_enabled: false

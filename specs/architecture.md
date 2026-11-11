@@ -15,7 +15,7 @@ card and channel configuration are its own.
 | The loop | `opsbot-core` | check, cycle-begin/end, next-delay, cold-start, lock, outage accounting, watchdog + nudge units |
 | The record | `opsbot-record` | the shared sheets: requests (incl. promises), deliveries, decisions, limitations, proposals; the rules they follow |
 | The voice | `opsbot-persona` | the rule-card template, the mark, acknowledge-first, the refusal list a send guard is built from |
-| The channels | `opsbot-<channel>` | one adapter per surface: read, send guard, listener, reaction ack |
+| The channels | `opsbot-<channel>` | one adapter per surface: read, send guard, listener, reaction ack; the first is [`opsbot-slack`](skills/opsbot-slack.md) (listener, reader, reaction ack, escalation; no send guard yet) |
 | Delivery | `opsbot-deliver` | hand a file to a person and prove they can open it |
 | The bot's own | the bot's repo | its specs, its principal's sheets (people, accounts, clips…), its rule card's contents, its tools in `bin/` |
 
@@ -216,6 +216,9 @@ accounts, clips, tasks) are its own.
   --now` is the backstop that survives the session. The monitor exits on the first arrival
   or at a deadline no later than the loop's next wake, so it cannot re-arm itself into a
   loop (the failure the first bots paid for); the nudge covers a session that never armed.
+  Slack's listener is [`opsbot-slack`](skills/opsbot-slack.md)'s: it reacts once on
+  arrival and again only when the check has reported the item, so the second reaction means
+  read.
 - **Watchdog** (system timer, every 10 minutes): if no cycle has logged within the limit,
   escalates once per outage with what it can see (rebase, lock held, agent missing),
   records the outage, and records its end when cycles resume.
