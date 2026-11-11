@@ -1,15 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { cli, makeBot, writeStream, type Bot } from "./helpers";
+import { cli, git, makeBot, writeStream, type Bot } from "./helpers";
 import { WAKE_BUDGET, capSection } from "../src/opsbot-core/commands/coldstart";
 
 let bot: Bot;
 afterEach(() => bot?.cleanup());
 
 const T0 = "2026-03-02T15:00:00Z";
-const pack = (b: Bot) => join(b.env.XDG_CACHE_HOME!, "testbot", "reground.md");
-const pending = (b: Bot) => join(b.env.XDG_CACHE_HOME!, "testbot", "reground.pending");
+const pack = (b: Bot) => join(b.root, ".scratch", "opsbot-core", "reground.md");
+const pending = (b: Bot) => join(b.root, ".scratch", "opsbot-core", "reground.pending");
+const oldPack = (b: Bot) => join(b.env.XDG_CACHE_HOME!, "testbot", "reground.md");
+const oldPending = (b: Bot) => join(b.env.XDG_CACHE_HOME!, "testbot", "reground.pending");
+const excludeLines = (file: string) => readFileSync(file, "utf8").split("\n").filter((l) => l.trim() === ".scratch/");
 const gate = (b: Bot, input: unknown) => cli(b, ["gate", "check"], { input: JSON.stringify(input) });
 
 describe("cold-start", () => {
@@ -47,6 +50,11 @@ describe("cold-start", () => {
     expect(k2).toBeGreaterThan(k1);
     expect(i2).toBeGreaterThan(k2);
     expect(out).toContain("Never estimate how long your own work will take");
+    const k4 = out.indexOf("Scratch files (the kit's; updates with the skill)");
+    expect(k4).toBeGreaterThan(k2);
+    expect(i2).toBeGreaterThan(k4);
+    expect(out).toContain("Not `/tmp` or `/dev/shm`");
+    expect(out).toContain("Never secrets.");
     expect(out).not.toContain("<!--");
   });
 
@@ -158,5 +166,82 @@ describe("cold-start --write and gate check", () => {
     require("node:fs").rmSync(pack(bot));
     expect(gate(bot, { tool_name: "Bash", tool_input: {} }).code).toBe(0);
     expect(existsSync(pending(bot))).toBe(false);
+  });
+});
+
+describe("the scratch directory", () => {
+  test("cold-start --write creates .scratch/ and excludes it once, never through .gitignore", () => {
+    bot = makeBot();
+    const exclude = join(bot.root, ".git", "info", "exclude");
+    expect(existsSync(join(bot.root, ".scratch"))).toBe(false);
+    expect(cli(bot, ["cold-start", "--write"], { now: T0 }).code).toBe(0);
+    expect(existsSync(join(bot.root, ".scratch"))).toBe(true);
+    expect(excludeLines(exclude)).toHaveLength(1);
+    expect(existsSync(join(bot.root, ".gitignore"))).toBe(false);
+    // the pack and anything else in .scratch/ stay out of git status
+    writeFileSync(join(bot.root, ".scratch", "draft.md"), "x\n");
+    expect(git(bot.root, "status", "--porcelain")).toBe("");
+    // nothing at the old home
+    expect(existsSync(oldPack(bot))).toBe(false);
+    // idempotent
+    cli(bot, ["cold-start", "--write"], { now: T0 });
+    expect(excludeLines(exclude)).toHaveLength(1);
+  });
+
+  test("an exclude file without a final newline, or with the line already, is handled", () => {
+    bot = makeBot();
+    const exclude = join(bot.root, ".git", "info", "exclude");
+    mkdirSync(join(bot.root, ".git", "info"), { recursive: true });
+    writeFileSync(exclude, "# local\n*.swp");
+    cli(bot, ["cold-start", "--write"], { now: T0 });
+    expect(readFileSync(exclude, "utf8")).toBe("# local\n*.swp\n.scratch/\n");
+    writeFileSync(exclude, "/.scratch/\n");
+    cli(bot, ["cold-start", "--write"], { now: T0 });
+    expect(readFileSync(exclude, "utf8")).toBe("/.scratch/\n");
+  });
+
+  test("a worktree checkout writes its own pack and the repository's shared exclude", () => {
+    bot = makeBot();
+    const wt = join(bot.home, "wt");
+    git(bot.root, "worktree", "add", "-q", "-b", "side", wt);
+    const r = cli(bot, ["cold-start", "--write"], { now: T0, cwd: wt });
+    expect(r.code).toBe(0);
+    const wtPack = join(wt, ".scratch", "opsbot-core", "reground.md");
+    expect(r.out).toContain(`Read ${wtPack} now, whole`);
+    expect(existsSync(wtPack)).toBe(true);
+    expect(excludeLines(join(bot.root, ".git", "info", "exclude"))).toHaveLength(1);
+    expect(git(wt, "status", "--porcelain")).toBe("");
+  });
+});
+
+describe("the pack's earlier home", () => {
+  function leaveOldPack(b: Bot): void {
+    mkdirSync(join(b.env.XDG_CACHE_HOME!, "testbot"), { recursive: true });
+    writeFileSync(oldPack(b), "═══ an old pack\n");
+    writeFileSync(oldPending(b), `${T0}\n`);
+  }
+
+  test("a flag left there is honored once: the old pack read whole clears it, the file stays", () => {
+    bot = makeBot();
+    leaveOldPack(bot);
+    const denied = gate(bot, { tool_name: "Bash", tool_input: { command: "ls" } });
+    expect(denied.code).toBe(2);
+    expect(denied.err).toContain(`Read ${oldPack(bot)} whole`);
+    expect(gate(bot, { tool_name: "Read", tool_input: { file_path: oldPack(bot) } }).code).toBe(0);
+    expect(existsSync(oldPending(bot))).toBe(false);
+    expect(existsSync(oldPack(bot))).toBe(true);
+    expect(gate(bot, { tool_name: "Bash", tool_input: { command: "ls" } }).code).toBe(0);
+  });
+
+  test("cold-start --write removes the old flag and leaves the old pack; the gate asks for the new one", () => {
+    bot = makeBot();
+    leaveOldPack(bot);
+    cli(bot, ["cold-start", "--write"], { now: T0 });
+    expect(existsSync(oldPending(bot))).toBe(false);
+    expect(readFileSync(oldPack(bot), "utf8")).toBe("═══ an old pack\n");
+    const denied = gate(bot, { tool_name: "Read", tool_input: { file_path: oldPack(bot) } });
+    expect(denied.code).toBe(2);
+    expect(denied.err).toContain(`Read ${pack(bot)} whole`);
+    expect(gate(bot, { tool_name: "Read", tool_input: { file_path: pack(bot) } }).code).toBe(0);
   });
 });

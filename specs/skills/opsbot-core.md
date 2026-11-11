@@ -27,13 +27,14 @@ The bot's own files the skill reads and writes:
 | `logs/outages.jsonl` | outage events `{at, outcome: "outage"\|"outage-end", kind, started, ended, note}`; committed with the next cycle; readers also accept outage lines found in `logs/cycle.jsonl`, where an earlier bot wrote them |
 | `.git/opsbot-cycle.lock` | the writer lock; never committed |
 | `.git/opsbot-{watchdog,nudge,nudge-now}` | the watchdog's told-once marker and the nudge cooldowns; never committed |
-| `~/.cache/<bot>/reground.md` + `reground.pending` | the cold-start pack and its flag (`$XDG_CACHE_HOME` when set) |
+| `.scratch/` | the bot's scratch directory for files written to look at and throw away; `cold-start --write` creates it and adds a `.scratch/` line to the repository's `info/exclude` (`git rev-parse --git-path info/exclude`, so a worktree checkout works), never to `.gitignore`; never committed |
+| `.scratch/opsbot-core/reground.md` + `reground.pending` | the cold-start pack and its flag; inside the working directory, so reading the pack needs no permission beyond the checkout |
 
 ## Settings (`opsbot.json`)
 
 | Key | Meaning |
 | --- | --- |
-| `name`, `mark` | the bot's name (`[a-z][a-z0-9-]*`, used in unit names and the cache path) and the emoji mark every message opens with |
+| `name`, `mark` | the bot's name (`[a-z][a-z0-9-]*`, used in unit names and cache paths) and the emoji mark every message opens with |
 | `timezone` | IANA zone for the cadence hours and every human-facing time; default `UTC` |
 | `rule_card` | repo path of the rule card the cold-start pack opens with, read at `HEAD`; optional |
 | `gate_word` | optional; capital letters only; the check flags its presence as a whole word, never judges it |
@@ -82,7 +83,7 @@ it tells its operator once. Outside a session (`CLAUDECODE` unset) nothing is ch
 | `cycle end --records N [--degraded] [--summary TEXT]` | runs `cycle.d/end/`; pins the watermark to this cycle's check time; appends `finished`; commits with `--only`; pushes; releases; prints whatever `cycle.d/end/` scripts printed (due promises, owed fixes), then `next <s> <reason>`; with `loop.schedule: "monitor"`, then a `wake` field with the schedule monitor's state and the one `Monitor` call to make now, and no self-paced guidance | 0 · 1 refused (nothing written; the lock released) or could not commit (the lock kept) |
 | `next-delay` | reads the log and the cadence table; prints `<seconds> <reason>`. With `loop.schedule: "monitor"` no delay passes 1 740 seconds (29 minutes: the delay plus the monitor's one-minute margin stays inside the harness's 30-minute limit), and a capped reason says so: `night (capped at 29 min: a monitor's limit)` | 0 |
 | `start [--continue] [--dry-run] [-- <extra>]` | launches `claude` with the flags `opsbot.json` implies: permission mode, model, autocompact window, `autoCompactEnabled: true` via `--settings`, and `loop.prompt` as the first message; `--continue` resumes the session that last ran a cycle here, by id (`--resume <id>`, recorded at every `cycle begin` in `.git/opsbot-loop-session`), and by `loop.session_name` when none is recorded; it never takes the directory's most recent session (a person's session opened in the bot's checkout would be that, and get the loop). Every start passes `--name <loop.session_name>`; the bot's `bin/start` shim is two lines calling this | exit code of `claude` |
-| `cold-start [--write] [--transcript <jsonl>]` | prints the pack: the rule card; the kit's own sections (`references/pack/*.md` shipped with the skill, in order, whole: house writing style, delegation rubric); then, when the SessionStart hook payload on stdin names a `transcript_path` (or `--transcript` does), a "Before this start" section read from the bot's own session log since its last compaction through `agent-recall-axi` (bundled; the kit's own text reader is the fallback when the library cannot read the log): the operator's messages verbatim (the highest-authority record of intent; the loop prompt excluded, since the nudge and the bot's wakeups type it), newest kept whole within their share and the rest counted with the exact command that prints them; the last tool calls with their status as data; and the bot's last statements flagged as its own claims, each layer with its own share so one long message cannot crowd out the others, capped at 4 000 bytes; then every script in `wake.d/` in order (each prints one section); then the 48 h log summary and the untrusted-memory line; `--write` also writes the pack file and sets pending | 0 |
+| `cold-start [--write] [--transcript <jsonl>]` | prints the pack: the rule card; the kit's own sections (`references/pack/*.md` shipped with the skill, in order, whole: house writing style, delegation rubric); then, when the SessionStart hook payload on stdin names a `transcript_path` (or `--transcript` does), a "Before this start" section read from the bot's own session log since its last compaction through `agent-recall-axi` (bundled; the kit's own text reader is the fallback when the library cannot read the log): the operator's messages verbatim (the highest-authority record of intent; the loop prompt excluded, since the nudge and the bot's wakeups type it), newest kept whole within their share and the rest counted with the exact command that prints them; the last tool calls with their status as data; and the bot's last statements flagged as its own claims, each layer with its own share so one long message cannot crowd out the others, capped at 4 000 bytes; then every script in `wake.d/` in order (each prints one section); then the 48 h log summary and the untrusted-memory line; `--write` first makes sure `.scratch/` exists and is excluded, then writes the pack file and sets pending there | 0 |
 | `gate check` | the PreToolUse body: exit 0 when nothing is pending or the pending pack was read whole; otherwise prints the deny reason and exits 2 | 0 · 2 |
 | `lock status|release` | shows or releases the lock (release refuses another live process's lock without `--abandon`) | 0 · 1 |
 | `outage record <kind> [--note] [--started] [--ended]` / `outage end [--ended]` / `outage list` | `failed-turn · refused · plan-limit · session-ended · stopped`; times default to now; end closes the open one | 0 |
@@ -172,10 +173,19 @@ its cache warm; both are the operator's call. A peer that cannot be read fails t
 - `commit_paths` are added to the explicit `--only` list of the check's commit and the `cycle end` commit, never anything else. `settings validate` refuses a non-array, an empty or non-string entry, an absolute path, a `..` segment, and a path under `.git/` or `.claude/`.
 - `cycle end` refuses a future time, a backwards move, or no check since the lock.
 - The cold-start pack's `wake.d/` sections share a budget of their own (6 000 bytes) and are truncated with "… N more lines". The rule card, the kit's sections and the session-log section are whole and outside it: a long rule card never takes room from what the bot owes. Keeping the rule card short is the bot's job; the kit does not cut it.
-- House rules that must be in front of every session (how to write, when to delegate, how to read the digest) ship inside the skill as `references/pack/*.md` and ride the pack, so they are updated by `npx skills update` and never copied into a bot's CLAUDE.md. `OPSBOT_PACK_DIR` overrides the directory.
+- House rules that must be in front of every session (how to write, when to delegate, how to read the digest, where scratch files go) ship inside the skill as `references/pack/*.md` and ride the pack, so they are updated by `npx skills update` and never copied into a bot's CLAUDE.md. `OPSBOT_PACK_DIR` overrides the directory.
 - The digest is read whole, never filtered, and a stream item's `reply` field (the channel skill computes it: the thread when the message is threaded, else the message itself) is where the answer goes. Why: a bot that trimmed its digest to the text answered two questions in a third thread; the columns are the addresses.
 - The gate denies every tool while the pending flag is set and the pack has not been
   read whole; a read with an offset or limit does not clear it.
+- `.scratch/` is set up at every `cold-start --write`, the one command every session passes
+  through: the directory is created when missing and the exclude line added when missing,
+  so running it twice changes nothing. Why there: the pack was written under `~/.cache`, and
+  on a fresh bot the gate's required read stopped at a permission prompt for a path outside
+  the working directory; the only grant that cleared it covered far more than one file.
+- The pack's earlier home, `~/.cache/<bot>/` (`$XDG_CACHE_HOME` when set), is honored once:
+  while its pending flag is set and the new one is not, the gate holds for a whole read of
+  the old pack, which clears it. `cold-start --write` removes the old flag. The old pack file
+  is left where it is.
 - `nudge` never creates a second loop; it prompts the one named agent.
 - `nudge` trusts the runtime's `idle` and `blocked`, but not its `working` alone: the herdr
   adapter reads the terminal title, and Claude Code keeps the title's spinner while

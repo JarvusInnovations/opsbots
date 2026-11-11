@@ -196,5 +196,5 @@ describe("status", () => {
     writeFileSync(join(bin, "chromium"), "#!/bin/sh\n", { mode: 0o755 });
     const some = host(b, ["status"], { PATH: `${bin}:/usr/bin:/bin`, SHELL: "/bin/bash" });
     expect(row(some.out)).toMatch(/^\s*chrome,ok,/);
-  });
+  }, 60_000); // two full status runs, each probing every tool through a login shell
 });

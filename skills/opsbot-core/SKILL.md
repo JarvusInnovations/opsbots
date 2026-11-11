@@ -66,8 +66,8 @@ one-hour cache), and with `loop.schedule: monitor` never over 29 min (a monitor'
 ## Cold start and compaction
 
 `hook install` registers two Claude Code hooks. On every session start, resume, clear and
-compaction, `cold-start --write` writes the reground pack to `~/.cache/<bot>/reground.md` and
-sets a pending flag; until the pack has been **read whole** (a Read with no offset or limit),
+compaction, `cold-start --write` writes the reground pack to `.scratch/opsbot-core/reground.md`
+in the bot's checkout and sets a pending flag; until the pack has been **read whole** (a Read with no offset or limit),
 `gate check` refuses every other tool. The pack, in order:
 
 1. the rule card, whole (`rule_card` in `opsbot.json`, read at `HEAD`)
@@ -142,8 +142,21 @@ nudge to reach it.
 after the rule card, whole, at every start, resume, clear and compaction: the house
 writing style (`10-writing.md`: tone, shape, Slack mrkdwn, email, records, logs) and the
 delegation rubric (`20-delegation.md`: which model class earns which work, and what the
-loop keeps for itself). They update with `npx skills update`, so no bot copies them into
-its CLAUDE.md. A bot's own `specs/persona.md` colors the style and never overrides it.
+loop keeps for itself), how to read the digest (`30-digest.md`) and where scratch files go
+(`40-scratch.md`). They update with `npx skills update`, so no bot copies them into
+its CLAUDE.md.
+
+## The scratch directory
+
+Every bot's checkout has a `.scratch/` directory for files written to look at and throw
+away. `cold-start --write` creates it at every start, resume, clear and compaction, and adds
+a `.scratch/` line to the repository's `info/exclude` (found through
+`git rev-parse --git-path`, so a worktree checkout works), never to `.gitignore`. Both steps
+run only when needed. The pack lives in `.scratch/opsbot-core/`, inside the working
+directory, so the gate's required read needs no permission beyond the checkout. A pending
+flag left at the pack's earlier home, `~/.cache/<bot>/`, is honored once: a whole read of
+the old pack clears it, and the next `cold-start --write` removes it. The old pack file is
+left where it is; delete it by hand when you like. A bot's own `specs/persona.md` colors the style and never overrides it.
 
 <!-- BEGIN GENERATED: command-reference -->
 
@@ -157,7 +170,7 @@ its CLAUDE.md. A bot's own `specs/persona.md` colors the style and never overrid
 ### Cold start
 
 - `scripts/opsbot-core start [--continue] [--dry-run] [-- <extra claude args>]` — Launch the bot's Claude Code session with the flags opsbot.json implies: permission mode (default auto), model, autocompact window, autocompact forced on, and `loop.prompt` as the first message. `--continue` resumes the last session in this checkout. A bot's `bin/start` shim calls this.
-- `scripts/opsbot-core cold-start [--write]` — Print the reground pack: the rule card, the kit's sections (house style, delegation, what the session log says, the live wake to arm), each `wake.d/` section, the last 48 hours of the cycle log, the untrusted-memory line. `--write` also writes the pack file, sets the pending flag and records the session log's path for `cycle` and `nudge`.
+- `scripts/opsbot-core cold-start [--write]` — Print the reground pack: the rule card, the kit's sections (house style, delegation, what the session log says, the live wake to arm), each `wake.d/` section, the last 48 hours of the cycle log, the untrusted-memory line. `--write` also makes sure `.scratch/` exists and is git-excluded, writes the pack to `.scratch/opsbot-core/reground.md`, sets the pending flag and records the session log's path for `cycle` and `nudge`.
 - `scripts/opsbot-core gate check` — PreToolUse body: exit 0 when nothing is pending or this call reads the pack whole; otherwise deny (exit 2).
 
 ### State

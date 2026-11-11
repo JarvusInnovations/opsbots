@@ -50,7 +50,7 @@ export const COMMAND_GROUPS: CommandGroup[] = [
       {
         usage: "cold-start [--write]",
         summary:
-          "Print the reground pack: the rule card, the kit's sections (house style, delegation, what the session log says, the live wake to arm), each `wake.d/` section, the last 48 hours of the cycle log, the untrusted-memory line. `--write` also writes the pack file, sets the pending flag and records the session log's path for `cycle` and `nudge`.",
+          "Print the reground pack: the rule card, the kit's sections (house style, delegation, what the session log says, the live wake to arm), each `wake.d/` section, the last 48 hours of the cycle log, the untrusted-memory line. `--write` also makes sure `.scratch/` exists and is git-excluded, writes the pack to `.scratch/opsbot-core/reground.md`, sets the pending flag and records the session log's path for `cycle` and `nudge`.",
       },
       {
         usage: "gate check",
