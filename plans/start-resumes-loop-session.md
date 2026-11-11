@@ -35,3 +35,8 @@ every agent environment has its session history in reach.
 
 - 2026-11-10: found on the first restart of a kit bot whose checkout had held a person's test
   session. The operator spotted it; the bot was restarted on its real session by id.
+- 2026-11-11: the operator's addition: a session name in the settings, used when the session
+  is created and when it is resumed. `loop.session_name` (the bot's name by default) is passed
+  as `--name` on every start and is the resume key when no id is recorded. The recorded id
+  stays first because it is exact; a name can match more than one session.
+
