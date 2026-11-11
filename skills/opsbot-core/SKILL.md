@@ -47,14 +47,21 @@ the CLI is not on PATH.
    `finished`, commits the log and watermark with `--only`, pushes, releases the lock, and
    prints the closing line, what the end scripts printed (due promises, fixes not yet told),
    and `next <seconds> <reason>`.
-4. **Wake.** Schedule the next wake with the session's own self-pacing call, using the loop
-   prompt verbatim. There is one clock: never create a cron or a second loop. The nudge is
-   the only thing that restarts a stopped loop.
+4. **Wake.** `loop.schedule` in `opsbot.json` says how. There is one clock either way:
+   never create a cron or a second loop. The nudge is the only thing that restarts a
+   stopped loop.
+   - **`self`** (the default). Schedule the next wake with the session's own self-pacing
+     call, using the loop prompt verbatim.
+   - **`monitor`**. `cycle begin` (on 0 or 30) and `cycle end` print a `wake` field with one
+     `Monitor` call. Make it exactly as printed. It exits on a new line in a wake file or
+     with `cycle due` when the next cycle is due; either way, run `cycle begin`. Never call
+     ScheduleWakeup and never start `/loop`; the loop prompt is a plain message. Never two
+     monitors. If none is armed (after a start, a compaction, an error), run `cycle begin`.
 
 `scripts/opsbot-core next-delay` prints the wake on its own. The defaults: something arrived
 in the last 15 minutes, 3 min; night, 45 min; something in the last hour, 10 min; quiet in
 working hours, 10 min; quiet otherwise, 30 min; never over the cap (45 min, under the
-one-hour cache). Every value and the hours are in `opsbot.json`.
+one-hour cache), and with `loop.schedule: monitor` never over 29 min (a monitor's limit). Every value and the hours are in `opsbot.json`.
 
 ## Cold start and compaction
 
@@ -142,10 +149,10 @@ its CLAUDE.md. A bot's own `specs/persona.md` colors the style and never overrid
 
 ### The cycle
 
-- `scripts/opsbot-core cycle begin` — Refuse while another writer holds the checkout (exit 30, `wait · … · next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it.
+- `scripts/opsbot-core cycle begin` — Refuse while another writer holds the checkout (exit 30, `wait · … · next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it. With `loop.schedule: monitor`, on 0 and 30 the `wake` field holds the schedule monitor's state and the one Monitor call to make now.
 - `scripts/opsbot-core check [--no-commit]` — Run every `opsbot.d/heartbeat.d/` script, record seen keys, log, commit. Exit 0 nothing new · 10 new (digest) · 20 degraded (failed inputs named) · 2 cannot run.
-- `scripts/opsbot-core cycle end --records N [--degraded] [--summary TEXT]` — Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake.
-- `scripts/opsbot-core next-delay` — Seconds until the next cycle and why, from the cycle log and the cadence table.
+- `scripts/opsbot-core cycle end --records N [--degraded] [--summary TEXT]` — Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle.
+- `scripts/opsbot-core next-delay` — Seconds until the next cycle and why, from the cycle log and the cadence table. With `loop.schedule: monitor`, never over 1740 (29 min), and the reason says when that cap applied.
 
 ### Cold start
 

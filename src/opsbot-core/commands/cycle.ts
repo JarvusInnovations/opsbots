@@ -43,7 +43,7 @@ import { runCheck } from "./check.js";
 import { sessionPointer } from "./coldstart.js";
 import { lastModel, readEvents } from "../transcript.js";
 import { driftReport, sessionDrift } from "../drift.js";
-import { wakeFiles, wakeLines } from "../wake.js";
+import { scheduleLines, wakeFiles, wakeLines } from "../wake.js";
 import { existsSync, rmSync } from "node:fs";
 
 export const CYCLE_USAGE = "cycle begin | cycle end --records N [--degraded] [--summary TEXT]";
@@ -55,11 +55,20 @@ function next(root: string, s: Settings): string {
 /** The live-wake lines for a cycle's output: state from the session log when the pointer is set,
  * the deadline bounded by the loop's next wake when `boundByNext`. Empty when no wake files. */
 function wakeReport(root: string, s: Settings, boundByNext: boolean): string[] {
+  if (s.loop.schedule === "monitor") return boundByNext ? scheduleReport(root, s) : [];
   if (wakeFiles(s).length === 0) return [];
   const ptr = sessionPointer(root);
   const evs = ptr ? readEvents(ptr.transcript_path) : [];
   const until = boundByNext ? nextDelay(s, readCycleLog(root), nowMs()).seconds * 1000 : null;
   return wakeLines(s, evs.length ? evs : null, nowMs(), until);
+}
+
+/** With a monitor schedule: the schedule monitor's state and the one call to make now, due at the
+ * next wake. Printed whenever the session is about to wait (begin's 0 and 30, and end). */
+function scheduleReport(root: string, s: Settings): string[] {
+  const ptr = sessionPointer(root);
+  const evs = ptr ? readEvents(ptr.transcript_path) : [];
+  return scheduleLines(s, evs.length ? evs : null, nowMs(), nextDelay(s, readCycleLog(root), nowMs()).seconds);
 }
 
 /** The session-drift lines for `cycle begin`: shown once per session and drift, else empty. */
@@ -84,7 +93,9 @@ export function cycleCommand(args: string[]): Record<string, unknown> {
 
 function wait(root: string, s: Settings, who: string): Record<string, unknown> {
   setExit(30);
-  return { cycle: `wait · ${who} · next ${next(root, s)}` };
+  const out: Record<string, unknown> = { cycle: `wait · ${who} · next ${next(root, s)}` };
+  if (s.loop.schedule === "monitor") out.wake = scheduleReport(root, s);
+  return out;
 }
 
 function cycleBegin(): Record<string, unknown> {

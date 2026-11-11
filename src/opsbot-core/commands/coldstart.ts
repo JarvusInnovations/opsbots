@@ -6,7 +6,7 @@
  *   1.1, 1.2, … the kit's own sections: every references/pack/*.md shipped with
  *      the skill, in order, whole (house style, delegation); they update with
  *      the skill, so no bot copies them into its CLAUDE.md
- *   1.N (last kit section) what the session log says: the operator's messages since the
+ *   1.N what the session log says: the operator's messages since the
  *      last compaction verbatim, the last tool calls as data, the bot's last statements as
  *      claims; read from the SessionStart hook's transcript_path (stdin JSON) or --transcript
  *   2. one section per opsbot.d/wake.d/ script, in order, each capped to its
@@ -28,7 +28,7 @@ import { join, resolve } from "node:path";
 import { parseArgs, setExit, usageError } from "../args.js";
 import { skillDir } from "../invocation.js";
 import { readEvents, sessionLogSection, sessionLogSectionLib } from "../transcript.js";
-import { WAKE_RULES, wakeFiles, wakeLines } from "../wake.js";
+import { SCHEDULE_RULES, WAKE_RULES, schedulePackLines, wakeFiles, wakeLines } from "../wake.js";
 import { gitPath } from "../repo.js";
 import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
 import { findRoot, firstLine, iso, nowIso, nowMs, parseIso, showHead } from "../repo.js";
@@ -185,7 +185,12 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
     const body = sessionLog ?? sessionLogSection(transcript);
     if (body) kit.push(`═══ 1.${kit.length + 1} Before this start\n${capSection(body, SESSION_LOG_CAP)}`);
   }
-  if (wakeFiles(s).length) {
+  if (s.loop.schedule === "monitor") {
+    // one monitor is the schedule and the live wake, with or without wake files
+    const evs = transcript ? readEvents(transcript) : null;
+    const lines = [...schedulePackLines(s, evs && evs.length ? evs : null, now), ...SCHEDULE_RULES];
+    kit.push(`═══ 1.${kit.length + 1} The schedule and live wake (arm it before anything else)\n${lines.join("\n")}`);
+  } else if (wakeFiles(s).length) {
     const evs = transcript ? readEvents(transcript) : null;
     const lines = [...wakeLines(s, evs && evs.length ? evs : null, now, null), ...WAKE_RULES];
     kit.push(`═══ 1.${kit.length + 1} The live wake (arm it before anything else)\n${lines.join("\n")}`);

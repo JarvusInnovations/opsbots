@@ -37,22 +37,24 @@ The bot's own files the skill reads and writes:
 | `timezone` | IANA zone for the cadence hours and every human-facing time; default `UTC` |
 | `rule_card` | repo path of the rule card the cold-start pack opens with, read at `HEAD`; optional |
 | `gate_word` | optional; capital letters only; the check flags its presence as a whole word, never judges it |
-| `loop.prompt` | the exact loop prompt, including any cold-cache suffix the operator uses |
+| `loop.prompt` | the exact loop prompt, including any cold-cache suffix the operator uses; with `loop.schedule: "monitor"` it must not start with a slash command (`settings validate` refuses one), since every wake would re-read that command's body |
+| `loop.schedule` | `self` (default) or `monitor`: how the session schedules its next cycle. `self` is the self-paced call with the loop prompt. `monitor` is one bounded `Monitor` the session arms at the end of every cycle, which exits on a new line in any wake file or when the next cycle is due; see *The schedule monitor* below |
 | `loop.autocompact` | the window (`750k`, `600000`); unset, it follows `loop.mode`: `750k` for a strategist, `300k` for a dispatcher (every call reads the whole window from cache, so a loop that mostly watches pays for a context it does not use); `start` sets it as `CLAUDE_CODE_AUTO_COMPACT_WINDOW` in the session's environment and its `--settings` `env`, the one control Claude Code honors (the `--autocompact` flag and `autoCompactWindow` were ignored on two bots; the env var works on a third) |
 | `loop.mode` | `strategist` (default) or `dispatcher` ([principles](../principles.md#the-loops-class-follows-its-work-strategist-or-dispatcher)): picks the model `start` passes when `loop.model` is unset (`fable` or `opus`), the window when `loop.autocompact` is unset (`750k` or `300k`), a dispatcher's quiet cadence when it has `wake.files` (below), and which `references/pack/NN-mode-<mode>.md` section rides the pack |
 | `loop.model`, `loop.permission_mode` | what `start` passes as `--model` and `--permission-mode` (default `auto`); the only place the launch flags are set |
 | `cadence` | `{hot, warm, quiet_working, quiet, night, cap}` in seconds, plus `working_hours` (`days` as ISO weekday numbers 1–7, `start`, `end` as `HH:MM`) and `night_hours` (`start`, `end`, a span that may cross midnight) in the bot's timezone; every key optional, defaulting to the architecture's table (working hours Monday–Friday 09:00–17:00, night 22:00–07:00); for a dispatcher with `wake.files`, unset `quiet_working` and `quiet` default to `cap`, because its streams wake it and the timer only keeps the cache warm |
 | `lock_max_minutes` | after which a lock is abandoned |
-| `liveness` | `{watchdog_minutes, nudge_minutes, nudge_cooldown_minutes, wake_cooldown_minutes, interval_minutes}`: the stop limit (60), the quiet limit before a nudge (50), the nudge's cooldown (50), the cooldown of `nudge --now` (10), and how often the watchdog and nudge timers fire (10; the nudge runs half an interval after the watchdog) |
+| `liveness` | `{watchdog_minutes, nudge_minutes, nudge_cooldown_minutes, wake_cooldown_minutes, interval_minutes}`: the stop limit (60), the quiet limit before a nudge (50; 35 with `loop.schedule: "monitor"`), the nudge's cooldown (50; 35 with `monitor`), the cooldown of `nudge --now` (10), and how often the watchdog and nudge timers fire (10; the nudge runs half an interval after the watchdog) |
 | `runtime` | `{adapter: "herdr", agent: "<name>"}`; the adapter supplies `idle` and `prompt`. The herdr adapter finds the bot's pane by that name first and, when the name is missing (a renamed pane, a restarted herdr), by the one agent whose cwd is the bot's checkout; it prompts the pane, not the name |
 | `streams.<name>` | per-stream values a heartbeat script reads (postures, ids, lookbacks); the script is found by name in `opsbot.d/heartbeat.d/`, not listed here |
 | `repo_sync` | `pull-on-clean` or `never-pull` |
 | `host` | optional; belongs to the `opsbot-host` skill (display, VNC and bridge ports); `settings validate` accepts it as an object and does not look inside |
 | `commit_paths` | optional; repo-relative files the check's commit and the `cycle end` commit also take when they exist and have changes (a baseline an adapter updates, an append-only log a helper script writes between cycles); a listed file that does not exist is skipped |
-| `wake.files` | optional; the files a `monitor.d/` listener appends one line per event to. The core prints, in the cold-start pack and at every `cycle begin` and `cycle end`, the state of each (armed until when, or not armed) and the exact bounded `Monitor` call that arms it; see *The live wake* below |
+| `wake.files` | optional; the files a `monitor.d/` listener appends one line per event to. The core prints, in the cold-start pack and at every `cycle begin` and `cycle end`, the state of each (armed until when, or not armed) and the exact bounded `Monitor` call that arms it; see *The live wake* below. With `loop.schedule: "monitor"` all of them share the one schedule monitor |
 
 `settings validate` refuses a file with an unknown key, a missing required key, or a
-cadence value over the cap. Required: `name`, `mark`, `loop.prompt`, `runtime.agent`. A
+cadence value over the cap, or a `loop.prompt` that starts with `/` when `loop.schedule` is
+`monitor`. Required: `name`, `mark`, `loop.prompt`, `runtime.agent`. A
 key named `//` is a comment and is allowed at any level, since JSON has no comments.
 `streams.<name>` objects are the heartbeat scripts' own and are not checked inside.
 When `.claude/settings.json` sets `autoCompactWindow`, `settings validate` refuses it
@@ -75,9 +77,9 @@ it tells its operator once. Outside a session (`CLAUDECODE` unset) nothing is ch
 | --- | --- | --- |
 | *(none)* | home: bot name, bin path, last cycle outcome and age, lock state, next wake, counts of failed inputs and open outages; three help lines | 0 |
 | `check` | runs every script in `heartbeat.d/`, aggregates, records seen keys, logs, commits; prints the digest or one line | 0 nothing new · 10 new · 20 degraded · 2 cannot run |
-| `cycle begin` | refuses while another writer holds the checkout; takes the lock; records a `stopped` outage if overdue; runs `cycle.d/begin/`; runs `check`; on 0 releases and prints the closing line | as `check`; 30 wait |
-| `cycle end --records N [--degraded] [--summary TEXT]` | runs `cycle.d/end/`; pins the watermark to this cycle's check time; appends `finished`; commits with `--only`; pushes; releases; prints whatever `cycle.d/end/` scripts printed (due promises, owed fixes), then `next <s> <reason>` | 0 · 1 refused (nothing written; the lock released) or could not commit (the lock kept) |
-| `next-delay` | reads the log and the cadence table; prints `<seconds> <reason>` | 0 |
+| `cycle begin` | refuses while another writer holds the checkout; takes the lock; records a `stopped` outage if overdue; runs `cycle.d/begin/`; runs `check`; on 0 releases and prints the closing line. With `loop.schedule: "monitor"`, on 0 and on 30 it also prints a `wake` field: the schedule monitor's state and the one `Monitor` call to make now | as `check`; 30 wait |
+| `cycle end --records N [--degraded] [--summary TEXT]` | runs `cycle.d/end/`; pins the watermark to this cycle's check time; appends `finished`; commits with `--only`; pushes; releases; prints whatever `cycle.d/end/` scripts printed (due promises, owed fixes), then `next <s> <reason>`; with `loop.schedule: "monitor"`, then a `wake` field with the schedule monitor's state and the one `Monitor` call to make now, and no self-paced guidance | 0 · 1 refused (nothing written; the lock released) or could not commit (the lock kept) |
+| `next-delay` | reads the log and the cadence table; prints `<seconds> <reason>`. With `loop.schedule: "monitor"` no delay passes 1 740 seconds (29 minutes: the delay plus the monitor's one-minute margin stays inside the harness's 30-minute limit), and a capped reason says so: `night (capped at 29 min: a monitor's limit)` | 0 |
 | `start [--continue] [--dry-run] [-- <extra>]` | launches `claude` with the flags `opsbot.json` implies: permission mode, model, autocompact window, `autoCompactEnabled: true` via `--settings`, and `loop.prompt` as the first message; `--continue` resumes the last session in this checkout; the bot's `bin/start` shim is two lines calling this | exit code of `claude` |
 | `cold-start [--write] [--transcript <jsonl>]` | prints the pack: the rule card; the kit's own sections (`references/pack/*.md` shipped with the skill, in order, whole: house writing style, delegation rubric); then, when the SessionStart hook payload on stdin names a `transcript_path` (or `--transcript` does), a "Before this start" section read from the bot's own session log since its last compaction through `agent-recall-axi` (bundled; the kit's own text reader is the fallback when the library cannot read the log): the operator's messages verbatim (the highest-authority record of intent; the loop prompt excluded, since the nudge and the bot's wakeups type it), newest kept whole within their share and the rest counted with the exact command that prints them; the last tool calls with their status as data; and the bot's last statements flagged as its own claims, each layer with its own share so one long message cannot crowd out the others, capped at 4 000 bytes; then every script in `wake.d/` in order (each prints one section); then the 48 h log summary and the untrusted-memory line; `--write` also writes the pack file and sets pending | 0 |
 | `gate check` | the PreToolUse body: exit 0 when nothing is pending or the pending pack was read whole; otherwise prints the deny reason and exits 2 | 0 · 2 |
@@ -205,6 +207,39 @@ the last kit section, titled so the session arms before anything else; `cycle be
 `cycle end` carry them as a `wake` field. Without a session log the state is `unknown` and
 the call is printed as the thing to do.
 - The bundle emits resolved paths, never bare command names.
+
+### The schedule monitor
+
+With `loop.schedule: "monitor"` one monitor is both the schedule and the live wake. It
+replaces the per-file monitors and the self-paced call.
+
+- **One call.** At the end of every cycle the session arms exactly one bounded `Monitor`,
+  described as `<bot> schedule`. Its command baked in the seconds until the next cycle is
+  due (`end=$(( $(date +%s) + N ))`) and polls every 2 seconds. It exits when a new line
+  appears in any file in `wake.files`, printing the new lines, each prefixed with the
+  file's basename and cut to 300 characters; or when the deadline passes, printing one
+  line, `cycle due`. The `timeout_ms` is the deadline plus a 60-second margin, so the
+  command ends itself and the harness never kills it. With no `wake.files` it is only the
+  timer.
+- **The due time.** N is `next-delay`, capped at 1 740 seconds so that N plus the margin
+  stays inside the harness's 30-minute limit.
+- **What prints it.** `cycle begin` on exit 0 or 30 and `cycle end` print a `wake` field:
+  the state (`armed until HH:MMZ`, or not armed) and the exact
+  `Monitor({ command, description, timeout_ms })` call to make now. When a monitor is
+  armed but due later than the next cycle (a cycle the monitor did not start), the line
+  says to stop it and arm the new one. No self-paced guidance is printed in this mode.
+- **The state.** Read from the session log: the last `Monitor` call with the schedule
+  description, armed until its call time plus its baked seconds, ended by a later notice
+  naming it.
+- **The pack.** The cold-start pack's live-wake section is always present in this mode.
+  It gives the state and the rules: the monitor is your schedule and your live wake; when
+  it delivers `cycle due` or an event line, run `cycle begin`; at the end of every cycle arm
+  the one monitor `cycle end` prints, exactly as printed; never call ScheduleWakeup and
+  never start `/loop`; never two monitors, never a longer deadline; if you find none armed
+  (after a start, a compaction, an error), arm it by running `cycle begin`.
+- **The backstop.** The nudge re-issues `loop.prompt`, which in this mode is a plain
+  message, not a slash command. Its defaults tighten to 35 minutes, so a session whose
+  monitor was not re-armed is noticed within one missed wake and a margin.
 
 ## Principles
 

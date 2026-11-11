@@ -96,3 +96,109 @@ export const WAKE_RULES = [
   "It exits on the first arrival or at its deadline. Arm it again at the end of every cycle when it is not armed, and when it reports an expiry with nothing delivered; never two on one file, never a longer deadline, never a different command.",
   "The listener's nudge is the backstop when no monitor is armed; neither path depends on the other.",
 ];
+
+// ---------------------------------------------------------- the schedule monitor
+//
+// With loop.schedule "monitor", one bounded Monitor is both the schedule and the live wake. Its
+// command bakes in the seconds until the next cycle is due and exits on its own: with the new lines
+// of any wake file (each prefixed with the file's basename), or with one line, `cycle due`. The
+// harness's timeout is that deadline plus a margin, so the harness never has to kill it.
+
+/** The harness's timeout over the command's own deadline. */
+export const SCHEDULE_MARGIN_S = 60;
+export const CYCLE_DUE = "cycle due";
+
+/** The fixed description the kit finds the schedule monitor by in the session log. */
+export function scheduleDescription(bot: string): string {
+  return `${bot} schedule`;
+}
+
+/** A shell single-quoted word. */
+function shq(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+const basename = (p: string) => p.replace(/\/+$/, "").split("/").pop() || p;
+
+/** The command: polls every 2 seconds until a wake file grows or `seconds` pass. */
+export function scheduleCommand(files: string[], seconds: number): string {
+  const parts = [`end=$(( $(date +%s) + ${Math.max(1, Math.round(seconds))} ))`];
+  if (files.length) parts.push(`c() { [ -f "$1" ] && wc -l < "$1" || echo 0; }`);
+  files.forEach((f, i) => parts.push(`f${i}=${shq(f)}; n${i}=$(c "$f${i}")`));
+  const body: string[] = [];
+  if (files.length) body.push("h=0");
+  files.forEach((f, i) => {
+    body.push(
+      `m=$(c "$f${i}"); if [ "$m" -lt "$n${i}" ]; then n${i}=$m; fi; ` +
+        `if [ "$m" -gt "$n${i}" ]; then tail -n $((m-n${i})) "$f${i}" | cut -c1-300 | while IFS= read -r l; do printf '%s: %s\\n' ${shq(basename(f))} "$l"; done; n${i}=$m; h=1; fi`,
+    );
+  });
+  if (files.length) body.push(`if [ "$h" = 1 ]; then exit 0; fi`);
+  body.push(`if [ "$(date +%s)" -ge "$end" ]; then echo ${shq(CYCLE_DUE)}; exit 0; fi`);
+  parts.push(`while sleep 2; do ${body.join("; ")}; done`);
+  return parts.join("; ");
+}
+
+/** The seconds baked into a schedule command, or null when it is not one. */
+export function scheduleSeconds(command: string): number | null {
+  const m = command.match(/^end=\$\(\( \$\(date \+%s\) \+ (\d+) \)\)/);
+  return m ? Number(m[1]) : null;
+}
+
+export function scheduleTimeoutMs(seconds: number): number {
+  return (Math.max(1, Math.round(seconds)) + SCHEDULE_MARGIN_S) * 1000;
+}
+
+/** The exact tool call the session makes at the end of every cycle. */
+export function scheduleCall(bot: string, files: string[], seconds: number): string {
+  return `Monitor({ command: ${JSON.stringify(scheduleCommand(files, seconds))}, description: ${JSON.stringify(scheduleDescription(bot))}, timeout_ms: ${scheduleTimeoutMs(seconds)} })`;
+}
+
+/** What the session log says about the schedule monitor: armed (since, until its own baked
+ * deadline) or not. */
+export function scheduleState(evs: Ev[], bot: string, now: number): { at: string; until: string } | null {
+  const desc = scheduleDescription(bot);
+  const m = lastMonitorCall(evs, (c) => c.description === desc);
+  if (!m || m.ended) return null;
+  const at = parseIso(m.at);
+  if (at === null) return null;
+  const secs = scheduleSeconds(m.command);
+  const until = at + (secs !== null ? secs * 1000 : Math.max(0, m.timeoutMs - SCHEDULE_MARGIN_S * 1000));
+  if (until <= now) return null;
+  return { at: iso(at), until: iso(until) };
+}
+
+/**
+ * The `wake` lines for `cycle begin` and `cycle end` with a monitor schedule: the state, then the
+ * one call to make now. An armed monitor due no later than the next cycle (a minute's slack) needs
+ * nothing; one due later (a cycle it did not start) is stopped and replaced, never doubled.
+ */
+export function scheduleLines(s: Settings, evs: Ev[] | null, now: number, dueSeconds: number): string[] {
+  const call = scheduleCall(s.name, wakeFiles(s), dueSeconds);
+  if (!evs) return [`state unknown (no session log) · arm now: ${call}`];
+  const st = scheduleState(evs, s.name, now);
+  if (!st) return [`not armed · arm now: ${call}`];
+  const due = now + dueSeconds * 1000;
+  if (Date.parse(st.until) <= due + 60_000) return [`armed until ${hhmm(st.until)} (since ${hhmm(st.at)}); nothing to do`];
+  return [
+    `armed until ${hhmm(st.until)} (since ${hhmm(st.at)}), later than the next cycle is due (${hhmm(iso(due))}) · stop it with TaskStop, then arm: ${call}`,
+  ];
+}
+
+/** The pack's state line with a monitor schedule: arming goes through `cycle begin`. */
+export function schedulePackLines(s: Settings, evs: Ev[] | null, now: number): string[] {
+  const st = evs ? scheduleState(evs, s.name, now) : null;
+  if (st) return [`armed until ${hhmm(st.until)} (since ${hhmm(st.at)}); nothing to do until it delivers`];
+  return [`${evs ? "not armed" : "state unknown (no session log)"} · run \`cycle begin\` now; it prints the one Monitor call to make`];
+}
+
+/** The standing rules with a monitor schedule, for the pack. */
+export const SCHEDULE_RULES = [
+  "The monitor is your schedule and your live wake.",
+  "When it delivers `cycle due` or an event line, run `cycle begin`.",
+  "At the end of every cycle, arm the one monitor `cycle end` prints, exactly as printed.",
+  "Never call ScheduleWakeup and never start `/loop`.",
+  "Never two monitors, never a longer deadline.",
+  "If you find none armed (after a start, a compaction, an error), arm it by running `cycle begin`.",
+  "The kit's nudge is the backstop if the monitor is ever not armed.",
+];
