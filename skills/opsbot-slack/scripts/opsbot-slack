@@ -4,9 +4,15 @@
 #   opsbot-slack install [--dry-run] [--force]   copy the templates into opsbot.d/; print the
 #                                                opsbot.json blocks to merge (never writes it)
 #   opsbot-slack status                          one row per piece: ok, missing or differs
+#   opsbot-slack post <conv> [--reply <ts>] [--dry-run] [<markdown> | -]
+#                                                the only way the bot posts: classify the
+#                                                destination, screen the draft when configured,
+#                                                post in bot mode, log the decision
+#   opsbot-slack classify <conv>                 the destination's class alone
 #
-# Run from the bot's repo checkout, as the bot's user. Exit 0 all ok, 1 something to fix,
-# 2 bad usage or not in a bot's repo. Tokens are never printed: status reads only the first
+# Run from the bot's repo checkout, as the bot's user. install and status: exit 0 all ok,
+# 1 something to fix, 2 bad usage or not in a bot's repo. post: 0 posted, 1 Slack refused,
+# 2 bad usage or setting, 3 the screen blocked it, 4 the screen failed (see SKILL.md). Tokens are never printed: status reads only the first
 # five characters of the app-level token file and its mode.
 set -uo pipefail
 
@@ -23,6 +29,15 @@ commands:
                                  print the opsbot.json blocks to merge and the manifest path
   status                         check the token file, slack-axi, the scripts, opsbot.json
                                  and the listener's unit; exit 0 all ok, 1 something to fix
+  post <conv> [--reply <ts>] [--dry-run] [<markdown> | -]
+                                 the only way the bot posts. The first arguments are an
+                                 item's reply column, whole; the text is the last argument,
+                                 or stdin. Classifies the destination, screens the draft when
+                                 streams.slack.screen names a policy for its class, posts in
+                                 bot mode, logs the decision. Exit 0 posted, 1 Slack refused,
+                                 2 bad usage or setting, 3 blocked, 4 the screen failed
+  classify <conv>                the destination's class: operator-dm, internal, external
+                                 or unknown, and why
 EOF
 }
 
@@ -178,6 +193,16 @@ cmd_status() {
   if [ $found = 1 ]; then row ok wake.files "names $ef_cfg"
   else row missing wake.files "does not name $ef_cfg" "add \"$ef_cfg\" to wake.files in opsbot.json"; fi
 
+  # the screen, only when it is set
+  if [ -n "$(cfg streams.slack.screen)" ]; then
+    local sc; sc=$(OPSBOT_ROOT="$ROOT" OPSBOT_CONFIG="$CONFIG" node "$SKILL/scripts/slack-post.mjs" screen-check 2>&1)
+    case "$sc" in
+      "ok "*) row ok screen "${sc#ok }" ;;
+      "differs "*) row differs screen "${sc#differs }" "fix streams.slack.screen in opsbot.json, or the files it names" ;;
+      *) row differs screen "could not check: $(printf '%s\n' "$sc" | head -1)" ;;
+    esac
+  fi
+
   # the listener's unit, as opsbot-core infra install names it
   local unit="opsbot-$name-monitor-10-slack-listener.service"
   if ! command -v systemctl >/dev/null; then row missing listener "$unit: no systemctl on this host" "opsbot-core infra install (on a systemd host)"
@@ -200,6 +225,10 @@ cmd="$1"; shift
 case "$cmd" in
   install) cmd_install "$@" ;;
   status) cmd_status "$@" ;;
+  post|classify)
+    case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+    need_bot_repo
+    OPSBOT_ROOT="$ROOT" OPSBOT_CONFIG="${OPSBOT_CONFIG:-$CONFIG}" exec node "$SKILL/scripts/slack-post.mjs" "$cmd" "$@" ;;
   -h|--help|help) usage; exit 0 ;;
   *) die_usage "unknown command: $cmd" ;;
 esac

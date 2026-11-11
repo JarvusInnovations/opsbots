@@ -9,8 +9,9 @@
 // - key is the listener's (slack:<conv>:<ts>:msg, slack:<conv>:<ts>:<emoji>:<user>,
 //   slack:team_join:<user>), so it is the same on every run and the core drops what it has seen.
 // - reply is the exact address of the answer: `<conv> --reply <ts>`, where ts is the thread when
-//   the message is threaded, else the message itself. Use it whole: `slack-axi draft <reply> "…"`.
-//   The loop never chooses a thread, so an answer cannot land in the wrong one.
+//   the message is threaded, else the message itself. Use it whole: `opsbot-slack post <reply> "…"`,
+//   the only way the bot posts. The loop never chooses a thread, so an answer cannot land in the
+//   wrong one.
 // - from_slack is what `slack-axi user` returns for the sender (name, display_name, kind, and
 //   title or email only when the token's scopes return them), one call per sender per check.
 // - thread, for a threaded message: the message count, the parent's first 240 characters, the
