@@ -85,6 +85,37 @@ follows in a thread.
 - It cannot read direct messages between other people, or channels it is not in.
 - It knows when a new member joins the workspace.
 
+## Screening what the bot posts (optional)
+
+The bot posts every message through one command, `opsbot-slack post`. Before it posts, the
+command works out from Slack who will read the message:
+
+- **operator DM**: a DM with you. Never screened.
+- **internal**: everyone there is a full member of your workspace.
+- **external**: a Slack Connect channel, a channel with a guest in it, or a DM with someone
+  outside. When it cannot tell, it treats the channel as external.
+
+You can have it check each draft before it goes to an internal or an external channel. The
+check is one model call that sees only the draft, the kind of channel and a short policy you
+write: what must not be said there. If the check objects, nothing is posted and the bot
+rewrites the message or asks you. If the check itself fails, nothing is posted and you get one
+DM about it.
+
+To turn it on:
+
+1. Copy `templates/screen/screen` into the bot's repo (for example `bin/slack-screen`) and make
+   it executable. It calls Claude with an API key in `ANTHROPIC_API_KEY` in the bot's
+   environment. Replace it with your own command if the bot reaches a model another way.
+2. Copy the two `templates/screen/policy-*.md` files into the repo and make them specific:
+   the internal one lists what even your own team should not read from the bot, the external
+   one what no one outside may read.
+3. Add `operators` (your user id) and `screen` to `streams.slack` in `opsbot.json`, and
+   `logs/slack-posts.jsonl` to `commit_paths`. SKILL.md has the exact block.
+4. Run `opsbot-slack status`: the `screen` row should say `ok`.
+
+The check catches what looks confidential. It cannot know a fact is private unless the policy
+says so.
+
 ## Changing a scope
 
 1. Edit the manifest in the repo, in a pull request, with the reason in a comment beside the
