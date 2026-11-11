@@ -148,6 +148,170 @@ describe("the listener's pure parts", () => {
   });
 });
 
+/**
+ * What the listener's handle() does per event, with the events file and the own-threads file
+ * held in memory: an own root is remembered and nothing else; anything else goes through
+ * classify() with the same inMyThread the process uses. Through node, no file, no network.
+ */
+function listen(events: unknown[], files = { events: "", roots: "" }, botUser = BOT) {
+  const r = spawnSync(NODE, ["--input-type=module", "-e", `
+    const m = await import(process.env.LISTENER);
+    let s = ""; for await (const c of process.stdin) s += c;
+    const { events, files, botUser } = JSON.parse(s);
+    const kept = [];
+    for (const e of events) {
+      const root = m.ownRoot(e, { botUser });
+      if (root) { files.roots += JSON.stringify(root) + "\\n"; continue; }
+      const it = m.classify(e, { botUser, inMyThread: (c, t) => m.rootIsMine(files.roots, c, t) || m.threadIsMine(files.events, c, t) });
+      if (it) { files.events += JSON.stringify(it) + "\\n"; kept.push(it); }
+    }
+    console.log(JSON.stringify({ kept, files }));`], { input: JSON.stringify({ events, files, botUser }), encoding: "utf8", env: { ...process.env, LISTENER } });
+  if (r.status !== 0) throw new Error(r.stderr);
+  return JSON.parse(r.stdout) as { kept: Record<string, unknown>[]; files: { events: string; roots: string } };
+}
+
+/** Call one of the listener's exported pure functions through node. */
+function call(fn: string, args: unknown[]): unknown {
+  const r = spawnSync(NODE, ["--input-type=module", "-e", `
+    const m = await import(process.env.LISTENER);
+    let s = ""; for await (const c of process.stdin) s += c;
+    const { fn, args } = JSON.parse(s);
+    console.log(JSON.stringify(m[fn](...args) ?? null));`], { input: JSON.stringify({ fn, args }), encoding: "utf8", env: { ...process.env, LISTENER } });
+  if (r.status !== 0) throw new Error(r.stderr);
+  return JSON.parse(r.stdout);
+}
+
+describe("threads the bot started", () => {
+  const ROOT = "1794400600.000800";
+  const PRIV = "G0PRIV0001";
+  const ownPost = { type: "message", channel_type: "group", channel: PRIV, user: BOT, bot_id: "B0BOT00001", text: "the nightly summary", ts: ROOT };
+  const ownReply = { ...ownPost, text: "one more thing", ts: "1794400650.000850", thread_ts: ROOT, parent_user_id: BOT };
+  const reply = { type: "message", channel_type: "group", channel: PRIV, user: ANN, text: "thanks, and the totals?", ts: "1794400700.000900", thread_ts: ROOT };
+
+  test("a reply under the bot's own top-level post is kept, with the usual key and thread", () => {
+    const { kept, files } = listen([ownPost, ownReply, reply]);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]).toMatchObject({ key: `slack:${PRIV}:1794400700.000900:msg`, event: "message", kind: "group", from: ANN, thread_ts: ROOT });
+    // Only the top-level post is a root; the bot's own reply is neither a root nor an item.
+    expect(files.roots.trim().split("\n").map((l) => JSON.parse(l))).toEqual([{ conv: PRIV, ts: ROOT }]);
+  });
+
+  test("a reply is kept when Slack names the bot as the thread's parent author and no root was recorded", () => {
+    const { kept, files } = listen([{ ...reply, parent_user_id: BOT }]);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]).toMatchObject({ thread_ts: ROOT, from: ANN });
+    expect(files.roots).toBe("");
+    // Without bot_user the field means nothing.
+    expect(listen([{ ...reply, parent_user_id: BOT }], undefined, "").kept).toEqual([]);
+  });
+
+  test("a thread the bot only replied in, with no mention, still does not count", () => {
+    const { kept, files } = listen([
+      { ...ownReply, parent_user_id: ANN },
+      { ...reply, user: "U0BEN00001", parent_user_id: ANN },
+    ]);
+    expect(kept).toEqual([]);
+    expect(files.roots).toBe("");
+  });
+
+  test("a root in one conversation does not claim the same ts in another, nor another thread", () => {
+    const { kept } = listen([
+      ownPost,
+      { ...reply, channel: CHAN, channel_type: "channel" },
+      { ...reply, thread_ts: "1794400000.999999", parent_user_id: ANN },
+    ]);
+    expect(kept).toEqual([]);
+  });
+
+  test("the bot's own messages are never items, top-level or reply, even in its own thread", () => {
+    const { kept } = listen([ownPost, ownReply, { ...ownReply, bot_id: undefined }]);
+    expect(kept).toEqual([]);
+    for (const e of [ownPost, ownReply]) expect(classify([e])).toEqual([null]);
+  });
+
+  test("ownRoot ignores people's posts, edits, replies, DMs and an unset bot_user", () => {
+    const root = (e: unknown, botUser = BOT) => call("ownRoot", [e, { botUser }]);
+    expect(root({ ...ownPost, user: ANN })).toBeNull();
+    expect(root({ ...ownPost, subtype: "message_changed" })).toBeNull();
+    expect(root(ownReply)).toBeNull();
+    expect(root({ ...ownPost, channel: DM, channel_type: "im" })).toBeNull();
+    expect(root(ownPost, "")).toBeNull();
+    expect(root({ ...ownPost, thread_ts: ROOT })).toEqual({ conv: PRIV, ts: ROOT });
+    expect(root({ ...ownPost, channel: CHAN, channel_type: "channel", subtype: "file_share" })).toEqual({ conv: CHAN, ts: ROOT });
+  });
+
+  test("the mention rule is unchanged: a reply in a thread it was @mentioned in is kept, one that @mentions it is left to app_mention", () => {
+    const { kept } = listen([MENTION, THREAD_REPLY, { ...THREAD_REPLY, ts: "1794400310.000410", text: `<@${BOT}> and this` }]);
+    expect(kept.map((k) => k.event)).toEqual(["app_mention", "message"]);
+    expect(kept[1]).toMatchObject({ thread_ts: "1794400200.000300" });
+    // And under its own post: a reply that @mentions it is still the app_mention's.
+    expect(listen([ownPost, { ...reply, text: `<@${BOT}> again` }]).kept).toEqual([]);
+  });
+
+  test("the own-threads file sits beside the events file", () => {
+    const s = call("settings", [{ name: "examplebot", streams: { slack: { events_file: "/var/tmp/example/events.jsonl" } } }]) as Record<string, string>;
+    expect(s.ownThreadsFile).toBe("/var/tmp/example/slack-own-threads.jsonl");
+  });
+
+  test("the running listener remembers its own post on disk, keeps the reply under it, and prunes old roots", () => {
+    // A preload stands in for Slack: fetch returns a socket URL, and the WebSocket delivers the
+    // events one at a time, then exits. No network; HOME is the temp dir.
+    const dir = tmp();
+    const repo = join(dir, "repo");
+    mkdirSync(repo);
+    const tf = join(dir, "app-token");
+    writeFileSync(tf, "xapp-1-FAKE\n", { mode: 0o600 });
+    chmodSync(tf, 0o600);
+    const now = Math.floor(Date.now() / 1000);
+    const roots = join(dir, "slack-own-threads.jsonl");
+    writeFileSync(roots, JSON.stringify({ conv: PRIV, ts: `${now - 100 * 86400}.000100`, recorded_at: "2026-01-01T00:00:00.000Z" }) + "\n");
+    writeFileSync(join(repo, "opsbot.json"), JSON.stringify({ name: "examplebot", streams: { slack: { app_token_file: tf, events_file: join(dir, "slack-events.jsonl"), bot_user: BOT } } }));
+    const post = { ...ownPost, ts: `${now}.000100` };
+    const answer = { ...reply, ts: `${now}.000200`, thread_ts: post.ts };
+    const preload = join(dir, "fake-slack.mjs");
+    writeFileSync(preload, `
+      const events = ${JSON.stringify([post, answer])};
+      globalThis.fetch = async () => ({ json: async () => ({ ok: true, url: "ws://stand-in" }) });
+      globalThis.WebSocket = class {
+        constructor() {
+          setTimeout(() => {
+            this.onopen();
+            let i = 0;
+            const next = () => {
+              if (i >= events.length) { setTimeout(() => process.exit(0), 300); return; }
+              this.onmessage({ data: JSON.stringify({ envelope_id: "e" + i, type: "events_api", payload: { event: events[i++] } }) });
+              setTimeout(next, 150);
+            };
+            next();
+          }, 10);
+        }
+        send() {}
+        close() {}
+      };`);
+    const r = spawnSync(NODE, ["--import", preload, LISTENER], {
+      encoding: "utf8", timeout: 20000,
+      env: { ...process.env, HOME: dir, OPSBOT_ROOT: repo, OPSBOT_CORE: "/bin/true", OPSBOT_SLACK_AXI: "/bin/true" },
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain(`own thread root ${PRIV} ${post.ts}`);
+    // The 100-day-old root is gone; the new one is the only line.
+    expect(readFileSync(roots, "utf8").trim().split("\n").map((l) => JSON.parse(l))).toEqual([expect.objectContaining({ conv: PRIV, ts: post.ts })]);
+    const recorded = readFileSync(join(dir, "slack-events.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(recorded).toEqual([expect.objectContaining({ key: `slack:${PRIV}:${answer.ts}:msg`, from: ANN, thread_ts: post.ts })]);
+  });
+
+  test("roots older than 90 days are pruned by their ts; recent ones and their order stay", () => {
+    const now = 1794400600 * 1000;
+    const day = 86400;
+    const line = (ts: number) => JSON.stringify({ conv: PRIV, ts: `${ts}.000100`, recorded_at: "2026-11-10T14:00:00.000Z" }) + "\n";
+    const recent = line(1794400600 - 89 * day) + line(1794400600 - day) + line(1794400600);
+    expect(call("pruneRoots", [recent, now])).toBe(recent);
+    expect(call("pruneRoots", [line(1794400600 - 91 * day) + "not json\n" + recent, now])).toBe(recent);
+    expect(call("pruneRoots", ["", now])).toBe("");
+    expect(call("pruneRoots", [line(1794400600 - 11 * day), now, 10])).toBe("");
+  });
+});
+
 /** A bot repo with an events file recorded from the raw events above. */
 function readerSetup(slack: Record<string, unknown> = {}, opts: { noEvents?: boolean } = {}) {
   const dir = tmp();
