@@ -129,7 +129,7 @@ file, since a unit outlives any one commit.
 | `escalate.d/` | when the core must reach the operator | receives the message on stdin; every script runs (a chat DM, a push notification); the core needs at least one or `watchdog` reports itself unable to escalate |
 
 The core runs nothing from these directories that the bot's repo did not put there; it ships one adapter as a template to copy (`templates/heartbeat.d/50-peer-sessions`, below) and test fixtures. A channel skill
-installs its adapter into `heartbeat.d/` and its listener into `monitor.d/`; the record
+installs its adapter into `heartbeat.d/` and its listener into `monitor.d/` ([opsbot-slack](opsbot-slack.md) is the first); the record
 skill installs `wake.d/20-owed` and `cycle.d/end/20-due`; a bot's own script goes in
 the same way. `opsbot-core hooks list` shows what will run at each point and in what
 order.

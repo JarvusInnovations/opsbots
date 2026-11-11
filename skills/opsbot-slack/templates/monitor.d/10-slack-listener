@@ -1,0 +1,222 @@
+#!/usr/bin/env node
+// monitor.d: the Slack listener, installed by the opsbot-slack skill. `opsbot-core infra install`
+// runs it as a user service. It holds a Socket Mode connection on the app-level token and, the
+// moment a DM to the bot, an @mention, a reply in a thread it was @mentioned in, a reaction on
+// one of its messages, or a new member arrives:
+//   1. records it as one JSON line in streams.slack.events_file. That file is in wake.files, so
+//      the session's own bounded monitor wakes on it; the heartbeat reader
+//      (heartbeat.d/20-slack-events) turns the lines into items at the next check;
+//   2. reacts with receipt_emoji (default eyes) on a message, so the sender sees it was heard;
+//   3. runs `$OPSBOT_CORE nudge --now`, the backstop that survives the session, and keeps
+//      asking every 10 s while the agent is mid-turn, until it wakes or the item was read
+//      anyway. The nudge has its own cooldown, so the repeats are cheap;
+//   4. reacts with ack_emoji (default gear) only when the item's key appears in
+//      logs/intake/seen, which the core writes when the check reports the item to the model.
+//      So the second reaction means "read", by construction, not by promise.
+// The cycle answers; this only watches. It logs every event type it receives, so a missing
+// scope or subscription shows in the journal. Zero dependencies: Node 22's fetch and WebSocket.
+// OPSBOT_SLACK_AXI names another slack-axi binary (a pinned copy, a test double).
+//
+// opsbot.json, all optional except bot_user:
+//   "streams": { "slack": {
+//     "bot_user": "<the bot's own user id>",
+//     "app_token_file": "~/.config/<bot>/slack-app-token",
+//     "events_file": "~/.cache/<bot>/slack-events.jsonl",
+//     "receipt_emoji": "eyes", "ack_emoji": "gear", "ack_timeout_minutes": 30,
+//     "team": "<team id, when slack-axi holds more than one workspace>"
+//   } }
+import { execFile } from "node:child_process";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+/** `~/x` to an absolute path. */
+export const expandHome = (p) => (p && p.startsWith("~") ? join(homedir(), p.slice(1)) : p);
+
+/** Every value the listener reads from opsbot.json, with its default. */
+export function settings(cfg) {
+  const s = (cfg.streams && cfg.streams.slack) || {};
+  return {
+    tokenFile: expandHome(s.app_token_file || `~/.config/${cfg.name}/slack-app-token`),
+    eventsFile: expandHome(s.events_file || `~/.cache/${cfg.name}/slack-events.jsonl`),
+    botUser: s.bot_user || "",
+    receiptEmoji: s.receipt_emoji || "eyes",
+    ackEmoji: s.ack_emoji || "gear",
+    ackTimeoutMs: (Number(s.ack_timeout_minutes) || 30) * 60000,
+    team: s.team || "",
+  };
+}
+
+export const tsToIso = (ts) => new Date(Math.round(parseFloat(ts) * 1000)).toISOString();
+
+/** A person's own message: no subtype, or the one Slack adds when the message carries files. */
+const plainMessage = (e) => !e.subtype || e.subtype === "file_share";
+
+/** Direct messages live in conversations whose id starts with D. */
+const kindOf = (conv) => (String(conv || "").startsWith("D") ? "dm" : "group");
+
+/**
+ * The line to record for one Events API event, or null when the event is not one the bot
+ * keeps. `inMyThread(conv, threadTs)` says whether a thread holds an @mention already
+ * recorded. Pure: no file, no network.
+ */
+export function classify(event, { botUser = "", inMyThread = () => false } = {}) {
+  if (!event || typeof event !== "object") return null;
+  if (event.type === "team_join") {
+    const u = event.user || {};
+    const id = typeof u === "string" ? u : u.id;
+    if (!id) return null;
+    const name = typeof u === "object" ? u.real_name || u.name || "" : "";
+    const ts = event.event_ts || String(Date.now() / 1000);
+    return { key: `slack:team_join:${id}`, at: tsToIso(ts), event: "team_join", kind: "group", from: id, text: `joined the workspace${name ? `: ${name}` : ""}`, ts };
+  }
+  if (event.bot_id || (botUser && event.user === botUser)) return null;
+  let item = null;
+  if (event.type === "app_mention") {
+    item = { kind: kindOf(event.channel), conv: event.channel, from: event.user, text: event.text || "", ts: event.ts, thread_ts: event.thread_ts || null };
+  } else if (event.type === "message" && event.channel_type === "im" && plainMessage(event)) {
+    item = { kind: "dm", conv: event.channel, from: event.user, text: event.text || "", ts: event.ts, thread_ts: event.thread_ts || null };
+  } else if (event.type === "message" && (event.channel_type === "channel" || event.channel_type === "group") && plainMessage(event)
+    && event.thread_ts && event.thread_ts !== event.ts
+    && !(botUser && (event.text || "").includes(`<@${botUser}>`))
+    && inMyThread(event.channel, event.thread_ts)) {
+    // A reply in a thread the bot was pulled into. A reply that @mentions it arrives as app_mention.
+    item = { kind: "group", conv: event.channel, from: event.user, text: event.text || "", ts: event.ts, thread_ts: event.thread_ts };
+  } else if (event.type === "reaction_added" && event.item && event.item.type === "message" && botUser && event.item_user === botUser) {
+    item = { kind: kindOf(event.item.channel), conv: event.item.channel, from: event.user, text: `:${event.reaction}:`, ts: event.item.ts, thread_ts: null, reaction: event.reaction };
+  }
+  if (!item || !item.conv || !item.ts) return null;
+  const key = `slack:${item.conv}:${item.ts}:${item.reaction ? `${item.reaction}:${item.from}` : "msg"}`;
+  return { key, at: tsToIso(item.ts), event: event.type, ...item };
+}
+
+/** Whether `lines` (the events file) hold an @mention, or a kept reply, in this thread. */
+export function threadIsMine(lines, conv, threadTs) {
+  for (const line of lines.split("\n")) {
+    if (!line.includes(conv)) continue;
+    let ev;
+    try { ev = JSON.parse(line); } catch { continue; }
+    if (ev.event !== "app_mention" && ev.event !== "message") continue;
+    if (ev.kind === "group" && ev.conv === conv && (ev.thread_ts || ev.ts) === threadTs) return true;
+  }
+  return false;
+}
+
+/** One journal line for every event received, kept or not: the record that shows a missing scope. */
+export function describe(event) {
+  if (!event) return "event (empty)";
+  const where = event.channel || (event.item && event.item.channel) || "";
+  const what = event.channel_type || (event.item && event.item.type) || event.subtype || "";
+  const who = typeof event.user === "string" ? event.user : (event.user && event.user.id) || "";
+  return ["event", event.type, what, where, who].filter(Boolean).join(" ");
+}
+
+// ---------------------------------------------------------------------------------- the process
+
+function main() {
+  const root = process.env.OPSBOT_ROOT || process.cwd();
+  const cfg = JSON.parse(readFileSync(process.env.OPSBOT_CONFIG || join(root, "opsbot.json"), "utf8"));
+  const s = settings(cfg);
+  const seenFile = join(root, "logs/intake/seen");
+  const core = process.env.OPSBOT_CORE || join(root, ".agents/skills/opsbot-core/scripts/opsbot-core");
+  const teamArgs = s.team ? ["--team", s.team] : [];
+  const axi = process.env.OPSBOT_SLACK_AXI || "slack-axi";
+
+  const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
+  const fail = (m) => { console.error(m); process.exit(1); };
+  if (!existsSync(s.tokenFile)) fail(`no app-level token at ${s.tokenFile} (xapp-, connections:write); see the opsbot-slack README`);
+  if ((statSync(s.tokenFile).mode & 0o077) !== 0) fail(`${s.tokenFile} is readable by others; chmod 600 it`);
+  const appToken = readFileSync(s.tokenFile, "utf8").trim();
+  if (!appToken.startsWith("xapp-")) fail(`${s.tokenFile} does not hold an app-level (xapp-) token`);
+  if (!s.botUser) log("!", "streams.slack.bot_user is not set: the bot's own messages and reactions cannot be told apart");
+  mkdirSync(dirname(s.eventsFile), { recursive: true });
+  // Created on start, so the reader can tell "no events yet" from "the listener never ran".
+  closeSync(openSync(s.eventsFile, "a"));
+
+  const run = (bin, args) => new Promise((resolve) => {
+    execFile(bin, args, { timeout: 30000 }, (err, stdout, stderr) => {
+      if (err) log("!", basename(bin), args.slice(0, 2).join(" "), (stderr || stdout || err.message).trim().split("\n")[0]);
+      resolve({ ok: !err, out: (stdout || "").trim() });
+    });
+  });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const isSeen = (key) => { try { return readFileSync(seenFile, "utf8").split("\n").includes(key); } catch { return false; } };
+  const readEvents = () => { try { return readFileSync(s.eventsFile, "utf8"); } catch (e) { log("!", "events file:", e.message); return ""; } };
+
+  async function wake(key, reason) {
+    const until = Date.now() + s.ackTimeoutMs;
+    while (Date.now() < until) {
+      const r = await run(core, ["nudge", "--now", "--reason", reason]);
+      const line = r.out.split("\n")[0] || "";
+      if (/woke/.test(line)) { log("nudge:", line.slice(0, 120)); return; }
+      if (isSeen(key)) return;
+      log("nudge pending:", line.slice(0, 120));
+      await sleep(10000);
+    }
+    log("!", "wake timed out for", key);
+  }
+
+  async function ackWhenSeen(conv, ts, key) {
+    const until = Date.now() + s.ackTimeoutMs;
+    while (Date.now() < until) {
+      if (isSeen(key)) { await run(axi, ["react", conv, ts, `:${s.ackEmoji}:`, ...teamArgs]); log("read:", key); return; }
+      await sleep(2000);
+    }
+    log("!", "never seen within the timeout:", key);
+  }
+
+  async function handle(event) {
+    log(describe(event));
+    const item = classify(event, { botUser: s.botUser, inMyThread: (c, t) => threadIsMine(readEvents(), c, t) });
+    if (!item) return;
+    appendFileSync(s.eventsFile, JSON.stringify({ ...item, recorded_at: new Date().toISOString() }) + "\n");
+    log("recorded", item.event, item.kind, item.conv || "", item.from || "");
+    const message = item.event === "app_mention" || item.event === "message";
+    if (message) {
+      await run(axi, ["react", item.conv, item.ts, `:${s.receiptEmoji}:`, ...teamArgs]);
+      ackWhenSeen(item.conv, item.ts, item.key).catch((e) => log("!", "ack:", e.message));
+    }
+    wake(item.key, `slack ${item.event} from ${item.from}${item.conv ? ` in ${item.conv}` : ""}`).catch((e) => log("!", "wake:", e.message));
+  }
+
+  let backoff = 5;
+  const retry = () => { setTimeout(connect, backoff * 1000); backoff = Math.min(backoff * 2, 300); };
+  async function connect() {
+    let url;
+    try {
+      const r = await fetch("https://slack.com/api/apps.connections.open", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${appToken}`, "Content-Type": "application/x-www-form-urlencoded" },
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || "apps.connections.open failed");
+      url = j.url;
+    } catch (e) {
+      log("!", "open:", e.message, `retry in ${backoff}s`);
+      retry();
+      return;
+    }
+    const ws = new WebSocket(url);
+    ws.onopen = () => { backoff = 5; log("connected"); };
+    ws.onmessage = (m) => {
+      let msg;
+      try { msg = JSON.parse(m.data); } catch { return; }
+      if (msg.envelope_id) ws.send(JSON.stringify({ envelope_id: msg.envelope_id }));
+      if (msg.type === "hello") return;
+      if (msg.type === "disconnect") { log("server asked to reconnect:", msg.reason); ws.close(); return; }
+      if (msg.type === "events_api") handle(msg.payload && msg.payload.event).catch((e) => log("!", "handle:", e.message));
+      else log("envelope", msg.type);
+    };
+    ws.onerror = (e) => log("!", "ws:", e.message || "error");
+    ws.onclose = () => { log(`closed; reconnecting in ${backoff}s`); retry(); };
+  }
+
+  log(`listening for ${cfg.name}; events to ${s.eventsFile}; receipt :${s.receiptEmoji}:, read :${s.ackEmoji}: once in ${seenFile}`);
+  connect();
+}
+
+const self = fileURLToPath(import.meta.url);
+let invoked = "";
+try { invoked = process.argv[1] ? realpathSync(process.argv[1]) : ""; } catch {}
+if (invoked === realpathSync(self)) main();

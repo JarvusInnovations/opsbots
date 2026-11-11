@@ -18,6 +18,11 @@ Two kinds of skill, installed with the [`skills`](https://skills.sh/) CLI:
   to a session that can start, the virtual desktop with VNC on the tailnet, the headless
   browser bridge, and a status check for all of it.
 
+- **`opsbot-slack`**: puts the bot in Slack as its own bot user. It ships the app manifest, a
+  listener that reacts the moment a DM or @mention lands and wakes the loop, a reader that
+  turns those events into check items with the exact reply address, a DM to the operator for
+  escalations, and an install and status command.
+
 Setting up a fresh machine for agent work, bot or not, is one line with no root:
 
 ```bash
@@ -30,6 +35,7 @@ missing, and lists the sign-ins left for you. Add `-s -- --dry-run` to look firs
 ```bash
 npx skills add JarvusInnovations/opsbots --skill opsbot-core   # in a bot's repo
 npx skills add JarvusInnovations/opsbots --skill opsbot-host   # in a bot's repo
+npx skills add JarvusInnovations/opsbots --skill opsbot-slack  # in a bot's repo
 npx skills add JarvusInnovations/opsbots --skill mothership    # in a mothership
 ```
 
