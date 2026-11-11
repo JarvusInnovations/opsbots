@@ -27,6 +27,13 @@ export type LoopMode = (typeof LOOP_MODES)[number];
  * of a 715k window per call and about a fifth more than 200k, with half of 200k's compactions.
  */
 export const MODE_AUTOCOMPACT: Record<LoopMode, string> = { strategist: "750k", dispatcher: "300k" };
+/**
+ * How the session schedules its next cycle. `self`: the self-paced call with the loop prompt.
+ * `monitor`: one bounded Monitor armed at the end of every cycle, which exits on a new line in a
+ * wake file or when the next cycle is due (specs/skills/opsbot-core.md, The schedule monitor).
+ */
+export const LOOP_SCHEDULES = ["self", "monitor"] as const;
+export type LoopSchedule = (typeof LOOP_SCHEDULES)[number];
 /** The model `start` passes when `loop.model` is not set. */
 export const MODE_MODEL: Record<LoopMode, string> = { strategist: "fable", dispatcher: "opus" };
 
@@ -55,7 +62,7 @@ export interface Settings {
   timezone: string;
   rule_card: string | null;
   gate_word: string | null;
-  loop: { prompt: string; autocompact: string | null; model: string | null; permission_mode: string; mode: LoopMode };
+  loop: { prompt: string; autocompact: string | null; model: string | null; permission_mode: string; mode: LoopMode; schedule: LoopSchedule };
   cadence: Cadence;
   lock_max_minutes: number;
   liveness: Liveness;
@@ -88,6 +95,10 @@ export const DEFAULT_LIVENESS: Liveness = {
   wake_cooldown_minutes: 10,
   interval_minutes: 10,
 };
+
+/** With `loop.schedule: "monitor"` the nudge's unset quiet limit and cooldown: one missed wake
+ * (29 minutes at most) plus a margin, so a session whose monitor was not re-armed is noticed. */
+export const MONITOR_NUDGE_MINUTES = 35;
 
 const NAME_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const AGENT_RE = /^[a-z][a-z0-9_-]{0,31}$/;
@@ -180,9 +191,13 @@ export function validateSettings(raw: unknown): string[] {
 
   const loop = obj(raw, "loop", "", true);
   if (loop) {
-    allow(loop, "loop.", ["prompt", "autocompact", "model", "permission_mode", "mode"]);
+    allow(loop, "loop.", ["prompt", "autocompact", "model", "permission_mode", "mode", "schedule"]);
     if (loop.mode !== undefined && !LOOP_MODES.includes(loop.mode as LoopMode)) problems.push(`loop.mode must be one of ${LOOP_MODES.join(", ")}`);
+    if (loop.schedule !== undefined && !LOOP_SCHEDULES.includes(loop.schedule as LoopSchedule)) problems.push(`loop.schedule must be one of ${LOOP_SCHEDULES.join(", ")}`);
     str(loop, "prompt", "loop.", true);
+    if (loop.schedule === "monitor" && typeof loop.prompt === "string" && loop.prompt.trimStart().startsWith("/")) {
+      problems.push("loop.prompt must not start with a slash command when loop.schedule is monitor: every wake would re-read the command's body");
+    }
     if (loop.model !== undefined && (typeof loop.model !== "string" || loop.model === "")) problems.push("loop.model must be a non-empty string (a Claude Code model name or alias)");
     const PM = ["auto", "default", "acceptEdits", "plan"];
     if (loop.permission_mode !== undefined && !PM.includes(loop.permission_mode as string)) problems.push(`loop.permission_mode must be one of ${PM.join(", ")}`);
@@ -318,9 +333,15 @@ export function withDefaults(raw: Json): Settings {
     if (cad.quiet_working === undefined) cadence.quiet_working = cadence.cap;
     if (cad.quiet === undefined) cadence.quiet = cadence.cap;
   }
+  const schedule: LoopSchedule = loop.schedule === "monitor" ? "monitor" : "self";
   const liveness = Object.fromEntries(
     LIVENESS_KEYS.map((k) => [k, pick(lv[k], DEFAULT_LIVENESS[k])]),
   ) as unknown as Liveness;
+  // A monitor schedule tightens the backstop's unset values; explicit values always win.
+  if (schedule === "monitor") {
+    if (lv.nudge_minutes === undefined) liveness.nudge_minutes = MONITOR_NUDGE_MINUTES;
+    if (lv.nudge_cooldown_minutes === undefined) liveness.nudge_cooldown_minutes = MONITOR_NUDGE_MINUTES;
+  }
   const streams = Object.fromEntries(
     Object.entries((raw.streams ?? {}) as Json).filter(([k]) => k !== "//"),
   ) as Record<string, Record<string, unknown>>;
@@ -336,6 +357,7 @@ export function withDefaults(raw: Json): Settings {
       model: loop.model === undefined ? null : String(loop.model),
       permission_mode: loop.permission_mode === undefined ? "auto" : String(loop.permission_mode),
       mode,
+      schedule,
     },
     cadence,
     lock_max_minutes: pick(raw.lock_max_minutes, 60),

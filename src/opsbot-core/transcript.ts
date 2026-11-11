@@ -141,12 +141,16 @@ export function turnEnded(evs: Ev[]): { ended: true; at: string | null } | { end
   return { ended: false, since: evs[last]!.timestamp };
 }
 
+export interface MonitorCall { at: string; timeoutMs: number; description: string; command: string; ended: boolean }
+
 /**
- * The last Monitor the session armed on `file`: when, its deadline, and whether the log already
- * shows it ending (its event delivered, its expiry, its stop). `ended` is read from later user-side
- * text that names the monitor's description together with an ending word.
+ * The last Monitor the session armed that matches: a string is a file its command names (the
+ * per-file live wake), a function picks by the call's command and description (the schedule
+ * monitor, by its description). Returns when, its deadline, its command, and whether the log
+ * already shows it ending (its event delivered, its expiry, its stop, `cycle due`). `ended` is
+ * read from later user-side text that names the monitor's description together with an ending word.
  */
-export function lastMonitorCall(evs: Ev[], file: string): { at: string; timeoutMs: number; description: string; ended: boolean } | null {
+export function lastMonitorCall(evs: Ev[], match: string | ((call: { command: string; description: string }) => boolean)): MonitorCall | null {
   for (let i = evs.length - 1; i >= 0; i--) {
     const e = evs[i]!;
     if (e.type !== "assistant") continue;
@@ -154,8 +158,8 @@ export function lastMonitorCall(evs: Ev[], file: string): { at: string; timeoutM
       if (p.type !== "tool_use" || p.name !== "Monitor") continue;
       const inp = p.input && typeof p.input === "object" ? (p.input as Record<string, unknown>) : {};
       const cmd = String(inp.command ?? "");
-      if (!cmd.includes(file)) continue;
       const description = String(inp.description ?? "");
+      if (typeof match === "string" ? !cmd.includes(match) : !match({ command: cmd, description })) continue;
       const timeoutMs = typeof inp.timeout_ms === "number" ? inp.timeout_ms : 300_000;
       let ended = false;
       if (description) {
@@ -163,10 +167,10 @@ export function lastMonitorCall(evs: Ev[], file: string): { at: string; timeoutM
           const u = evs[j]!;
           if (u.type !== "user") continue;
           const t = partText(u.content);
-          if (t.includes(description) && /\b(exited|expired|stopped|event|timed out|killed)\b/i.test(t)) ended = true;
+          if (t.includes(description) && /\b(exited|expired|stopped|event|timed out|killed|cycle due)\b/i.test(t)) ended = true;
         }
       }
-      return { at: e.timestamp, timeoutMs, description, ended };
+      return { at: e.timestamp, timeoutMs, description, command: cmd, ended };
     }
   }
   return null;

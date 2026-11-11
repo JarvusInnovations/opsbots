@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "e45b24b" : "dev";
+    VERSION = true ? "b7ce182" : "dev";
   }
 });
 
@@ -1895,7 +1895,7 @@ var init_reference = __esm({
         commands: [
           {
             usage: "cycle begin",
-            summary: "Refuse while another writer holds the checkout (exit 30, `wait \xB7 \u2026 \xB7 next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it."
+            summary: "Refuse while another writer holds the checkout (exit 30, `wait \xB7 \u2026 \xB7 next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it. With `loop.schedule: monitor`, on 0 and 30 the `wake` field holds the schedule monitor's state and the one Monitor call to make now."
           },
           {
             usage: "check [--no-commit]",
@@ -1903,9 +1903,9 @@ var init_reference = __esm({
           },
           {
             usage: "cycle end --records N [--degraded] [--summary TEXT]",
-            summary: "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake."
+            summary: "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle."
           },
-          { usage: "next-delay", summary: "Seconds until the next cycle and why, from the cycle log and the cadence table." }
+          { usage: "next-delay", summary: "Seconds until the next cycle and why, from the cycle log and the cadence table. With `loop.schedule: monitor`, never over 1740 (29 min), and the reason says when that cap applied." }
         ]
       },
       {
@@ -2175,18 +2175,22 @@ function nextDelay(s, lines, nowMs2) {
   else if (inWorkingHours(s, nowMs2)) d = { seconds: c.quiet_working, reason: "quiet, working hours" };
   else d = { seconds: c.quiet, reason: "quiet, otherwise" };
   if (d.seconds > c.cap) d = { seconds: c.cap, reason: d.reason };
+  if (s.loop.schedule === "monitor" && d.seconds > MONITOR_DELAY_CAP_S) {
+    d = { seconds: MONITOR_DELAY_CAP_S, reason: `${d.reason} (capped at 29 min: a monitor's limit)` };
+  }
   return d;
 }
 function delayLine(d) {
   return `${d.seconds} ${d.reason}`;
 }
-var HOT_WINDOW_S, WARM_WINDOW_S;
+var HOT_WINDOW_S, WARM_WINDOW_S, MONITOR_DELAY_CAP_S;
 var init_cadence = __esm({
   "src/opsbot-core/cadence.ts"() {
     "use strict";
     init_repo();
     HOT_WINDOW_S = 15 * 60;
     WARM_WINDOW_S = 60 * 60;
+    MONITOR_DELAY_CAP_S = 1740;
   }
 });
 
@@ -2269,9 +2273,13 @@ function validateSettings(raw) {
   }
   const loop = obj(raw, "loop", "", true);
   if (loop) {
-    allow(loop, "loop.", ["prompt", "autocompact", "model", "permission_mode", "mode"]);
+    allow(loop, "loop.", ["prompt", "autocompact", "model", "permission_mode", "mode", "schedule"]);
     if (loop.mode !== void 0 && !LOOP_MODES.includes(loop.mode)) problems.push(`loop.mode must be one of ${LOOP_MODES.join(", ")}`);
+    if (loop.schedule !== void 0 && !LOOP_SCHEDULES.includes(loop.schedule)) problems.push(`loop.schedule must be one of ${LOOP_SCHEDULES.join(", ")}`);
     str2(loop, "prompt", "loop.", true);
+    if (loop.schedule === "monitor" && typeof loop.prompt === "string" && loop.prompt.trimStart().startsWith("/")) {
+      problems.push("loop.prompt must not start with a slash command when loop.schedule is monitor: every wake would re-read the command's body");
+    }
     if (loop.model !== void 0 && (typeof loop.model !== "string" || loop.model === "")) problems.push("loop.model must be a non-empty string (a Claude Code model name or alias)");
     const PM = ["auto", "default", "acceptEdits", "plan"];
     if (loop.permission_mode !== void 0 && !PM.includes(loop.permission_mode)) problems.push(`loop.permission_mode must be one of ${PM.join(", ")}`);
@@ -2392,9 +2400,14 @@ function withDefaults(raw) {
     if (cad.quiet_working === void 0) cadence.quiet_working = cadence.cap;
     if (cad.quiet === void 0) cadence.quiet = cadence.cap;
   }
+  const schedule = loop.schedule === "monitor" ? "monitor" : "self";
   const liveness = Object.fromEntries(
     LIVENESS_KEYS.map((k) => [k, pick(lv[k], DEFAULT_LIVENESS[k])])
   );
+  if (schedule === "monitor") {
+    if (lv.nudge_minutes === void 0) liveness.nudge_minutes = MONITOR_NUDGE_MINUTES;
+    if (lv.nudge_cooldown_minutes === void 0) liveness.nudge_cooldown_minutes = MONITOR_NUDGE_MINUTES;
+  }
   const streams = Object.fromEntries(
     Object.entries(raw.streams ?? {}).filter(([k]) => k !== "//")
   );
@@ -2409,7 +2422,8 @@ function withDefaults(raw) {
       autocompact: loop.autocompact === void 0 ? MODE_AUTOCOMPACT[mode] : String(loop.autocompact),
       model: loop.model === void 0 ? null : String(loop.model),
       permission_mode: loop.permission_mode === void 0 ? "auto" : String(loop.permission_mode),
-      mode
+      mode,
+      schedule
     },
     cadence,
     lock_max_minutes: pick(raw.lock_max_minutes, 60),
@@ -2457,7 +2471,7 @@ function trySettings(root) {
   const p = join3(root, SETTINGS_FILE);
   return existsSync4(p) ? tryText(readFileSync2(p, "utf8")) : null;
 }
-var SETTINGS_FILE, LOOP_MODES, MODE_AUTOCOMPACT, MODE_MODEL, DEFAULT_CADENCE, DEFAULT_LIVENESS, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR;
+var SETTINGS_FILE, LOOP_MODES, MODE_AUTOCOMPACT, LOOP_SCHEDULES, MODE_MODEL, DEFAULT_CADENCE, DEFAULT_LIVENESS, MONITOR_NUDGE_MINUTES, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR;
 var init_settings = __esm({
   "src/opsbot-core/settings.ts"() {
     "use strict";
@@ -2466,6 +2480,7 @@ var init_settings = __esm({
     SETTINGS_FILE = "opsbot.json";
     LOOP_MODES = ["strategist", "dispatcher"];
     MODE_AUTOCOMPACT = { strategist: "750k", dispatcher: "300k" };
+    LOOP_SCHEDULES = ["self", "monitor"];
     MODE_MODEL = { strategist: "fable", dispatcher: "opus" };
     DEFAULT_CADENCE = {
       hot: 180,
@@ -2484,6 +2499,7 @@ var init_settings = __esm({
       wake_cooldown_minutes: 10,
       interval_minutes: 10
     };
+    MONITOR_NUDGE_MINUTES = 35;
     NAME_RE = /^[a-z][a-z0-9-]{0,31}$/;
     AGENT_RE = /^[a-z][a-z0-9_-]{0,31}$/;
     HM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -8104,7 +8120,7 @@ function turnEnded(evs) {
   }
   return { ended: false, since: evs[last].timestamp };
 }
-function lastMonitorCall(evs, file) {
+function lastMonitorCall(evs, match) {
   for (let i = evs.length - 1; i >= 0; i--) {
     const e = evs[i];
     if (e.type !== "assistant") continue;
@@ -8112,8 +8128,8 @@ function lastMonitorCall(evs, file) {
       if (p.type !== "tool_use" || p.name !== "Monitor") continue;
       const inp = p.input && typeof p.input === "object" ? p.input : {};
       const cmd = String(inp.command ?? "");
-      if (!cmd.includes(file)) continue;
       const description = String(inp.description ?? "");
+      if (typeof match === "string" ? !cmd.includes(match) : !match({ command: cmd, description })) continue;
       const timeoutMs = typeof inp.timeout_ms === "number" ? inp.timeout_ms : 3e5;
       let ended = false;
       if (description) {
@@ -8121,10 +8137,10 @@ function lastMonitorCall(evs, file) {
           const u = evs[j];
           if (u.type !== "user") continue;
           const t = partText(u.content);
-          if (t.includes(description) && /\b(exited|expired|stopped|event|timed out|killed)\b/i.test(t)) ended = true;
+          if (t.includes(description) && /\b(exited|expired|stopped|event|timed out|killed|cycle due)\b/i.test(t)) ended = true;
         }
       }
-      return { at: e.timestamp, timeoutMs, description, ended };
+      return { at: e.timestamp, timeoutMs, description, command: cmd, ended };
     }
   }
   return null;
@@ -8255,7 +8271,66 @@ function wakeLines(s, evs, now, untilNextWakeMs) {
   }
   return out;
 }
-var MONITOR_MAX_MS, MONITOR_MIN_MS, hhmm2, WAKE_RULES;
+function scheduleDescription(bot) {
+  return `${bot} schedule`;
+}
+function shq(s) {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+function scheduleCommand(files, seconds) {
+  const parts2 = [`end=$(( $(date +%s) + ${Math.max(1, Math.round(seconds))} ))`];
+  if (files.length) parts2.push(`c() { [ -f "$1" ] && wc -l < "$1" || echo 0; }`);
+  files.forEach((f, i) => parts2.push(`f${i}=${shq(f)}; n${i}=$(c "$f${i}")`));
+  const body = [];
+  if (files.length) body.push("h=0");
+  files.forEach((f, i) => {
+    body.push(
+      `m=$(c "$f${i}"); if [ "$m" -lt "$n${i}" ]; then n${i}=$m; fi; if [ "$m" -gt "$n${i}" ]; then tail -n $((m-n${i})) "$f${i}" | cut -c1-300 | while IFS= read -r l; do printf '%s: %s\\n' ${shq(basename6(f))} "$l"; done; n${i}=$m; h=1; fi`
+    );
+  });
+  if (files.length) body.push(`if [ "$h" = 1 ]; then exit 0; fi`);
+  body.push(`if [ "$(date +%s)" -ge "$end" ]; then echo ${shq(CYCLE_DUE)}; exit 0; fi`);
+  parts2.push(`while sleep 2; do ${body.join("; ")}; done`);
+  return parts2.join("; ");
+}
+function scheduleSeconds(command) {
+  const m = command.match(/^end=\$\(\( \$\(date \+%s\) \+ (\d+) \)\)/);
+  return m ? Number(m[1]) : null;
+}
+function scheduleTimeoutMs(seconds) {
+  return (Math.max(1, Math.round(seconds)) + SCHEDULE_MARGIN_S) * 1e3;
+}
+function scheduleCall(bot, files, seconds) {
+  return `Monitor({ command: ${JSON.stringify(scheduleCommand(files, seconds))}, description: ${JSON.stringify(scheduleDescription(bot))}, timeout_ms: ${scheduleTimeoutMs(seconds)} })`;
+}
+function scheduleState(evs, bot, now) {
+  const desc = scheduleDescription(bot);
+  const m = lastMonitorCall(evs, (c) => c.description === desc);
+  if (!m || m.ended) return null;
+  const at = parseIso(m.at);
+  if (at === null) return null;
+  const secs = scheduleSeconds(m.command);
+  const until = at + (secs !== null ? secs * 1e3 : Math.max(0, m.timeoutMs - SCHEDULE_MARGIN_S * 1e3));
+  if (until <= now) return null;
+  return { at: iso(at), until: iso(until) };
+}
+function scheduleLines(s, evs, now, dueSeconds) {
+  const call = scheduleCall(s.name, wakeFiles(s), dueSeconds);
+  if (!evs) return [`state unknown (no session log) \xB7 arm now: ${call}`];
+  const st = scheduleState(evs, s.name, now);
+  if (!st) return [`not armed \xB7 arm now: ${call}`];
+  const due = now + dueSeconds * 1e3;
+  if (Date.parse(st.until) <= due + 6e4) return [`armed until ${hhmm2(st.until)} (since ${hhmm2(st.at)}); nothing to do`];
+  return [
+    `armed until ${hhmm2(st.until)} (since ${hhmm2(st.at)}), later than the next cycle is due (${hhmm2(iso(due))}) \xB7 stop it with TaskStop, then arm: ${call}`
+  ];
+}
+function schedulePackLines(s, evs, now) {
+  const st = evs ? scheduleState(evs, s.name, now) : null;
+  if (st) return [`armed until ${hhmm2(st.until)} (since ${hhmm2(st.at)}); nothing to do until it delivers`];
+  return [`${evs ? "not armed" : "state unknown (no session log)"} \xB7 run \`cycle begin\` now; it prints the one Monitor call to make`];
+}
+var MONITOR_MAX_MS, MONITOR_MIN_MS, hhmm2, WAKE_RULES, SCHEDULE_MARGIN_S, CYCLE_DUE, basename6, SCHEDULE_RULES;
 var init_wake = __esm({
   "src/opsbot-core/wake.ts"() {
     "use strict";
@@ -8268,6 +8343,18 @@ var init_wake = __esm({
       "The monitor is the live wake: its notification means a stream has something new, so run `cycle begin` then.",
       "It exits on the first arrival or at its deadline. Arm it again at the end of every cycle when it is not armed, and when it reports an expiry with nothing delivered; never two on one file, never a longer deadline, never a different command.",
       "The listener's nudge is the backstop when no monitor is armed; neither path depends on the other."
+    ];
+    SCHEDULE_MARGIN_S = 60;
+    CYCLE_DUE = "cycle due";
+    basename6 = (p) => p.replace(/\/+$/, "").split("/").pop() || p;
+    SCHEDULE_RULES = [
+      "The monitor is your schedule and your live wake.",
+      "When it delivers `cycle due` or an event line, run `cycle begin`.",
+      "At the end of every cycle, arm the one monitor `cycle end` prints, exactly as printed.",
+      "Never call ScheduleWakeup and never start `/loop`.",
+      "Never two monitors, never a longer deadline.",
+      "If you find none armed (after a start, a compaction, an error), arm it by running `cycle begin`.",
+      "The kit's nudge is the backstop if the monitor is ever not armed."
     ];
   }
 });
@@ -8401,7 +8488,12 @@ ${k.body}`);
     if (body) kit.push(`\u2550\u2550\u2550 1.${kit.length + 1} Before this start
 ${capSection(body, SESSION_LOG_CAP)}`);
   }
-  if (wakeFiles(s).length) {
+  if (s.loop.schedule === "monitor") {
+    const evs = transcript ? readEvents(transcript) : null;
+    const lines = [...schedulePackLines(s, evs && evs.length ? evs : null, now), ...SCHEDULE_RULES];
+    kit.push(`\u2550\u2550\u2550 1.${kit.length + 1} The schedule and live wake (arm it before anything else)
+${lines.join("\n")}`);
+  } else if (wakeFiles(s).length) {
     const evs = transcript ? readEvents(transcript) : null;
     const lines = [...wakeLines(s, evs && evs.length ? evs : null, now, null), ...WAKE_RULES];
     kit.push(`\u2550\u2550\u2550 1.${kit.length + 1} The live wake (arm it before anything else)
@@ -8673,11 +8765,17 @@ function next2(root, s) {
   return delayLine(nextDelay(s, readCycleLog(root), nowMs()));
 }
 function wakeReport(root, s, boundByNext) {
+  if (s.loop.schedule === "monitor") return boundByNext ? scheduleReport(root, s) : [];
   if (wakeFiles(s).length === 0) return [];
   const ptr = sessionPointer(root);
   const evs = ptr ? readEvents(ptr.transcript_path) : [];
   const until = boundByNext ? nextDelay(s, readCycleLog(root), nowMs()).seconds * 1e3 : null;
   return wakeLines(s, evs.length ? evs : null, nowMs(), until);
+}
+function scheduleReport(root, s) {
+  const ptr = sessionPointer(root);
+  const evs = ptr ? readEvents(ptr.transcript_path) : [];
+  return scheduleLines(s, evs.length ? evs : null, nowMs(), nextDelay(s, readCycleLog(root), nowMs()).seconds);
 }
 function driftLines(root, s) {
   const ptr = sessionPointer(root);
@@ -8698,7 +8796,9 @@ function cycleCommand(args) {
 }
 function wait(root, s, who) {
   setExit(30);
-  return { cycle: `wait \xB7 ${who} \xB7 next ${next2(root, s)}` };
+  const out = { cycle: `wait \xB7 ${who} \xB7 next ${next2(root, s)}` };
+  if (s.loop.schedule === "monitor") out.wake = scheduleReport(root, s);
+  return out;
 }
 function cycleBegin() {
   const root = requireRoot();
