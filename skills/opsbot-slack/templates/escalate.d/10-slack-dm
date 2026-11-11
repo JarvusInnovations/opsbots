@@ -28,7 +28,10 @@ msg=$(cat)
 mode=$("$axi" auth mode "${team_args[@]}" 2>&1) || { echo "slack-axi is not signed in: $(printf '%s\n' "$mode" | head -1)" >&2; exit 1; }
 printf '%s\n' "$mode" | grep -qE '^\s*mode: bot\s*$' || { echo "slack-axi is not in bot mode; escalations go out in the bot's name only (slack-axi auth login --token xoxb-...)" >&2; exit 1; }
 
-text="${OPSBOT_MARK:-🤖} ${msg}"
+# The core's own messages (the watchdog's) already open with the mark; a bot's script may not.
+# One mark either way.
+mark="${OPSBOT_MARK:-🤖}"
+case "$msg" in "$mark"*) text="$msg" ;; *) text="$mark $msg" ;; esac
 out=$("$axi" draft "$chan" "$text" "${team_args[@]}" 2>&1); rc=$?
 id=$(printf '%s\n' "$out" | grep -oE '^draft: d_[0-9a-f]{8}' | head -1 | cut -d' ' -f2)
 if [ $rc -ne 0 ] || [ -z "$id" ]; then
