@@ -61,11 +61,11 @@ one-hour cache). Every value and the hours are in `opsbot.json`.
 `hook install` registers two Claude Code hooks. On every session start, resume, clear and
 compaction, `cold-start --write` writes the reground pack to `~/.cache/<bot>/reground.md` and
 sets a pending flag; until the pack has been **read whole** (a Read with no offset or limit),
-`gate check` refuses every other tool. The pack, in order, within a byte budget:
+`gate check` refuses every other tool. The pack, in order:
 
 1. the rule card, whole (`rule_card` in `opsbot.json`, read at `HEAD`)
 2. one section per `opsbot.d/wake.d/` script (what is owed, open escalations, …), each cut
-   to its share of the budget with `… N more lines`
+   to its share of the wake budget (6 000 bytes across them all) with `… N more lines`
 3. the last 48 hours of the cycle log: counts, the longest gap, the last degraded cycle,
    outages
 4. memory before this point is untrusted: open the source before saying
