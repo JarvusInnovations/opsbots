@@ -141,7 +141,9 @@ export function hookCommand(args: string[]): Record<string, unknown> {
   }
 
   if (sub === "install") {
-    const [a, c1] = computeSessionStartHookUpdate(current, { marker: MARKER, command: startCmd, timeoutSeconds: 30 });
+    // 60 seconds: the pack reads the session log, and the first read of a long one after a restart
+    // has been seen to pass 30, which cancels the hook and leaves the session with no pack.
+    const [a, c1] = computeSessionStartHookUpdate(current, { marker: MARKER, command: startCmd, timeoutSeconds: 60 });
     const [b, c2] = upsertPreTool(a, gateCmd);
     if (!c1 && !c2) return { hook: `already installed in ${p} (no-op)` };
     writeSettings(p, b);

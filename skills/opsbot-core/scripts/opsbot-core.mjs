@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "c392809" : "dev";
+    VERSION = true ? "6149dbb" : "dev";
   }
 });
 
@@ -9651,7 +9651,7 @@ function hookCommand(args) {
     };
   }
   if (sub === "install") {
-    const [a2, c12] = computeSessionStartHookUpdate(current, { marker: MARKER, command: startCmd, timeoutSeconds: 30 });
+    const [a2, c12] = computeSessionStartHookUpdate(current, { marker: MARKER, command: startCmd, timeoutSeconds: 60 });
     const [b2, c22] = upsertPreTool(a2, gateCmd);
     if (!c12 && !c22) return { hook: `already installed in ${p} (no-op)` };
     writeSettings(p, b2);
