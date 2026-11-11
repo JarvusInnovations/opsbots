@@ -1,0 +1,189 @@
+#!/usr/bin/env node
+// heartbeat.d: the Slack events the listener recorded (monitor.d/10-slack-listener), as check
+// items, installed by the opsbot-slack skill. Prints one NDJSON item per event recorded at or
+// after $OPSBOT_SINCE less streams.slack.lookback_minutes:
+//
+//   {key, at, conv, kind: "dm"|"group", from, text, ts, thread_ts?, reply?, event,
+//    reaction?, from_slack?, from_note?, thread?: {n, parent, last_mine, full, note?}, ...lookup}
+//
+// - key is the listener's (slack:<conv>:<ts>:msg, slack:<conv>:<ts>:<emoji>:<user>,
+//   slack:team_join:<user>), so it is the same on every run and the core drops what it has seen.
+// - reply is the exact address of the answer: `<conv> --reply <ts>`, where ts is the thread when
+//   the message is threaded, else the message itself. Use it whole: `slack-axi draft <reply> "…"`.
+//   The loop never chooses a thread, so an answer cannot land in the wrong one.
+// - from_slack is what `slack-axi user` returns for the sender (name, display_name, kind, and
+//   title or email only when the token's scopes return them), one call per sender per check.
+// - thread, for a threaded message: the message count, the parent's first 240 characters, the
+//   bot's last message there (found by streams.slack.bot_name, default the bot's name), and the
+//   command that prints the whole thread. One `slack-axi thread` call per thread per check.
+// - sender_lookup (optional): a repo path to an executable. It gets the sender as JSON on stdin
+//   ({id, name, display_name, kind, ...}; only {id} when slack-axi could not resolve it) and
+//   prints one JSON object, whose keys are merged into the item, never over a key it already
+//   has (for example {"from_team": true}). A lookup that fails fails this input (degraded),
+//   after every item is printed.
+//
+// Exit 0 with no lines = nothing new. Exit 1 when the events file does not exist (the listener
+// creates it on start) or a sender lookup failed.
+//
+// OPSBOT_SLACK_AXI names another slack-axi binary (a pinned copy, a test double).
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute, join, relative, resolve } from "node:path";
+
+const root = process.env.OPSBOT_ROOT || process.cwd();
+const cfg = JSON.parse(readFileSync(process.env.OPSBOT_CONFIG || join(root, "opsbot.json"), "utf8"));
+const slack = (cfg.streams && cfg.streams.slack) || {};
+const home = (p) => (p && p.startsWith("~") ? join(homedir(), p.slice(1)) : p);
+const file = home(slack.events_file || `~/.cache/${cfg.name}/slack-events.jsonl`);
+const teamArgs = slack.team ? ["--team", String(slack.team)] : [];
+const botName = String(slack.bot_name || cfg.name || "").toLowerCase();
+const lookbackMs = (Number(slack.lookback_minutes) || 30) * 60000;
+const since = process.env.OPSBOT_SINCE ? Date.parse(process.env.OPSBOT_SINCE) - lookbackMs : 0;
+const errors = [];
+
+if (!existsSync(file)) {
+  console.error(`no Slack events file at ${file}; is the listener running? (opsbot-core infra status)`);
+  process.exit(1);
+}
+
+/** One row of a TOON table: comma-separated, a quoted cell with backslash escapes. */
+function toonRow(line) {
+  const out = [];
+  let cur = "", quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quoted) {
+      if (c === "\\" && i + 1 < line.length) {
+        const n = line[++i];
+        cur += n === "n" ? "\n" : n === "r" ? "\r" : n === "t" ? "\t" : n;
+      } else if (c === '"') quoted = false;
+      else cur += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ",") { out.push(cur); cur = ""; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+
+/** The rows of the TOON table `<label>[N]{cols}:` in a command's output, as objects. */
+function toonTable(out, label) {
+  const lines = out.split("\n");
+  const head = new RegExp(`^(\\s*)${label}\\[[^\\]]*\\]\\{([^}]*)\\}:\\s*$`);
+  const at = lines.findIndex((l) => head.test(l));
+  if (at < 0) return null;
+  const [, indent, colList] = lines[at].match(head);
+  const cols = colList.split(",");
+  const rows = [];
+  for (const l of lines.slice(at + 1)) {
+    if (!l.startsWith(`${indent}  `) || !l.trim()) break;
+    const v = toonRow(l.trim());
+    const o = {};
+    cols.forEach((c, i) => (o[c] = v[i] ?? ""));
+    rows.push(o);
+  }
+  return rows;
+}
+
+function slackAxi(args) {
+  return execFileSync(process.env.OPSBOT_SLACK_AXI || "slack-axi", [...args, ...teamArgs], { encoding: "utf8", timeout: 20000, stdio: ["ignore", "pipe", "ignore"] });
+}
+
+const users = new Map();
+function slackUser(uid) {
+  if (users.has(uid)) return users.get(uid);
+  let info;
+  try {
+    const row = (toonTable(slackAxi(["user", uid]), "users") || [])[0];
+    if (row) {
+      info = {};
+      for (const [k, v] of Object.entries(row)) if (v !== "" && k !== "id") info[k] = v;
+    }
+  } catch { info = undefined; }
+  users.set(uid, info);
+  return info;
+}
+
+const threads = new Map();
+function readThread(conv, ts) {
+  const k = `${conv}:${ts}`;
+  if (threads.has(k)) return threads.get(k);
+  let info = null;
+  try {
+    const rows = toonTable(slackAxi(["thread", conv, ts]), "messages");
+    if (rows) {
+      const clean = (t) => String(t || "").replace(/^↳ /, "");
+      const parent = rows[0];
+      const mine = botName ? [...rows].reverse().find((r) => String(r.author || "").toLowerCase().includes(botName)) : undefined;
+      info = {
+        n: rows.length,
+        parent: parent ? `${parent.author}: ${clean(parent.text).slice(0, 240)}` : undefined,
+        last_mine: mine ? clean(mine.text).slice(0, 200) : undefined,
+      };
+    }
+  } catch { info = null; }
+  threads.set(k, info);
+  return info;
+}
+
+// The optional sender hook, resolved inside the repo and refused outside it.
+let lookup = null;
+if (slack.sender_lookup) {
+  const p = resolve(root, String(slack.sender_lookup));
+  const rel = relative(root, p);
+  if (isAbsolute(String(slack.sender_lookup)) || rel.startsWith("..") || isAbsolute(rel)) errors.push(`streams.slack.sender_lookup must be a path inside the repo: ${slack.sender_lookup}`);
+  else lookup = p;
+}
+const looked = new Map();
+function lookupSender(uid, profile) {
+  if (looked.has(uid)) return looked.get(uid);
+  let extra = {};
+  try {
+    const out = execFileSync(lookup, [], { cwd: root, input: JSON.stringify({ id: uid, ...(profile || {}) }), encoding: "utf8", timeout: 20000, stdio: ["pipe", "pipe", "pipe"] });
+    const v = JSON.parse(out.trim() || "{}");
+    if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("did not print a JSON object");
+    extra = v;
+  } catch (e) {
+    const why = (e.stderr && String(e.stderr).trim().split("\n")[0]) || e.message.split("\n")[0];
+    errors.push(`sender_lookup for ${uid}: ${why}`);
+    extra = {};
+  }
+  looked.set(uid, extra);
+  return extra;
+}
+
+for (const line of readFileSync(file, "utf8").split("\n")) {
+  if (!line.trim()) continue;
+  let ev;
+  try { ev = JSON.parse(line); } catch { continue; }
+  if (!ev || typeof ev.key !== "string") continue;
+  // A late delivery from Slack carries an old `at`; freshness is when the listener saw it.
+  if (Date.parse(ev.recorded_at || ev.at) < since) continue;
+  const item = {
+    key: ev.key, at: ev.at, conv: ev.conv || undefined, kind: ev.kind || (String(ev.conv || "").startsWith("D") ? "dm" : "group"),
+    from: ev.from, text: ev.text, ts: ev.ts, thread_ts: ev.thread_ts || undefined,
+    reply: ev.conv && ev.ts && ev.event !== "team_join" ? `${ev.conv} --reply ${ev.thread_ts || ev.ts}` : undefined,
+    event: ev.event, reaction: ev.reaction,
+  };
+  let profile;
+  if (ev.from) {
+    profile = slackUser(ev.from);
+    if (profile) item.from_slack = profile;
+    else item.from_note = "unresolved sender; keep the raw id, do not guess";
+  }
+  if (ev.thread_ts && ev.conv) {
+    const t = readThread(ev.conv, ev.thread_ts);
+    item.thread = { n: t?.n, parent: t?.parent, last_mine: t?.last_mine, full: `slack-axi thread ${ev.conv} ${ev.thread_ts}` };
+    if (!t) item.thread.note = "could not read the thread; open it with the full command";
+  }
+  if (lookup && ev.from) for (const [k, v] of Object.entries(lookupSender(ev.from, profile))) if (!(k in item) || item[k] === undefined) item[k] = v;
+  for (const k of Object.keys(item)) if (item[k] === undefined) delete item[k];
+  if (item.thread) for (const k of Object.keys(item.thread)) if (item.thread[k] === undefined) delete item.thread[k];
+  console.log(JSON.stringify(item));
+}
+
+if (errors.length) {
+  console.error(errors.join("; "));
+  process.exit(1);
+}

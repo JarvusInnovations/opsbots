@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+# opsbot-slack: install the Slack pieces into an ops bot's repo, and check them.
+#
+#   opsbot-slack install [--dry-run] [--force]   copy the templates into opsbot.d/; print the
+#                                                opsbot.json blocks to merge (never writes it)
+#   opsbot-slack status                          one row per piece: ok, missing or differs
+#
+# Run from the bot's repo checkout, as the bot's user. Exit 0 all ok, 1 something to fix,
+# 2 bad usage or not in a bot's repo. Tokens are never printed: status reads only the first
+# five characters of the app-level token file and its mode.
+set -uo pipefail
+
+SKILL="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+TEMPLATES="$SKILL/templates"
+PIECES=(monitor.d/10-slack-listener heartbeat.d/20-slack-events escalate.d/10-slack-dm)
+
+usage() {
+  cat <<'EOF'
+usage: opsbot-slack <command> [flags]
+commands:
+  install [--dry-run] [--force]  copy the listener, the reader and the escalation sink into
+                                 opsbot.d/ (a file that differs is left unless --force), then
+                                 print the opsbot.json blocks to merge and the manifest path
+  status                         check the token file, slack-axi, the scripts, opsbot.json
+                                 and the listener's unit; exit 0 all ok, 1 something to fix
+EOF
+}
+
+die_usage() { echo "error: $1" >&2; usage >&2; exit 2; }
+
+ROOT="${OPSBOT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+CONFIG="$ROOT/opsbot.json"
+
+need_bot_repo() {
+  [ -f "$CONFIG" ] || { echo "error: no opsbot.json at $ROOT; run this from the bot's repo checkout" >&2; exit 2; }
+  command -v node >/dev/null || { echo "error: node is not on PATH (the Slack scripts need Node 22)" >&2; exit 2; }
+}
+
+# A value from opsbot.json by dotted path; empty when absent. Arrays print one entry per line.
+cfg() {
+  node -e '
+    let v = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    for (const k of process.argv[2].split(".")) v = v == null ? undefined : v[k];
+    if (Array.isArray(v)) process.stdout.write(v.join("\n"));
+    else if (v && typeof v === "object") process.stdout.write(JSON.stringify(v));
+    else if (v !== undefined && v !== null) process.stdout.write(String(v));
+  ' "$CONFIG" "$1" 2>/dev/null
+}
+
+expand() { case "$1" in "~"*) printf '%s' "$HOME${1#\~}" ;; *) printf '%s' "$1" ;; esac; }
+
+# ------------------------------------------------------------------------------------ install
+
+cmd_install() {
+  local dry=0 force=0
+  for a in "$@"; do
+    case "$a" in
+      --dry-run) dry=1 ;;
+      --force) force=1 ;;
+      -h|--help) usage; exit 0 ;;
+      *) die_usage "unknown flag for install: $a" ;;
+    esac
+  done
+  need_bot_repo
+  local name; name=$(cfg name)
+  [ -n "$name" ] || { echo "error: opsbot.json has no name" >&2; exit 2; }
+
+  local p src dst left=0
+  for p in "${PIECES[@]}"; do
+    src="$TEMPLATES/$p"; dst="$ROOT/opsbot.d/$p"
+    if [ ! -e "$dst" ]; then
+      if [ $dry = 1 ]; then echo "would write  opsbot.d/$p"
+      else mkdir -p "$(dirname "$dst")" && cp "$src" "$dst" && chmod 755 "$dst" && echo "wrote        opsbot.d/$p"; fi
+    elif cmp -s "$src" "$dst"; then
+      if [ ! -x "$dst" ]; then
+        if [ $dry = 1 ]; then echo "would chmod  opsbot.d/$p (not executable)"; else chmod 755 "$dst" && echo "made executable opsbot.d/$p"; fi
+      else echo "left         opsbot.d/$p (already current)"; fi
+    elif [ $force = 1 ]; then
+      if [ $dry = 1 ]; then echo "would replace opsbot.d/$p (differs from the template)"
+      else cp "$src" "$dst" && chmod 755 "$dst" && echo "replaced     opsbot.d/$p (it differed from the template)"; fi
+    else
+      echo "left         opsbot.d/$p (differs from the template; --force replaces it)"; left=$((left + 1))
+    fi
+  done
+
+  cat <<EOF
+
+Merge into opsbot.json yourself (this command never writes it), then commit:
+
+  "streams": {
+    "slack": {
+      "bot_user": "<the bot's user id, U...: slack-axi doctor or the app's App Home>",
+      "escalate_dm": "<the id of the bot's DM with its operator, D...>",
+      "app_token_file": "~/.config/$name/slack-app-token",
+      "events_file": "~/.cache/$name/slack-events.jsonl"
+    }
+  },
+  "wake": { "files": ["~/.cache/$name/slack-events.jsonl"] }
+
+Optional keys under streams.slack: receipt_emoji, ack_emoji, ack_timeout_minutes,
+lookback_minutes, bot_name, team, sender_lookup (see the skill's SKILL.md).
+
+The Slack app manifest: $TEMPLATES/manifest.yaml
+Copy it into the repo (for example slack/manifest.yaml), fill in the placeholders, and
+create the app from it (README.md beside SKILL.md). Then: opsbot-core infra install,
+and opsbot-slack status.
+EOF
+  return 0
+}
+
+# ------------------------------------------------------------------------------------ status
+
+ROWS=0; BAD=0
+row() { # state piece detail [fix]
+  ROWS=$((ROWS + 1))
+  printf '%-8s %-26s %s\n' "$1" "$2" "$3"
+  if [ "$1" != ok ]; then BAD=$((BAD + 1)); [ -n "${4:-}" ] && printf '%-8s %-26s fix: %s\n' "" "" "$4"; fi
+}
+
+cmd_status() {
+  for a in "$@"; do
+    case "$a" in
+      -h|--help) usage; exit 0 ;;
+      *) die_usage "unknown flag for status: $a" ;;
+    esac
+  done
+  need_bot_repo
+  local name; name=$(cfg name)
+  [ -n "$name" ] || { echo "error: opsbot.json has no name" >&2; exit 2; }
+  local team; team=$(cfg streams.slack.team)
+  local team_args=(); [ -n "$team" ] && team_args=(--team "$team")
+
+  # the app-level token: present, mode 600, xapp- prefix. Never printed.
+  local tf_cfg tf; tf_cfg=$(cfg streams.slack.app_token_file); tf_cfg=${tf_cfg:-"~/.config/$name/slack-app-token"}
+  tf=$(expand "$tf_cfg")
+  local fix_token="install -d -m 700 $(dirname "$tf_cfg") && (umask 077; cat > $tf_cfg)   # paste the xapp- token, then Ctrl-D"
+  if [ ! -f "$tf" ]; then row missing app-token "$tf_cfg" "$fix_token"
+  else
+    local mode; mode=$(stat -c %a "$tf" 2>/dev/null || stat -f %Lp "$tf")
+    if [ "$mode" != 600 ]; then row differs app-token "$tf_cfg is mode $mode, not 600" "chmod 600 $tf_cfg"
+    elif [ "$(head -c 5 "$tf")" != "xapp-" ]; then row differs app-token "$tf_cfg does not hold an app-level (xapp-) token" "$fix_token"
+    else row ok app-token "$tf_cfg (600, xapp-)"; fi
+  fi
+
+  # slack-axi, signed in with the bot's token
+  local axi="${OPSBOT_SLACK_AXI:-slack-axi}"
+  if ! command -v "$axi" >/dev/null; then row missing slack-axi "not on PATH" "npm install -g slack-axi"
+  else
+    local out; out=$("$axi" auth mode "${team_args[@]}" 2>&1)
+    if printf '%s\n' "$out" | grep -qE '^\s*mode: bot\s*$'; then row ok slack-axi "signed in, bot mode"
+    elif printf '%s\n' "$out" | grep -qE '^\s*mode: '; then row differs slack-axi "signed in, but not in bot mode" "slack-axi auth login --token xoxb-...   (the Bot User OAuth Token)"
+    else row missing slack-axi "not signed in" "slack-axi auth login --token xoxb-...   (the Bot User OAuth Token)"; fi
+  fi
+
+  # the scripts
+  local p dst
+  for p in "${PIECES[@]}"; do
+    dst="$ROOT/opsbot.d/$p"
+    if [ ! -e "$dst" ]; then row missing "$p" "not installed" "opsbot-slack install"
+    elif ! cmp -s "$TEMPLATES/$p" "$dst"; then row differs "$p" "differs from the template" "opsbot-slack install --force   (after keeping any change you meant)"
+    elif [ ! -x "$dst" ]; then row differs "$p" "not executable" "chmod 755 opsbot.d/$p"
+    else row ok "$p" "matches the template"; fi
+  done
+
+  # opsbot.json: streams.slack and wake.files
+  local block; block=$(cfg streams.slack)
+  if [ -z "$block" ]; then row missing streams.slack "no streams.slack in opsbot.json" "opsbot-slack install prints the block to merge"
+  else
+    local k absent=()
+    for k in bot_user escalate_dm; do [ -n "$(cfg "streams.slack.$k")" ] || absent+=("$k"); done
+    if [ ${#absent[@]} -gt 0 ]; then row differs streams.slack "missing ${absent[*]}" "set streams.slack.${absent[0]} in opsbot.json"
+    else row ok streams.slack "bot_user and escalate_dm set"; fi
+  fi
+  local ef_cfg ef; ef_cfg=$(cfg streams.slack.events_file); ef_cfg=${ef_cfg:-"~/.cache/$name/slack-events.jsonl"}
+  ef=$(expand "$ef_cfg")
+  local found=0 f
+  while IFS= read -r f || [ -n "$f" ]; do [ -n "$f" ] && [ "$(expand "$f")" = "$ef" ] && found=1; done < <(cfg wake.files)
+  if [ $found = 1 ]; then row ok wake.files "names $ef_cfg"
+  else row missing wake.files "does not name $ef_cfg" "add \"$ef_cfg\" to wake.files in opsbot.json"; fi
+
+  # the listener's unit, as opsbot-core infra install names it
+  local unit="opsbot-$name-monitor-10-slack-listener.service"
+  if ! command -v systemctl >/dev/null; then row missing listener "$unit: no systemctl on this host" "opsbot-core infra install (on a systemd host)"
+  else
+    local st; st=$(systemctl --user is-active "$unit" 2>/dev/null | head -1); st=${st:-unknown}
+    if [ "$st" = active ]; then row ok listener "$unit active"
+    else row missing listener "$unit $st" "opsbot-core infra install; journalctl --user -u $unit"; fi
+  fi
+
+  echo
+  if [ $BAD = 0 ]; then echo "status: all $ROWS ok"; return 0; fi
+  echo "status: $BAD of $ROWS to fix"
+  return 1
+}
+
+# ------------------------------------------------------------------------------------ dispatch
+
+[ $# -gt 0 ] || { usage >&2; exit 2; }
+cmd="$1"; shift
+case "$cmd" in
+  install) cmd_install "$@" ;;
+  status) cmd_status "$@" ;;
+  -h|--help|help) usage; exit 0 ;;
+  *) die_usage "unknown command: $cmd" ;;
+esac
