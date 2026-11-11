@@ -6,6 +6,7 @@ specs:
   - specs/skills/opsbot-core.md
   - specs/principles.md
   - specs/architecture.md
+pr: 59
 ---
 
 # The schedule monitor: one bounded monitor as the loop's clock
