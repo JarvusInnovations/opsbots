@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // monitor.d: the Slack listener, installed by the opsbot-slack skill. `opsbot-core infra install`
 // runs it as a user service. It holds a Socket Mode connection on the app-level token and, the
-// moment a DM to the bot, an @mention, a reply in a thread it was @mentioned in, a reaction on
-// one of its messages, or a new member arrives:
+// moment a DM to the bot, an @mention, a reply in a thread it was @mentioned in or started, a
+// reaction on one of its messages, or a new member arrives:
 //   1. records it as one JSON line in streams.slack.events_file. That file is in wake.files, so
 //      the session's own bounded monitor wakes on it; the heartbeat reader
 //      (heartbeat.d/20-slack-events) turns the lines into items at the next check;
@@ -13,6 +13,10 @@
 //   4. reacts with ack_emoji (default gear) only when the item's key appears in
 //      logs/intake/seen, which the core writes when the check reports the item to the model.
 //      So the second reaction means "read", by construction, not by promise.
+// The bot's own messages are never items. Its own top-level posts in a channel are remembered
+// as thread roots in slack-own-threads.jsonl beside the events file (the last 90 days), so a
+// later reply under one is kept without a mention. A thread it only replied in counts only
+// through a mention.
 // The cycle answers; this only watches. It logs every event type it receives, so a missing
 // scope or subscription shows in the journal. Zero dependencies: Node 22's fetch and WebSocket.
 // OPSBOT_SLACK_AXI names another slack-axi binary (a pinned copy, a test double).
@@ -26,7 +30,7 @@
 //     "team": "<team id, when slack-axi holds more than one workspace>"
 //   } }
 import { execFile } from "node:child_process";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,9 +41,11 @@ export const expandHome = (p) => (p && p.startsWith("~") ? join(homedir(), p.sli
 /** Every value the listener reads from opsbot.json, with its default. */
 export function settings(cfg) {
   const s = (cfg.streams && cfg.streams.slack) || {};
+  const eventsFile = expandHome(s.events_file || `~/.cache/${cfg.name}/slack-events.jsonl`);
   return {
     tokenFile: expandHome(s.app_token_file || `~/.config/${cfg.name}/slack-app-token`),
-    eventsFile: expandHome(s.events_file || `~/.cache/${cfg.name}/slack-events.jsonl`),
+    eventsFile,
+    ownThreadsFile: join(dirname(eventsFile), "slack-own-threads.jsonl"),
     botUser: s.bot_user || "",
     receiptEmoji: s.receipt_emoji || "eyes",
     ackEmoji: s.ack_emoji || "gear",
@@ -56,10 +62,19 @@ const plainMessage = (e) => !e.subtype || e.subtype === "file_share";
 /** Direct messages live in conversations whose id starts with D. */
 const kindOf = (conv) => (String(conv || "").startsWith("D") ? "dm" : "group");
 
+/** A channel or private channel: where a thread reply needs a reason to be kept. */
+const isChannel = (e) => e.channel_type === "channel" || e.channel_type === "group";
+
+/** How long the bot's own posts are remembered as thread roots. */
+export const OWN_ROOT_DAYS = 90;
+
 /**
  * The line to record for one Events API event, or null when the event is not one the bot
  * keeps. `inMyThread(conv, threadTs)` says whether a thread holds an @mention already
- * recorded. Pure: no file, no network.
+ * recorded, or is rooted on one of the bot's own posts. A reply whose `parent_user_id` is the
+ * bot also counts; Slack sets that field on thread replies, but does not document it on
+ * message events, so the remembered roots are the record and the field a backstop.
+ * Pure: no file, no network.
  */
 export function classify(event, { botUser = "", inMyThread = () => false } = {}) {
   if (!event || typeof event !== "object") return null;
@@ -77,11 +92,11 @@ export function classify(event, { botUser = "", inMyThread = () => false } = {})
     item = { kind: kindOf(event.channel), conv: event.channel, from: event.user, text: event.text || "", ts: event.ts, thread_ts: event.thread_ts || null };
   } else if (event.type === "message" && event.channel_type === "im" && plainMessage(event)) {
     item = { kind: "dm", conv: event.channel, from: event.user, text: event.text || "", ts: event.ts, thread_ts: event.thread_ts || null };
-  } else if (event.type === "message" && (event.channel_type === "channel" || event.channel_type === "group") && plainMessage(event)
+  } else if (event.type === "message" && isChannel(event) && plainMessage(event)
     && event.thread_ts && event.thread_ts !== event.ts
     && !(botUser && (event.text || "").includes(`<@${botUser}>`))
-    && inMyThread(event.channel, event.thread_ts)) {
-    // A reply in a thread the bot was pulled into. A reply that @mentions it arrives as app_mention.
+    && ((botUser && event.parent_user_id === botUser) || inMyThread(event.channel, event.thread_ts))) {
+    // A reply in a thread the bot was pulled into or started. One that @mentions it arrives as app_mention.
     item = { kind: "group", conv: event.channel, from: event.user, text: event.text || "", ts: event.ts, thread_ts: event.thread_ts };
   } else if (event.type === "reaction_added" && event.item && event.item.type === "message" && botUser && event.item_user === botUser) {
     item = { kind: kindOf(event.item.channel), conv: event.item.channel, from: event.user, text: `:${event.reaction}:`, ts: event.item.ts, thread_ts: null, reaction: event.reaction };
@@ -101,6 +116,41 @@ export function threadIsMine(lines, conv, threadTs) {
     if (ev.kind === "group" && ev.conv === conv && (ev.thread_ts || ev.ts) === threadTs) return true;
   }
   return false;
+}
+
+/**
+ * The thread root to remember when this event is the bot's own top-level post in a channel, or
+ * null. Its replies are not roots: a thread the bot only answered in counts through a mention.
+ * Pure.
+ */
+export function ownRoot(event, { botUser = "" } = {}) {
+  if (!event || event.type !== "message" || !botUser || event.user !== botUser || !isChannel(event)) return null;
+  if (event.subtype && event.subtype !== "file_share" && event.subtype !== "bot_message") return null;
+  if (!event.channel || !event.ts || (event.thread_ts && event.thread_ts !== event.ts)) return null;
+  return { conv: event.channel, ts: event.ts };
+}
+
+/** Whether `lines` (the own-threads file) hold this thread as one of the bot's own roots. */
+export function rootIsMine(lines, conv, threadTs) {
+  for (const line of lines.split("\n")) {
+    if (!line.includes(threadTs)) continue;
+    let r;
+    try { r = JSON.parse(line); } catch { continue; }
+    if (r && r.conv === conv && r.ts === threadTs) return true;
+  }
+  return false;
+}
+
+/**
+ * The own-threads file without roots older than `days` before `nowMs`, judged by the root's
+ * Slack `ts`. Unparseable lines go too. Pure.
+ */
+export function pruneRoots(lines, nowMs, days = OWN_ROOT_DAYS) {
+  const cutoff = nowMs / 1000 - days * 86400;
+  return lines.split("\n").filter((line) => {
+    if (!line) return false;
+    try { const r = JSON.parse(line); return parseFloat(r.ts) >= cutoff; } catch { return false; }
+  }).map((l) => l + "\n").join("");
 }
 
 /** One journal line for every event received, kept or not: the record that shows a missing scope. */
@@ -143,6 +193,17 @@ function main() {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const isSeen = (key) => { try { return readFileSync(seenFile, "utf8").split("\n").includes(key); } catch { return false; } };
   const readEvents = () => { try { return readFileSync(s.eventsFile, "utf8"); } catch (e) { log("!", "events file:", e.message); return ""; } };
+  const readRoots = () => { try { return readFileSync(s.ownThreadsFile, "utf8"); } catch { return ""; } };
+  function rememberRoot(root) {
+    appendFileSync(s.ownThreadsFile, JSON.stringify({ ...root, recorded_at: new Date().toISOString() }) + "\n");
+    const all = readRoots();
+    const kept = pruneRoots(all, Date.now());
+    if (kept === all) return;
+    const tmpFile = `${s.ownThreadsFile}.tmp`;
+    writeFileSync(tmpFile, kept);
+    renameSync(tmpFile, s.ownThreadsFile);
+    log("own thread roots pruned to", kept.split("\n").length - 1);
+  }
 
   async function wake(key, reason) {
     const until = Date.now() + s.ackTimeoutMs;
@@ -168,7 +229,13 @@ function main() {
 
   async function handle(event) {
     log(describe(event));
-    const item = classify(event, { botUser: s.botUser, inMyThread: (c, t) => threadIsMine(readEvents(), c, t) });
+    const root = ownRoot(event, { botUser: s.botUser });
+    if (root) {
+      try { rememberRoot(root); log("own thread root", root.conv, root.ts); } catch (e) { log("!", "own threads file:", e.message); }
+      return;
+    }
+    const inMyThread = (c, t) => rootIsMine(readRoots(), c, t) || threadIsMine(readEvents(), c, t);
+    const item = classify(event, { botUser: s.botUser, inMyThread });
     if (!item) return;
     appendFileSync(s.eventsFile, JSON.stringify({ ...item, recorded_at: new Date().toISOString() }) + "\n");
     log("recorded", item.event, item.kind, item.conv || "", item.from || "");

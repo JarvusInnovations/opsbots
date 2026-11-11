@@ -51,9 +51,9 @@ where each token goes, is [README.md](README.md).
 
 - a direct message to the bot;
 - an @mention (`app_mention`);
-- a reply in a thread the bot was @mentioned in, with no new mention needed (the
+- a reply in a thread the bot was @mentioned in or started, with no new mention needed (the
   `message.channels`, `message.groups` and `message.mpim` events in the manifest; every other
-  channel message is dropped unrecorded);
+  channel message is dropped unrecorded). A thread the bot only answered in does not count;
 - a reaction on one of the bot's own messages;
 - a new member joining the workspace.
 
@@ -64,6 +64,11 @@ it wakes or the item was read. It reacts `ack_emoji` only once the item's key is
 second reaction means read. It logs every event type it receives, kept or not, so a missing
 scope or event subscription shows in `journalctl --user -u opsbot-<bot>-monitor-10-slack-listener`.
 It reconnects with backoff when the socket closes.
+
+The bot's own messages are never items. Its own top-level posts in a channel are remembered as
+thread roots in `slack-own-threads.jsonl`, beside the events file, for 90 days. A reply under
+an older root, or one posted while the listener was down, is still kept when Slack's event
+names the bot as the thread's parent author (`parent_user_id`).
 
 The events file is in `wake.files`, so the session's own bounded monitor wakes on it first.
 The nudge is the backstop that survives the session. With `loop.schedule: "monitor"` the one

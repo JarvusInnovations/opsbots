@@ -77,6 +77,9 @@ follows in a thread.
 - It reads direct messages sent to it, and group DMs it is part of.
 - It reads a channel only after someone adds it there (`/invite @<bot>`). In a channel it
   hears @mentions of itself, and reactions on its own messages.
+- Once it has been mentioned in a thread, or has started the thread with a post of its own,
+  replies in that thread reach it without another mention. A thread it only answered in still
+  needs a mention. It remembers its own posts for 90 days.
 - It does not see member email addresses. The manifest leaves `users:read.email` out on
   purpose.
 - It cannot read direct messages between other people, or channels it is not in.
