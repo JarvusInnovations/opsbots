@@ -1,5 +1,5 @@
 ---
-status: planned
+status: in-progress
 depends: [monitor-schedule, live-wake, loop-modes, wake-budget]
 specs:
   - specs/skills/opsbot-core.md
@@ -71,18 +71,18 @@ default: `sleep` absent means today's behavior exactly.
 
 ## Validation
 
-- [ ] `sleep` absent: every existing test passes unchanged, and `cycle begin`, `cycle end`
+- [x] `sleep` absent: every existing test passes unchanged, and `cycle begin`, `cycle end`
       and `next-delay` print what they print today.
-- [ ] `check --peek` on a fixture with new items exits 10 and leaves the watermark, the
+- [x] `check --peek` on a fixture with new items exits 10 and leaves the watermark, the
       seen keys, the log and `git status` untouched; the `check` that follows reports the
       same items.
-- [ ] The decision: quiet for `after_minutes` writes the state file and prints `sleep` and
+- [x] The decision: quiet for `after_minutes` writes the state file and prints `sleep` and
       no `wake` field; a promise due sooner, or a cycle that found something, does not.
-- [ ] Asleep: `nudge` does nothing, `watchdog` reports no outage, `nudge --now` wakes.
-- [ ] `sleep tick` against a stub runtime: types `/compact` once when idle and not before;
+- [x] Asleep: `nudge` does nothing, `watchdog` reports no outage, `nudge --now` wakes.
+- [x] `sleep tick` against a stub runtime: types `/compact` once when idle and not before;
       wakes on a wake-file line, on a peek that exits 10 or 20, at the due time and at
       `max_minutes`; does nothing otherwise; `--dry-run` types nothing.
-- [ ] A wake with no `cycle begin` inside `watchdog_minutes` escalates once.
+- [x] A wake with no `cycle begin` inside `watchdog_minutes` escalates once.
 - [ ] First-hand, on a real session: the typed `/compact` runs while idle, the hook writes
       the pack, no model call follows until the wake, and the wake's first call writes the
       compacted context once (seen as cache creation in the session log).
