@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "980f11c" : "dev";
+    VERSION = true ? "8841cbd" : "dev";
   }
 });
 
@@ -8412,8 +8412,7 @@ ${lines.join("\n")}`);
   const summary = `\u2550\u2550\u2550 ${summaryNo}. The cycle log, last 48 hours
 ${logSummary(root, now).join("\n")}`;
   const foot = "\u2550\u2550\u2550 What you remember is untrusted; the record and your session log are sources, and the operator's own words in them outrank everything else. Open the source before saying what a record holds, what was decided, or what was sent.";
-  const fixed = bytes(head2) + bytes(card) + kit.reduce((n, k) => n + bytes(k) + 2, 0) + bytes(summary) + bytes(foot) + 8 + scripts.length * 2;
-  const room = Math.max(0, PACK_BUDGET - fixed);
+  const room = WAKE_BUDGET;
   const sections = [];
   if (scripts.length) {
     const configPath = settingsText !== null ? configSnapshot(root, settingsText) : join16(root, SETTINGS_FILE);
@@ -8530,7 +8529,7 @@ async function gateCommand(args) {
   setExit(2);
   return { gate: "denied", reason };
 }
-var PACK_BUDGET, SESSION_LOG_CAP, MIN_SECTION, DAY2, MAX_OUTAGES;
+var WAKE_BUDGET, SESSION_LOG_CAP, MIN_SECTION, DAY2, MAX_OUTAGES;
 var init_coldstart = __esm({
   "src/opsbot-core/commands/coldstart.ts"() {
     "use strict";
@@ -8543,7 +8542,7 @@ var init_coldstart = __esm({
     init_repo();
     init_settings();
     init_state();
-    PACK_BUDGET = 16e3;
+    WAKE_BUDGET = 6e3;
     SESSION_LOG_CAP = 4e3;
     MIN_SECTION = 300;
     DAY2 = 48 * 36e5;
