@@ -122,7 +122,9 @@ key is a comment. The check and every lifecycle script read the file as committe
 
 `sleep` (optional) is `{after_minutes, probe_minutes, max_minutes, compact}`, defaults 60,
 10, 480 and `true`, and is refused unless `loop.schedule` is `monitor`. Absent, the bot
-never sleeps and nothing below about sleep applies.
+never sleeps and nothing below about sleep applies. It is a trial setting: it has run on a
+test bot, not yet for a week on a working one, so turn it on for one bot and read its log
+before relying on it.
 
 `commit_paths` (optional) lists repo-relative files the check's commit and the `cycle end`
 commit also take when they exist and have changes: a baseline an adapter updates, an
