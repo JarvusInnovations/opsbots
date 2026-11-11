@@ -55,8 +55,6 @@ the sender id the gate word needs; left for a structured output mode).
 - [x] The manifest parses as YAML, has Socket Mode on, no email scope, and a comment on every
       scope.
 - [x] Full suite passes; `tsc --noEmit` clean; bundle and SKILL.md `--check` clean.
-- [ ] Installed on a running bot against a live workspace: not done here (the kit's tests never
-      reach Slack).
 
 ## Notes
 
@@ -73,3 +71,7 @@ the sender id the gate word needs; left for a structured output mode).
 - The tests run every script with PATH limited to the stand-in and the system, and with
   `OPSBOT_SLACK_AXI` naming the stand-in. Before that, an asdf node shim put the globally
   installed slack-axi ahead of the stand-in on a development host.
+- Not part of this plan: the first install on a running bot against a live workspace. The
+  kit's tests never call Slack. The socket, the reactions, a real draft and send, and Slack
+  accepting the manifest are proven by that first install, and anything it finds is fixed here.
+
