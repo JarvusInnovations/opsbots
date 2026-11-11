@@ -122,7 +122,8 @@ still one clock, and the nudge is still what restarts a loop that stopped.
 ## Cold start and compaction
 
 A SessionStart hook on `startup | resume | compact | clear` writes the reground pack to a
-file and sets a pending flag; a PreToolUse gate refuses every other tool until the pack
+file inside the bot's checkout (under `.scratch/`, kept out of git through `info/exclude`) and
+sets a pending flag; a PreToolUse gate refuses every other tool until the pack
 has been read whole. The pack, in order, within a size budget the tests hold:
 
 1. the rule card, whole
