@@ -5,6 +5,7 @@ depends: [start-command]
 specs:
   - specs/skills/opsbot-core.md
   - specs/skills/opsbot-host.md
+pr: 61
 ---
 
 # `start --continue` resumes the loop's own session
