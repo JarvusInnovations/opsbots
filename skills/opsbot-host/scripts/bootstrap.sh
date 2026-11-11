@@ -6,14 +6,15 @@
 #   .agents/skills/opsbot-host/scripts/bootstrap.sh --tools "gh-axi agent-recall-axi"
 #
 # Installs, each only when missing: ~/.local/bin and the asdf shims on PATH (above .bashrc's
-# interactive guard), asdf, node, the GitHub CLI, the AXI tools, Claude Code, herdr, and the
-# skills of the repo it is run in (skills-lock.json). Plain bash on purpose: it has to run
+# interactive guard), asdf, node, the GitHub CLI, the AXI tools, Claude Code, herdr with its
+# agent skill (installed for the user, so every project has it), and the skills of the repo it
+# is run in (skills-lock.json). Plain bash on purpose: it has to run
 # before node exists. It never signs in to anything; the sign-ins are printed at the end.
 #
 #   --dry-run        print what would be installed and the commands, change nothing
 #   --tools "a b"    npm packages to install globally instead of the default set; "none" for none
 #   --node <version> node version (default: the repo's .tool-versions, else the latest 22)
-#   --no-herdr       skip herdr
+#   --no-herdr       skip herdr and its skill
 set -euo pipefail
 
 DRY=0; HERDR=1; NODE=""; TOOLS="gh-axi gws-axi slack-axi gitsheets-axi agent-recall-axi chrome-devtools-axi"
@@ -110,7 +111,12 @@ done
 
 # 6. Claude Code, herdr
 step claude 'claude --version' 'curl -fsSL https://claude.ai/install.sh | bash'
-[ "$HERDR" = 1 ] && step herdr 'herdr --version' 'curl -fsSL https://herdr.dev/install.sh | sh'
+if [ "$HERDR" = 1 ]; then
+  step herdr 'herdr --version' 'curl -fsSL https://herdr.dev/install.sh | sh'
+  # the herdr skill, for every project this user opens: how an agent drives herdr. Only that
+  # one skill: the repository also holds the herdr project's own maintenance skills.
+  step herdr-skill '[ -d "$HOME/.agents/skills/herdr" ] && echo "~/.agents/skills/herdr"' 'npx -y skills add -g ogulcancelik/herdr --skill herdr -y </dev/null'
+fi
 
 # 7. the repo's skills
 if [ -f skills-lock.json ]; then

@@ -33,6 +33,7 @@ Each step is skipped when the piece is already there, so it is safe to run again
 | AXI tools | `npm install -g` for `gh-axi`, `gws-axi`, `slack-axi`, `gitsheets-axi`, `agent-recall-axi` and `chrome-devtools-axi`: command-line tools agents use for GitHub, Google Workspace, Slack, structured repo data, session history and driving a browser |
 | [Claude Code](https://code.claude.com/docs) | Runs Anthropic's installer |
 | [herdr](https://herdr.dev) | Runs its installer. A terminal multiplexer for agent sessions |
+| herdr skill | `npx skills add -g ogulcancelik/herdr --skill herdr`: teaches agents to drive herdr, installed for the user so every project has it |
 | Skills | In a repo with a `skills-lock.json`, restores any skill that is missing |
 
 It prints one line per step: `ok` (already there), `added` (installed now), or `would`
@@ -59,7 +60,7 @@ local copy.
 | `--dry-run` | Print every step and its commands; change nothing |
 | `--tools "a b"` | Install these npm packages instead of the default six. `--tools none` installs none |
 | `--node <version>` | Install this node version |
-| `--no-herdr` | Skip herdr |
+| `--no-herdr` | Skip herdr and its skill |
 
 Example: only the GitHub and session-history tools, no herdr.
 
@@ -84,8 +85,8 @@ curl -fsSL https://raw.githubusercontent.com/JarvusInnovations/opsbots/main/skil
 - **If a step fails,** the script stops and prints the command it was running. Fix the cause
   and run it again; it continues from that step.
 - **To undo it:** remove the block it added at the top of `~/.bashrc`, and delete
-  `~/.asdf`, `~/.local/bin/asdf`, `~/.local/bin/claude`, `~/.local/share/claude` and
-  `~/.local/bin/herdr`.
+  `~/.asdf`, `~/.local/bin/asdf`, `~/.local/bin/claude`, `~/.local/share/claude`,
+  `~/.local/bin/herdr`, and `~/.agents/skills/herdr` with its link in `~/.claude/skills/`.
 
 ## For an ops bot's host
 
