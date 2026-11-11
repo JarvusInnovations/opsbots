@@ -460,3 +460,28 @@ describe("infra and home with sleep", () => {
   });
 });
 
+describe("the pack with sleep", () => {
+  test("carries the sleep rules only with sleep set, and the sleep state while asleep", () => {
+    bot = sleepyBot({}, ["heartbeat.d", "wake.d"]);
+    const awake = cli(bot, ["cold-start"], { now: T0 }).out;
+    expect(awake).toContain("prints a `sleep` field in place of `wake`, arm no monitor and end your turn");
+    expect(awake).toContain("(woken: <reason>)");
+    putToSleep(bot);
+    const pack = cli(bot, ["cold-start"], { now: at(62) }).out;
+    expect(pack).toContain("going down since 16:01Z");
+    expect(pack).toContain("arm nothing now: when the loop prompt arrives, run `cycle begin`");
+    expect(pack).not.toContain("run `cycle begin` now; it prints the one Monitor call");
+    const plain = makeBot({ settings: { ...BASE_SETTINGS, loop: MON_LOOP }, points: ["wake.d"] });
+    try {
+      expect(cli(plain, ["cold-start"], { now: T0 }).out).not.toContain("woken:");
+    } finally {
+      plain.cleanup();
+    }
+  });
+
+  test("the dispatcher's mode section says what a sleep field means", () => {
+    bot = makeBot({ settings: { ...BASE_SETTINGS, loop: { ...MON_LOOP, mode: "dispatcher" } }, points: ["wake.d"] });
+    const pack = cli(bot, ["cold-start"], { now: T0 }).out;
+    expect(pack).toContain("**Sleep.** When `opsbot.json` sets `sleep`");
+  });
+});

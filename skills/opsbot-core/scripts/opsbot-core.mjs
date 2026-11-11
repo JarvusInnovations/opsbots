@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "4a0c5d8" : "dev";
+    VERSION = true ? "ea5b31a" : "dev";
   }
 });
 
@@ -1895,7 +1895,7 @@ var init_reference = __esm({
         commands: [
           {
             usage: "cycle begin",
-            summary: "Refuse while another writer holds the checkout (exit 30, `wait \xB7 \u2026 \xB7 next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it. With `loop.schedule: monitor`, on 0 and 30 the `wake` field holds the schedule monitor's state and the one Monitor call to make now."
+            summary: "Refuse while another writer holds the checkout (exit 30, `wait \xB7 \u2026 \xB7 next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it. With `loop.schedule: monitor`, on 0 and 30 the `wake` field holds the schedule monitor's state and the one Monitor call to make now. With `sleep` set, a nothing-new begin that finds the loop quiet for `after_minutes` prints a `sleep` field in place of `wake`: arm nothing, end the turn. A begin that finds `.git/opsbot-sleep` removes it and logs the wake."
           },
           {
             usage: "check [--no-commit]",
@@ -1903,7 +1903,7 @@ var init_reference = __esm({
           },
           {
             usage: "cycle end --records N [--degraded] [--summary TEXT]",
-            summary: "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle."
+            summary: "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle. With `sleep` set, a `sleep` field may replace `wake`, as at `cycle begin`."
           },
           {
             usage: "check --peek",
@@ -1943,14 +1943,18 @@ var init_reference = __esm({
       {
         group: "Liveness (run by system timers)",
         commands: [
-          { usage: "watchdog [--dry-run]", summary: "When no cycle has logged within `watchdog_minutes`, tell the operator once per outage through `escalate.d/` and record it." },
+          { usage: "watchdog [--dry-run]", summary: "When no cycle has logged within `watchdog_minutes`, tell the operator once per outage through `escalate.d/` and record it. Stands down while the bot sleeps." },
           {
             usage: "nudge [--now [--reason TEXT]] [--dry-run]",
-            summary: "Re-issue `loop.prompt` to the named agent when the loop is quiet, unlocked, past cooldown and idle. `--now` (for listeners) skips the quiet test. A `working` agent whose own session log shows its turn ended (background work only) is prompted anyway, with a note."
+            summary: "Re-issue `loop.prompt` to the named agent when the loop is quiet, unlocked, past cooldown and idle. `--now` (for listeners) skips the quiet test. A `working` agent whose own session log shows its turn ended (background work only) is prompted anyway, with a note. While the bot sleeps only `--now` acts, and it wakes it."
+          },
+          {
+            usage: "sleep tick [--dry-run]",
+            summary: "The sleep timer's tick (only with `sleep` set; a no-op while awake). Going down: types `/compact` once the session is idle. Asleep: wakes it with `<loop.prompt> (woken: <reason>)` on an operator message, a wake-file line, the due time, `max_minutes`, or a `check --peek` exit of 10 or 20. A wake no `cycle begin` answers within `watchdog_minutes` is told once through `escalate.d/`. Exit 1 when the runtime or the operator could not be reached."
           },
           {
             usage: "infra install|uninstall|status [--dry-run]",
-            summary: "Render the watchdog and nudge timers and one unit per `monitor.d/` script from `opsbot.json`; `status` names stale units."
+            summary: "Render the watchdog and nudge timers, one unit per `monitor.d/` script, and with `sleep` set the sleep timer, from `opsbot.json`; `status` names stale units and the sleep state."
           }
         ]
       },
@@ -8071,7 +8075,7 @@ function schedulePackLines(s, evs, now) {
   if (st) return [`armed until ${hhmm2(st.until)} (since ${hhmm2(st.at)}); nothing to do until it delivers`];
   return [`${evs ? "not armed" : "state unknown (no session log)"} \xB7 run \`cycle begin\` now; it prints the one Monitor call to make`];
 }
-var MONITOR_MAX_MS, MONITOR_MIN_MS, hhmm2, WAKE_RULES, SCHEDULE_MARGIN_S, CYCLE_DUE, basename6, SCHEDULE_RULES;
+var MONITOR_MAX_MS, MONITOR_MIN_MS, hhmm2, WAKE_RULES, SCHEDULE_MARGIN_S, CYCLE_DUE, basename6, SLEEP_RULES, SCHEDULE_RULES;
 var init_wake = __esm({
   "src/opsbot-core/wake.ts"() {
     "use strict";
@@ -8088,6 +8092,10 @@ var init_wake = __esm({
     SCHEDULE_MARGIN_S = 60;
     CYCLE_DUE = "cycle due";
     basename6 = (p) => p.replace(/\/+$/, "").split("/").pop() || p;
+    SLEEP_RULES = [
+      "When `cycle begin` or `cycle end` prints a `sleep` field in place of `wake`, arm no monitor and end your turn: the sleep timer compacts you and wakes you.",
+      "A wake from sleep is the loop prompt followed by `(woken: <reason>)`: run `cycle begin` as after any wake."
+    ];
     SCHEDULE_RULES = [
       "The monitor is your schedule and your live wake.",
       "When it delivers `cycle due` or an event line, run `cycle begin`.",
@@ -8778,7 +8786,9 @@ ${capSection(body, SESSION_LOG_CAP)}`);
   }
   if (s.loop.schedule === "monitor") {
     const evs = transcript ? readEvents(transcript) : null;
-    const lines = [...schedulePackLines(s, evs && evs.length ? evs : null, now), ...SCHEDULE_RULES];
+    const slept = activeSleep(root, s);
+    const state = slept ? [`${sleepStatusLine(s, slept)}; arm nothing now: when the loop prompt arrives, run \`cycle begin\``] : schedulePackLines(s, evs && evs.length ? evs : null, now);
+    const lines = [...state, ...SCHEDULE_RULES, ...s.sleep ? SLEEP_RULES : []];
     kit.push(`\u2550\u2550\u2550 1.${kit.length + 1} The schedule and live wake (arm it before anything else)
 ${lines.join("\n")}`);
   } else if (wakeFiles(s).length) {

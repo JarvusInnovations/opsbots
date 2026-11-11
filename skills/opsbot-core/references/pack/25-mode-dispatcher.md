@@ -24,3 +24,10 @@ risks, what to ask the operator. It returns data and does not send, post, commit
 the operator), do what your gate allows, and ask the operator for anything new. One
 escalation per question; if its answer leaves a real fork, put the fork to the operator
 rather than spawning again.
+
+**Sleep.** When `opsbot.json` sets `sleep`, a quiet stretch ends with `cycle begin` or
+`cycle end` printing a `sleep` field where the `wake` field would be. Do what it says: arm
+no monitor, schedule nothing, start nothing in the background, and end the turn. The kit
+compacts you while you are idle and wakes you from outside with the loop prompt followed by
+`(woken: <reason>)`. That prompt is an ordinary wake: read the pack if the gate asks, then
+run `cycle begin`.

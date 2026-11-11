@@ -253,7 +253,12 @@ replaces the per-file monitors and the self-paced call.
   it delivers `cycle due` or an event line, run `cycle begin`; at the end of every cycle arm
   the one monitor `cycle end` prints, exactly as printed; never call ScheduleWakeup and
   never start `/loop`; never two monitors, never a longer deadline; if you find none armed
-  (after a start, a compaction, an error), arm it by running `cycle begin`.
+  (after a start, a compaction, an error), arm it by running `cycle begin`. With `sleep` set
+  it adds two rules: a `sleep` field means arm nothing and end the turn; a wake from sleep is
+  the loop prompt followed by `(woken: <reason>)`, answered with `cycle begin`. A pack
+  written while `.git/opsbot-sleep` exists (the compaction on the way down) gives the sleep
+  state in place of the monitor's and says to arm nothing until the loop prompt arrives.
+  The dispatcher mode section says the same in prose.
 - **The backstop.** The nudge re-issues `loop.prompt`, which in this mode is a plain
   message, not a slash command. Its defaults tighten to 35 minutes, so a session whose
   monitor was not re-armed is noticed within one missed wake and a margin.
