@@ -5,6 +5,7 @@ depends: [kit-pack-sections]
 specs:
   - specs/skills/opsbot-core.md
   - specs/architecture.md
+pr: 76
 ---
 
 # The pack and scratch files live in .scratch/
