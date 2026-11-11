@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "70f39f7" : "dev";
+    VERSION = true ? "a98dd3c" : "dev";
   }
 });
 
@@ -1917,7 +1917,7 @@ var init_reference = __esm({
           },
           {
             usage: "cold-start [--write]",
-            summary: "Print the reground pack: the rule card, the kit's sections (house style, delegation, what the session log says, the live wake to arm), each `wake.d/` section, the last 48 hours of the cycle log, the untrusted-memory line. `--write` also writes the pack file, sets the pending flag and records the session log's path for `cycle` and `nudge`."
+            summary: "Print the reground pack: the rule card, the kit's sections (house style, delegation, what the session log says, the live wake to arm), each `wake.d/` section, the last 48 hours of the cycle log, the untrusted-memory line. `--write` also makes sure `.scratch/` exists and is git-excluded, writes the pack to `.scratch/opsbot-core/reground.md`, sets the pending flag and records the session log's path for `cycle` and `nudge`."
           },
           {
             usage: "gate check",
@@ -8379,12 +8379,30 @@ var init_wake = __esm({
 });
 
 // src/opsbot-core/commands/coldstart.ts
-import { existsSync as existsSync10, mkdirSync as mkdirSync3, readdirSync as readdirSync2, readFileSync as readFileSync6, rmSync as rmSync3, statSync as statSync5, writeFileSync as writeFileSync3 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync10, mkdirSync as mkdirSync3, readdirSync as readdirSync2, readFileSync as readFileSync6, rmSync as rmSync3, statSync as statSync5, writeFileSync as writeFileSync3 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
-import { join as join16, resolve as resolve6 } from "node:path";
-function cacheDir2(name) {
+import { dirname as dirname9, join as join16, resolve as resolve6 } from "node:path";
+function legacyCacheDir(name) {
   const base = process.env.XDG_CACHE_HOME || join16(homedir9(), ".cache");
   return join16(base, name);
+}
+function ensureScratch(root) {
+  const dir = join16(root, SCRATCH_DIR);
+  const created = !existsSync10(dir);
+  mkdirSync3(dir, { recursive: true });
+  const exclude = gitPath(root, "info/exclude");
+  let text = "";
+  try {
+    text = readFileSync6(exclude, "utf8");
+  } catch {
+  }
+  const present = text.split("\n").some((l) => ["/.scratch", "/.scratch/", ".scratch", ".scratch/"].includes(l.trim()));
+  if (!present) {
+    mkdirSync3(dirname9(exclude), { recursive: true });
+    appendFileSync2(exclude, `${text && !text.endsWith("\n") ? "\n" : ""}${SCRATCH_EXCLUDE}
+`);
+  }
+  return { dir, exclude, created, excluded: !present };
 }
 function writeSessionPointer(root, p) {
   try {
@@ -8401,8 +8419,12 @@ function sessionPointer(root) {
     return null;
   }
 }
-function packPaths(name) {
-  const dir = cacheDir2(name);
+function packPaths(root) {
+  const dir = join16(root, SCRATCH_DIR, "opsbot-core");
+  return { dir, pack: join16(dir, "reground.md"), pending: join16(dir, "reground.pending") };
+}
+function legacyPackPaths(name) {
+  const dir = legacyCacheDir(name);
   return { pack: join16(dir, "reground.md"), pending: join16(dir, "reground.pending") };
 }
 function bytes(s) {
@@ -8579,11 +8601,16 @@ async function coldStartCommand(args) {
   const libSection = transcript ? await sessionLogSectionLib(transcript, { loopPrompt: s.loop.prompt }) : null;
   const pack = buildPack(root, s, text, transcript, libSection);
   if (!flags.write) return pack.replace(/\n$/, "");
-  const { pack: packFile, pending } = packPaths(s.name);
-  mkdirSync3(cacheDir2(s.name), { recursive: true });
+  ensureScratch(root);
+  const { dir, pack: packFile, pending } = packPaths(root);
+  mkdirSync3(dir, { recursive: true });
   writeFileSync3(packFile, pack);
   writeFileSync3(pending, `${nowIso()}
 `);
+  try {
+    rmSync3(legacyPackPaths(s.name).pending, { force: true });
+  } catch {
+  }
   return [
     `\u2550\u2550\u2550 READ THE WHOLE PACK BEFORE ANYTHING ELSE: Read ${packFile} now, whole (no offset or limit).`,
     "\u2550\u2550\u2550 Every other tool is refused until you do (gate check). This hook output may be cut short; the file is not.",
@@ -8608,7 +8635,9 @@ async function gateCommand(args) {
   if (!root) return { gate: "open (not inside a git checkout)" };
   const s = trySettings(root);
   if (!s) return { gate: "open (no settings)" };
-  const { pack, pending } = packPaths(s.name);
+  const current = packPaths(root);
+  const legacy = legacyPackPaths(s.name);
+  const { pack, pending } = existsSync10(current.pending) ? current : existsSync10(legacy.pending) ? legacy : current;
   if (!existsSync10(pending)) return { gate: "open" };
   let packSize = 0;
   try {
@@ -8640,7 +8669,7 @@ async function gateCommand(args) {
   setExit(2);
   return { gate: "denied", reason };
 }
-var WAKE_BUDGET, SESSION_LOG_CAP, MIN_SECTION, DAY2, MAX_OUTAGES;
+var WAKE_BUDGET, SESSION_LOG_CAP, MIN_SECTION, DAY2, MAX_OUTAGES, SCRATCH_DIR, SCRATCH_EXCLUDE;
 var init_coldstart = __esm({
   "src/opsbot-core/commands/coldstart.ts"() {
     "use strict";
@@ -8658,6 +8687,8 @@ var init_coldstart = __esm({
     MIN_SECTION = 300;
     DAY2 = 48 * 36e5;
     MAX_OUTAGES = 5;
+    SCRATCH_DIR = ".scratch";
+    SCRATCH_EXCLUDE = ".scratch/";
   }
 });
 
@@ -9082,7 +9113,7 @@ var init_outage = __esm({
 });
 
 // src/opsbot-core/runtime.ts
-import { appendFileSync as appendFileSync2, readFileSync as readFileSync8 } from "node:fs";
+import { appendFileSync as appendFileSync3, readFileSync as readFileSync8 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
 import { join as join17 } from "node:path";
 function normStatus(s) {
@@ -9162,7 +9193,7 @@ function fakeAdapter(file) {
     prompt(_agent, text) {
       const e = state().prompt_error;
       if (e) return { ok: false, code: String(e.code ?? "error"), message: String(e.message ?? "") };
-      appendFileSync2(`${file}.prompts`, `${JSON.stringify(text)}
+      appendFileSync3(`${file}.prompts`, `${JSON.stringify(text)}
 `);
       return { ok: true };
     }
@@ -9550,7 +9581,7 @@ var init_infra = __esm({
 // src/opsbot-core/commands/hook.ts
 import { existsSync as existsSync14, mkdirSync as mkdirSync5, readFileSync as readFileSync11, writeFileSync as writeFileSync7 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
-import { dirname as dirname9, join as join19, relative as relative2 } from "node:path";
+import { dirname as dirname10, join as join19, relative as relative2 } from "node:path";
 function settingsPath(scope, dir) {
   if (scope === "global") return join19(homedir12(), ".claude", "settings.json");
   return join19(dir, ".claude", "settings.json");
@@ -9572,7 +9603,7 @@ function readSettings(p) {
   }
 }
 function writeSettings(p, s) {
-  mkdirSync5(dirname9(p), { recursive: true });
+  mkdirSync5(dirname10(p), { recursive: true });
   writeFileSync7(p, `${JSON.stringify(s, null, 2)}
 `);
 }

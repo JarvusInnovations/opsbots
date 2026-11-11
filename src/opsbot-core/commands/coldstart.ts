@@ -14,17 +14,21 @@
  *   3. the cycle log's last 48 hours: counts, longest gap, last degraded, outages
  *   4. memory before this point is untrusted; open the source before saying
  *
- * --write also writes the pack to ~/.cache/<bot>/reground.md and sets
- * reground.pending, which `gate check` holds until the pack is read whole.
+ * --write first makes sure the checkout has .scratch/, excluded through the
+ * repository's info/exclude, then writes the pack to
+ * .scratch/opsbot-core/reground.md and sets reground.pending beside it, which
+ * `gate check` holds until the pack is read whole. Inside the checkout, the
+ * read needs no permission beyond the working directory.
  * Never fails a start: a part it cannot read says so in its place.
  *
  * gate check — the PreToolUse body. Exit 0 when nothing is pending, or when
  * this call is a Read of the pack with no offset, limit or pages (which
- * clears the flag); otherwise prints the deny reason and exits 2.
+ * clears the flag); otherwise prints the deny reason and exits 2. A flag left
+ * at the pack's earlier home (~/.cache/<bot>/) is honored once the same way.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { parseArgs, setExit, usageError } from "../args.js";
 import { skillDir } from "../invocation.js";
 import { readEvents, sessionLogSection, sessionLogSectionLib } from "../transcript.js";
@@ -46,9 +50,32 @@ const MIN_SECTION = 300;
 const DAY2 = 48 * 3600_000;
 const MAX_OUTAGES = 5;
 
-export function cacheDir(name: string): string {
+/** The bot's scratch directory, relative to its checkout, and the line that keeps it out of git. */
+export const SCRATCH_DIR = ".scratch";
+export const SCRATCH_EXCLUDE = ".scratch/";
+
+/** The pack's earlier home, kept only to honor a flag set there before the move. */
+export function legacyCacheDir(name: string): string {
   const base = process.env.XDG_CACHE_HOME || join(homedir(), ".cache");
   return join(base, name);
+}
+
+/** Create `.scratch/` in the checkout and add `.scratch/` to the repository's info/exclude,
+ * each only when missing. The exclude path comes from `git rev-parse --git-path`, so a
+ * worktree (where `.git` is a file) writes the shared one. Never `.gitignore`. */
+export function ensureScratch(root: string): { dir: string; exclude: string; created: boolean; excluded: boolean } {
+  const dir = join(root, SCRATCH_DIR);
+  const created = !existsSync(dir);
+  mkdirSync(dir, { recursive: true });
+  const exclude = gitPath(root, "info/exclude");
+  let text = "";
+  try { text = readFileSync(exclude, "utf8"); } catch { /* no exclude file yet */ }
+  const present = text.split("\n").some((l) => ["/.scratch", "/.scratch/", ".scratch", ".scratch/"].includes(l.trim()));
+  if (!present) {
+    mkdirSync(dirname(exclude), { recursive: true });
+    appendFileSync(exclude, `${text && !text.endsWith("\n") ? "\n" : ""}${SCRATCH_EXCLUDE}\n`);
+  }
+  return { dir, exclude, created, excluded: !present };
 }
 
 /** Where this session's log lives, as the SessionStart hook told cold-start; read by cycle and nudge. */
@@ -65,8 +92,14 @@ export function sessionPointer(root: string): SessionPointer | null {
   } catch { return null; }
 }
 
-export function packPaths(name: string): { pack: string; pending: string } {
-  const dir = cacheDir(name);
+/** The pack and its flag: in the checkout's scratch directory, in a folder that is the kit's. */
+export function packPaths(root: string): { dir: string; pack: string; pending: string } {
+  const dir = join(root, SCRATCH_DIR, "opsbot-core");
+  return { dir, pack: join(dir, "reground.md"), pending: join(dir, "reground.pending") };
+}
+
+export function legacyPackPaths(name: string): { pack: string; pending: string } {
+  const dir = legacyCacheDir(name);
   return { pack: join(dir, "reground.md"), pending: join(dir, "reground.pending") };
 }
 
@@ -257,10 +290,13 @@ export async function coldStartCommand(args: string[]): Promise<string> {
   const libSection = transcript ? await sessionLogSectionLib(transcript, { loopPrompt: s.loop.prompt }) : null;
   const pack = buildPack(root, s, text, transcript, libSection);
   if (!flags.write) return pack.replace(/\n$/, "");
-  const { pack: packFile, pending } = packPaths(s.name);
-  mkdirSync(cacheDir(s.name), { recursive: true });
+  ensureScratch(root);
+  const { dir, pack: packFile, pending } = packPaths(root);
+  mkdirSync(dir, { recursive: true });
   writeFileSync(packFile, pack);
   writeFileSync(pending, `${nowIso()}\n`);
+  // the new pack supersedes any flag left at the earlier home; the old pack file is left alone
+  try { rmSync(legacyPackPaths(s.name).pending, { force: true }); } catch { /* not ours to fail on */ }
   return [
     `═══ READ THE WHOLE PACK BEFORE ANYTHING ELSE: Read ${packFile} now, whole (no offset or limit).`,
     "═══ Every other tool is refused until you do (gate check). This hook output may be cut short; the file is not.",
@@ -289,7 +325,10 @@ export async function gateCommand(args: string[]): Promise<Record<string, unknow
   if (!root) return { gate: "open (not inside a git checkout)" };
   const s = trySettings(root);
   if (!s) return { gate: "open (no settings)" };
-  const { pack, pending } = packPaths(s.name);
+  // the flag in the checkout; else one left at the pack's earlier home, honored once
+  const current = packPaths(root);
+  const legacy = legacyPackPaths(s.name);
+  const { pack, pending } = existsSync(current.pending) ? current : existsSync(legacy.pending) ? legacy : current;
   if (!existsSync(pending)) return { gate: "open" };
   let packSize = 0;
   try {
