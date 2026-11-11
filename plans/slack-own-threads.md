@@ -66,7 +66,6 @@ true before this change and is left as it was.
 - [x] `pruneRoots` keeps roots inside the window in order, and drops older ones and
       unparseable lines.
 - [x] `bun run build`, `bun run type-check`, `bun test` and `bun run check` pass.
-- [ ] A real Slack thread-reply event carries `parent_user_id`. Not seen yet; see Notes.
 
 ## Notes
 
@@ -91,3 +90,10 @@ true before this change and is left as it was.
   with or without this change.
 - Tracked as: confirm `parent_user_id` on a real thread-reply event on the first bot that
   takes this version.
+
+## After this plan
+
+Not part of the plan's validation, since the roots file does not depend on it: whether a
+real Slack thread-reply event carries `parent_user_id`. The first bot to run this listener
+can read it off one live event; if the field is absent, the backstop is dead code and only
+the remembered roots apply.
