@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cli, makeBot, writeStream, type Bot } from "./helpers";
-import { PACK_BUDGET, capSection } from "../src/opsbot-core/commands/coldstart";
+import { WAKE_BUDGET, capSection } from "../src/opsbot-core/commands/coldstart";
 
 let bot: Bot;
 afterEach(() => bot?.cleanup());
@@ -98,11 +98,14 @@ describe("cold-start", () => {
     expect(r.out).not.toContain("Before this start");
   });
 
-  test("the pack stays within the byte budget, with '… N more lines'", () => {
+  test("the wake sections stay within their own budget, with '… N more lines', however long the rule card is", () => {
     bot = makeBot({ points: ["heartbeat.d", "wake.d"] });
+    const quiet = cli(bot, ["cold-start"], { now: T0 });
     bot.env.FIXTURE_WAKE_LINES = "2000";
     const r = cli(bot, ["cold-start"], { now: T0 });
-    expect(Buffer.byteLength(r.out, "utf8")).toBeLessThanOrEqual(PACK_BUDGET);
+    // everything a long wake script adds is bounded by the wake budget
+    expect(Buffer.byteLength(r.out, "utf8") - Buffer.byteLength(quiet.out, "utf8")).toBeLessThanOrEqual(WAKE_BUDGET);
+    expect(Buffer.byteLength(r.out, "utf8") - Buffer.byteLength(quiet.out, "utf8")).toBeGreaterThan(WAKE_BUDGET / 2);
     expect(r.out).toMatch(/… \d+ more lines/);
     expect(r.out).toContain("the operator's own words in them outrank everything else");
   });

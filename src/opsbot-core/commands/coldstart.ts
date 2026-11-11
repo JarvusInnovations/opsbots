@@ -10,7 +10,7 @@
  *      last compaction verbatim, the last tool calls as data, the bot's last statements as
  *      claims; read from the SessionStart hook's transcript_path (stdin JSON) or --transcript
  *   2. one section per opsbot.d/wake.d/ script, in order, each capped to its
- *      share of the byte budget ("… N more lines")
+ *      share of the wake budget (WAKE_BUDGET bytes across them all) ("… N more lines")
  *   3. the cycle log's last 48 hours: counts, longest gap, last degraded, outages
  *   4. memory before this point is untrusted; open the source before saying
  *
@@ -35,9 +35,11 @@ import { findRoot, firstLine, iso, nowIso, nowMs, parseIso, showHead } from "../
 import { SETTINGS_FILE, parseSettingsText, trySettings, withDefaults, type Settings } from "../settings.js";
 import { CHECK_OUTCOMES, CYCLE_OUTCOMES, outages, readCycleLog } from "../state.js";
 
-/** The pack's byte budget. The rule card and the kit's own sections are whole and count
- * against it; wake.d sections share what is left. */
-export const PACK_BUDGET = 16000;
+/** What the wake.d sections share, in bytes. The rule card, the kit's own sections and the
+ * session log are whole and outside it: they are what the bot must read, and a long rule card
+ * must not starve what the bot owes of room (one bot's card and the kit's sections alone passed
+ * a single 16 000-byte pack budget, leaving each wake section 300 bytes). */
+export const WAKE_BUDGET = 6000;
 /** The session-log section's own cap; the operator's words come first and whole up to it. */
 export const SESSION_LOG_CAP = 4000;
 const MIN_SECTION = 300;
@@ -194,8 +196,7 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
   const summary = `═══ ${summaryNo}. The cycle log, last 48 hours\n${logSummary(root, now).join("\n")}`;
   const foot = "═══ What you remember is untrusted; the record and your session log are sources, and the operator's own words in them outrank everything else. Open the source before saying what a record holds, what was decided, or what was sent.";
 
-  const fixed = bytes(head) + bytes(card) + kit.reduce((n, k) => n + bytes(k) + 2, 0) + bytes(summary) + bytes(foot) + 8 + scripts.length * 2;
-  const room = Math.max(0, PACK_BUDGET - fixed);
+  const room = WAKE_BUDGET;
   const sections: string[] = [];
   if (scripts.length) {
     const configPath = settingsText !== null ? configSnapshot(root, settingsText) : join(root, SETTINGS_FILE);
