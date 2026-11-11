@@ -9,9 +9,10 @@
  *                                                       is the env var, the one control Claude Code honors:
  *                                                       the --autocompact flag and autoCompactWindow were
  *                                                       ignored on two bots, the env var works on a third)
- *          [--resume <id> | --continue]                (with --continue: resume the session that last
- *                                                       ran a cycle here, by id; only when none is
- *                                                       recorded, the directory's most recent one)
+ *          [--resume <id | name>]                      (with --continue: resume the session that last
+ *                                                       ran a cycle here, by id; when none is
+ *                                                       recorded, by loop.session_name)
+ *          --name <loop.session_name>                  (the bot's name by default)
  *          [extra args after --]
  *          "<loop.prompt>"                             (the first message, so the loop starts)
  *
@@ -37,16 +38,22 @@ export function autocompactTokens(v: string | null): number | null {
   return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
 }
 
-export function startArgv(s: { loop: { prompt: string; autocompact: string | null; model: string | null; permission_mode: string; mode?: LoopMode } }, opts: { cont: boolean; extra: string[]; loopSession?: string | null }): string[] {
+export function startArgv(s: { loop: { prompt: string; autocompact: string | null; model: string | null; permission_mode: string; mode?: LoopMode; session_name?: string } }, opts: { cont: boolean; extra: string[]; loopSession?: string | null }): string[] {
   const argv = ["claude", "--permission-mode", s.loop.permission_mode];
   // loop.model wins; else the mode's class (strategist → fable, dispatcher → opus)
   const model = s.loop.model ?? (s.loop.mode ? MODE_MODEL[s.loop.mode] : null);
   if (model) argv.push("--model", model);
   const window = autocompactTokens(s.loop.autocompact);
   argv.push("--settings", JSON.stringify(window ? { autoCompactEnabled: true, env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) } } : { autoCompactEnabled: true }));
-  // the loop's own session by id when one is recorded; a person's session opened in the bot's
-  // checkout would otherwise be "the most recent" and get the loop
-  if (opts.cont) argv.push(...(opts.loopSession ? ["--resume", opts.loopSession] : ["--continue"]));
+  // The main session carries a name (loop.session_name, the bot's name by default): set when it
+  // is created, shown in the picker and the terminal title, and how it is found again.
+  // Resuming: by id when a cycle has recorded one (exact); else by that name. Never "the most
+  // recent session in the directory": a person's session opened in the bot's checkout would be
+  // that. A name that matches nothing, or more than one session, opens Claude Code's picker,
+  // which the operator sees; that is the loud failure, not a wrong session.
+  const name = s.loop.session_name;
+  if (opts.cont) argv.push(...(opts.loopSession ? ["--resume", opts.loopSession] : name ? ["--resume", name] : ["--continue"]));
+  if (name) argv.push("--name", name);
   argv.push(...opts.extra);
   argv.push(s.loop.prompt);
   return argv;
