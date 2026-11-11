@@ -112,6 +112,13 @@ verbatim; the prompt carries the operator's cold-cache suffix where one is in us
 is one clock. The bot never creates a cron or a second loop; the nudge restarts the one
 loop.
 
+A bot may instead set `loop.schedule` to `monitor`. Then the session arms one bounded
+monitor at the end of every cycle: it exits when a stream's wake file grows or when the
+next cycle is due, and either way wakes the session with one short line. The delay is
+capped at 29 minutes, inside the harness's 30-minute monitor limit. The loop prompt is a
+plain message, since a wake that re-enters a slash command re-reads its whole body. It is
+still one clock, and the nudge is still what restarts a loop that stopped.
+
 ## Cold start and compaction
 
 A SessionStart hook on `startup | resume | compact | clear` writes the reground pack to a
