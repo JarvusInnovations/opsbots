@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "a98dd3c" : "dev";
+    VERSION = true ? "ba5d330" : "dev";
   }
 });
 
@@ -1905,6 +1905,10 @@ var init_reference = __esm({
             usage: "cycle end --records N [--degraded] [--summary TEXT]",
             summary: "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle."
           },
+          {
+            usage: "check --peek",
+            summary: "Run every heartbeat script as a check does (each also gets `OPSBOT_PEEK=1`) and print the count of new items per input. Records, logs and commits nothing; the watermark and seen keys are untouched, so the next check sees the same items. Exit 0 \xB7 10 \xB7 20 \xB7 2 as `check`."
+          },
           { usage: "next-delay", summary: "Seconds until the next cycle and why, from the cycle log and the cadence table. With `loop.schedule: monitor`, never over 1740 (29 min), and the reason says when that cap applied." }
         ]
       },
@@ -2991,7 +2995,17 @@ function renderItem(it, n, total2, gateWord) {
   if (it.text !== void 0) out.text = it.text;
   return out;
 }
+function runPeek(root) {
+  const r = sweep(root, { commit: false, peek: true });
+  if (!("peek" in r)) throw new Error("unreachable: a peek returned a check");
+  return r.peek;
+}
 function runCheck(root, opts) {
+  const r = sweep(root, { commit: opts.commit, peek: false });
+  if (!("check" in r)) throw new Error("unreachable: a check returned a peek");
+  return r.check;
+}
+function sweep(root, opts) {
   if (!hasHead(root)) {
     throw new AxiError("no commit at HEAD in this checkout", "CANNOT_RUN", ["Commit opsbot.json first"]);
   }
@@ -3024,7 +3038,8 @@ function runCheck(root, opts) {
     const env = baseEnv(root, settings, configPath, "heartbeat", {
       OPSBOT_SINCE: SINCE,
       OPSBOT_SEEN: p.seen,
-      OPSBOT_WATERMARK: wm ?? ""
+      OPSBOT_WATERMARK: wm ?? "",
+      ...opts.peek ? { OPSBOT_PEEK: "1" } : {}
     });
     const r = runScript(s, root, env);
     const { items: got, bad } = parseItems(r.stdout, s.name);
@@ -3052,6 +3067,15 @@ function runCheck(root, opts) {
   }
   const NEW = items.length;
   const realInputs = () => inputs.filter((i) => i.input !== "watermark" && i.input !== "commit" && i.input !== "heartbeat.d");
+  if (opts.peek) {
+    const bad = inputs.filter((i) => !i.ok);
+    const code2 = bad.length ? 20 : NEW > 0 ? 10 : 0;
+    const outcome2 = code2 === 20 ? "degraded" : code2 === 10 ? "new" : "nothing-new";
+    const ats = items.map((it) => typeof it.at === "string" ? parseIso(it.at) : null).filter((t) => t !== null);
+    const n2 = realInputs().length;
+    const line2 = code2 === 0 ? `nothing new \xB7 ${n2} inputs \xB7 nothing recorded` : code2 === 10 ? `new \xB7 ${NEW} new \xB7 ${n2} inputs \xB7 nothing recorded` : `degraded \xB7 ${bad.length} failed \xB7 ${NEW} new \xB7 ${n2} inputs \xB7 nothing recorded`;
+    return { peek: { code: code2, outcome: outcome2, line: line2, inputs, new: NEW, earliest: ats.length ? iso(Math.min(...ats)) : null } };
+  }
   const blocked = opts.commit ? blockedBy(root) : null;
   if (blocked) failed("commit", `cannot commit: ${blocked}`);
   const failedList = () => inputs.filter((i) => !i.ok).map((i) => ({ input: i.input, error: i.error ?? "" }));
@@ -3100,18 +3124,30 @@ function runCheck(root, opts) {
   const code = outcome === "nothing-new" ? 0 : outcome === "new" ? 10 : 20;
   if (outcome === "nothing-new") {
     const line2 = `nothing new \xB7 ${n} inputs \xB7 watermark ${cur}`;
-    return { code, outcome, line: line2, output: { check: line2 } };
+    return { check: { code, outcome, line: line2, output: { check: line2 } } };
   }
   const fl = failedList();
   const line = outcome === "degraded" ? `degraded \xB7 ${fl.length} failed \xB7 ${NEW} new \xB7 ${n} inputs \xB7 watermark ${cur ?? "none"} (not advanced)` : `new \xB7 ${NEW} new \xB7 ${n} inputs \xB7 watermark ${cur ?? "none"} (not advanced)`;
   const output = { check: line };
   if (fl.length) output.failed = fl;
   if (NEW > 0) output.items = items.map((it, i) => renderItem(it, i + 1, NEW, settings.gate_word));
-  return { code, outcome, line, output };
+  return { check: { code, outcome, line, output } };
 }
 function checkCommand(args) {
-  const { flags } = parseArgs(args, { bool: ["no-commit"] }, CHECK_USAGE);
+  const { flags } = parseArgs(args, { bool: ["no-commit", "peek"] }, CHECK_USAGE);
   const root = requireRoot();
+  if (flags.peek) {
+    if (flags["no-commit"]) throw new AxiError("--peek commits nothing already; drop --no-commit", "VALIDATION_ERROR", [CHECK_USAGE]);
+    if (!hasHead(root)) throw new AxiError("no commit at HEAD in this checkout", "CANNOT_RUN", ["Commit opsbot.json first"]);
+    const r2 = runPeek(root);
+    setExit(r2.code);
+    const out = {
+      peek: r2.line,
+      inputs: r2.inputs.map((i) => ({ input: i.input, ok: i.ok, new: i.new, error: i.error ?? "" }))
+    };
+    if (r2.code !== 0) out.help = [`Nothing was recorded; run \`${cliInvocation()} cycle begin\` to work the items`];
+    return out;
+  }
   const r = runCheck(root, { commit: !flags["no-commit"] });
   setExit(r.code);
   if (r.code !== 0) {
@@ -3132,7 +3168,7 @@ var init_check = __esm({
     init_state();
     MARGIN_MINUTES = 30;
     FIRST_RUN_HOURS = 24;
-    CHECK_USAGE = "check [--no-commit]";
+    CHECK_USAGE = "check [--no-commit] | check --peek";
     CORE_FIELDS = ["key", "at", "conv", "kind", "from"];
   }
 });

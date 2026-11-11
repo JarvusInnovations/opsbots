@@ -38,7 +38,7 @@ import { existsSync, rmSync } from "node:fs";
 export const MARGIN_MINUTES = 30;
 export const FIRST_RUN_HOURS = 24;
 
-export const CHECK_USAGE = "check [--no-commit]";
+export const CHECK_USAGE = "check [--no-commit] | check --peek";
 
 export interface Item {
   input: string;
@@ -117,7 +117,35 @@ function renderItem(it: Item, n: number, total: number, gateWord: string | null)
   return out;
 }
 
+export interface PeekResult {
+  code: 0 | 10 | 20;
+  outcome: CheckResult["outcome"];
+  line: string;
+  inputs: InputResult[];
+  new: number;
+  /** The earliest `at` among the new items, when any carries one. */
+  earliest: string | null;
+}
+
+/**
+ * The check's sweep without its record: every heartbeat script runs as in a check (with
+ * OPSBOT_PEEK=1 in its environment, so an adapter that keeps state of its own can leave it), and
+ * nothing is recorded, logged or committed. The watermark and the seen keys are read, never
+ * written, so the check that follows sees the same items.
+ */
+export function runPeek(root: string): PeekResult {
+  const r = sweep(root, { commit: false, peek: true });
+  if (!("peek" in r)) throw new Error("unreachable: a peek returned a check");
+  return r.peek;
+}
+
 export function runCheck(root: string, opts: { commit: boolean }): CheckResult {
+  const r = sweep(root, { commit: opts.commit, peek: false });
+  if (!("check" in r)) throw new Error("unreachable: a check returned a peek");
+  return r.check;
+}
+
+function sweep(root: string, opts: { commit: boolean; peek: boolean }): { check: CheckResult } | { peek: PeekResult } {
   if (!hasHead(root)) {
     throw new AxiError("no commit at HEAD in this checkout", "CANNOT_RUN", ["Commit opsbot.json first"]);
   }
@@ -156,6 +184,7 @@ export function runCheck(root: string, opts: { commit: boolean }): CheckResult {
       OPSBOT_SINCE: SINCE,
       OPSBOT_SEEN: p.seen,
       OPSBOT_WATERMARK: wm ?? "",
+      ...(opts.peek ? { OPSBOT_PEEK: "1" } : {}),
     });
     const r = runScript(s, root, env);
     const { items: got, bad } = parseItems(r.stdout, s.name);
@@ -185,6 +214,20 @@ export function runCheck(root: string, opts: { commit: boolean }): CheckResult {
 
   const NEW = items.length;
   const realInputs = () => inputs.filter((i) => i.input !== "watermark" && i.input !== "commit" && i.input !== "heartbeat.d");
+  if (opts.peek) {
+    const bad = inputs.filter((i) => !i.ok);
+    const code: PeekResult["code"] = bad.length ? 20 : NEW > 0 ? 10 : 0;
+    const outcome: CheckResult["outcome"] = code === 20 ? "degraded" : code === 10 ? "new" : "nothing-new";
+    const ats = items.map((it) => (typeof it.at === "string" ? parseIso(it.at) : null)).filter((t): t is number => t !== null);
+    const n = realInputs().length;
+    const line =
+      code === 0
+        ? `nothing new · ${n} inputs · nothing recorded`
+        : code === 10
+          ? `new · ${NEW} new · ${n} inputs · nothing recorded`
+          : `degraded · ${bad.length} failed · ${NEW} new · ${n} inputs · nothing recorded`;
+    return { peek: { code, outcome, line, inputs, new: NEW, earliest: ats.length ? iso(Math.min(...ats)) : null } };
+  }
   const blocked = opts.commit ? blockedBy(root) : null;
   if (blocked) failed("commit", `cannot commit: ${blocked}`);
 
@@ -239,7 +282,7 @@ export function runCheck(root: string, opts: { commit: boolean }): CheckResult {
   const code: CheckResult["code"] = outcome === "nothing-new" ? 0 : outcome === "new" ? 10 : 20;
   if (outcome === "nothing-new") {
     const line = `nothing new · ${n} inputs · watermark ${cur}`;
-    return { code, outcome, line, output: { check: line } };
+    return { check: { code, outcome, line, output: { check: line } } };
   }
   const fl = failedList();
   const line =
@@ -249,12 +292,24 @@ export function runCheck(root: string, opts: { commit: boolean }): CheckResult {
   const output: Record<string, unknown> = { check: line };
   if (fl.length) output.failed = fl;
   if (NEW > 0) output.items = items.map((it, i) => renderItem(it, i + 1, NEW, settings.gate_word));
-  return { code, outcome, line, output };
+  return { check: { code, outcome, line, output } };
 }
 
 export function checkCommand(args: string[]): Record<string, unknown> {
-  const { flags } = parseArgs(args, { bool: ["no-commit"] }, CHECK_USAGE);
+  const { flags } = parseArgs(args, { bool: ["no-commit", "peek"] }, CHECK_USAGE);
   const root = requireRoot();
+  if (flags.peek) {
+    if (flags["no-commit"]) throw new AxiError("--peek commits nothing already; drop --no-commit", "VALIDATION_ERROR", [CHECK_USAGE]);
+    if (!hasHead(root)) throw new AxiError("no commit at HEAD in this checkout", "CANNOT_RUN", ["Commit opsbot.json first"]);
+    const r = runPeek(root);
+    setExit(r.code);
+    const out: Record<string, unknown> = {
+      peek: r.line,
+      inputs: r.inputs.map((i) => ({ input: i.input, ok: i.ok, new: i.new, error: i.error ?? "" })),
+    };
+    if (r.code !== 0) out.help = [`Nothing was recorded; run \`${cliInvocation()} cycle begin\` to work the items`];
+    return out;
+  }
   const r = runCheck(root, { commit: !flags["no-commit"] });
   setExit(r.code);
   if (r.code !== 0) {
