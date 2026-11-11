@@ -157,9 +157,20 @@ needs; the subagent is whether its input belongs in the loop's window. The loop'
 in a subagent is a real cell: a long document whose verdict must be as good as the loop's
 own; an unanchored second read of something the loop wrote before it commits the company;
 untrusted content that needs real judgment but must not steer the loop; several heavy reads
-in parallel. Same rules: a brief, data back, no sending or merging from inside. A fork
-inherits the whole window and costs what the loop costs; it buys only the continuation of
-fully specified work in the background, never a read.
+in parallel. Same rules: a brief, data back, no sending or merging from inside.
+
+Building is briefed, never forked. Writing code, opening a pull request, drafting a long
+document or a design: that work goes to a large-class (Opus) agent with a written brief (the
+goal, the repo and branch, what done means, what to return), in its own worktree. A fork
+inherits the loop's whole window and runs at the loop's class, so it costs many times what the
+work needs, and nothing about building needs the loop's window. A fork is for the four cases
+above and nothing else; when the loop makes one it says which case.
+
+> Why (the fork rule): on its first day a new project-lead bot was asked for a website pull
+> request and forked itself, at its own top-tier class with its whole context, to write the
+> code. The operator: "it should have briefed an opus agent, that is not a justified use."
+> The earlier wording said a fork "buys the continuation of fully specified work in the
+> background", which reads as an invitation. 2026-11-10.
 
 > Why: the campaign bot lost a day's context to a transcript it could have had summarized
 > for a fraction of the cost, and the ops bot spent its first cycles reading inboxes whole.
