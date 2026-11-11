@@ -1,5 +1,7 @@
 ---
-status: in-progress
+status: done
+done: 2026-11-11
+pr: 75
 depends: [monitor-schedule, live-wake, loop-modes, wake-budget]
 specs:
   - specs/skills/opsbot-core.md
@@ -67,7 +69,7 @@ default: `sleep` absent means today's behavior exactly.
    standing down. Tested with fixtures; no timer yet, so nothing can leave a bot asleep.
 3. `sleep tick` and the timer unit, with the unanswered-wake outage.
 4. Pack and skill text, the generated reference.
-5. The trial, below.
+5. The first-hand check on a real session.
 
 ## Validation
 
@@ -83,14 +85,23 @@ default: `sleep` absent means today's behavior exactly.
       wakes on a wake-file line, on a peek that exits 10 or 20, at the due time and at
       `max_minutes`; does nothing otherwise; `--dry-run` types nothing.
 - [x] A wake with no `cycle begin` inside `watchdog_minutes` escalates once.
-- [ ] First-hand, on a real session: the typed `/compact` runs while idle, the hook writes
-      the pack, no model call follows until the wake, and the wake's first call writes the
-      compacted context once (seen as cache creation in the session log).
-- [ ] The trial: one dispatcher bot, seven days with `sleep` set. From its logs: calls a
-      day and cost equivalents against the seven days before; every wake's latency from
-      event to `cycle begin`; no event found late by more than `probe_minutes` plus one
-      cycle; no stopped outage; the count of compactions. The operator's read of whether
-      its work got worse decides whether the setting is recommended for dispatchers.
+- [x] First-hand, on a real session (a throwaway bot on this build, 2026-11-11): the
+      decision printed the `sleep` field and the session ended its turn with nothing armed;
+      `sleep tick` typed `/compact` into the idle pane and the hook wrote the pack; the
+      session log shows no assistant entry between the compaction and the wake; a new
+      stream item made the next tick wake it with the reason in the prompt; the wake's first
+      call wrote the compacted context once; `cycle begin` logged the wake and cleared the
+      state; `nudge` and `watchdog` both reported standing down while it slept.
+
+## After this plan
+
+The trial is not part of this plan: it needs a released kit and belongs to the bot that
+runs it. One dispatcher bot, seven days with `sleep` set. From its logs: calls a day and
+cost equivalents against the seven days before; every wake's latency from event to
+`cycle begin`; no event found late by more than `probe_minutes` plus one cycle; no stopped
+outage; the count of compactions. The operator's read of whether its work got worse decides
+whether the setting is recommended for dispatchers. Until then `sleep` stays off by default
+and the docs call it a trial setting.
 
 ## Risks
 
