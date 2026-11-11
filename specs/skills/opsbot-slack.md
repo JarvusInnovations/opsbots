@@ -194,7 +194,7 @@ and never prints it.
 | `policy.internal`, `policy.external` | a list of repo paths per class, read and joined in order with a blank line between; `external` usually lists the `internal` file first and then its own, so the shared part is written once | a class with no list is not screened |
 | `timeout_seconds` | how long the command may take | `30` |
 | `cache_seconds` | how long a class (and a member's lookup) is kept | `300` |
-| `max_members` | above this, a channel is `external` without listing everyone | `500` |
+| `max_members` | above this, a channel is `external` without listing everyone | `100` |
 
 The kit holds no model credential and makes no model call. The command is the bot's own (an
 API key in its environment, a metered gateway). Its contract:
