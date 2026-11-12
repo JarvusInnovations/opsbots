@@ -312,6 +312,171 @@ describe("threads the bot started", () => {
   });
 });
 
+/**
+ * handle() with the identity settings: like listen(), plus the bot ids, operators and
+ * escalate_dm the process passes, and the journal line for each dropped app post.
+ */
+function listenAs(events: unknown[], ids: Record<string, unknown>, files = { events: "", roots: "" }) {
+  const r = spawnSync(NODE, ["--input-type=module", "-e", `
+    const m = await import(process.env.LISTENER);
+    let s = ""; for await (const c of process.stdin) s += c;
+    const { events, files, ids } = JSON.parse(s);
+    const kept = [], dropped = [];
+    for (const e of events) {
+      const root = m.ownRoot(e, ids);
+      if (root) { files.roots += JSON.stringify(root) + "\\n"; continue; }
+      const it = m.classify(e, { ...ids, inMyThread: (c, t) => m.rootIsMine(files.roots, c, t) || m.threadIsMine(files.events, c, t) });
+      if (it) { files.events += JSON.stringify(it) + "\\n"; kept.push(it); }
+      else { const d = m.droppedAppPost(e, ids); if (d) dropped.push(d); }
+    }
+    console.log(JSON.stringify({ kept, files, dropped }));`], { input: JSON.stringify({ events, files, ids }), encoding: "utf8", env: { ...process.env, LISTENER } });
+  if (r.status !== 0) throw new Error(r.stderr);
+  return JSON.parse(r.stdout) as { kept: Record<string, unknown>[]; files: { events: string; roots: string }; dropped: string[] };
+}
+
+describe("posts through an app", () => {
+  // An app holding the operator's own user token posts as the operator: user is theirs, and
+  // the message carries the app's bot_id and app_id. Invented ids throughout.
+  const OPS = "U0OPS00001";
+  const OPS_DM = "D0OPSDM001";
+  const APP = { bot_id: "B0ASSIST01", app_id: "A0ASSIST01" };
+  const OWN_BOT = "B0BOT00001";
+  const OTHER = { bot_id: "B0OTHER001", app_id: "A0OTHER001" };
+  const ids = { botUser: BOT, botIds: [OWN_BOT], operators: [OPS] };
+  const ROOT = "1794401000.001000";
+  const ownPost = { type: "message", channel_type: "channel", channel: CHAN, user: BOT, bot_id: OWN_BOT, text: "the weekly summary", ts: ROOT };
+
+  test("an operator's app post in a DM is kept exactly like one they typed", () => {
+    const typed = { type: "message", channel_type: "im", channel: OPS_DM, user: OPS, text: "check the queue", ts: "1794401100.001100" };
+    const viaApp = { ...typed, ...APP };
+    const a = listenAs([typed], ids).kept;
+    const b = listenAs([viaApp], ids).kept;
+    expect(b).toHaveLength(1);
+    expect(b).toEqual(a);
+    expect(b[0]).toMatchObject({ key: `slack:${OPS_DM}:1794401100.001100:msg`, kind: "dm", from: OPS });
+  });
+
+  test("an operator's app post replying in a mention thread is kept, an app @mention too", () => {
+    const mention = { ...MENTION, user: OPS };
+    const reply = { ...THREAD_REPLY, user: OPS, ...APP };
+    const { kept, dropped } = listenAs([mention, reply, { ...MENTION, ts: "1794400350.000450", user: OPS, ...APP }], ids);
+    expect(kept.map((k) => [k.event, k.from, k.thread_ts])).toEqual([
+      ["app_mention", OPS, null], ["message", OPS, "1794400200.000300"], ["app_mention", OPS, null],
+    ]);
+    expect(dropped).toEqual([]);
+  });
+
+  test("an operator's app post replying under the bot's own post is kept", () => {
+    const reply = { type: "message", channel_type: "channel", channel: CHAN, user: OPS, ...APP, text: "and the totals", ts: "1794401200.001200", thread_ts: ROOT };
+    const { kept, files } = listenAs([ownPost, reply], ids);
+    expect(files.roots.trim().split("\n").map((l) => JSON.parse(l))).toEqual([{ conv: CHAN, ts: ROOT }]);
+    expect(kept).toEqual([expect.objectContaining({ key: `slack:${CHAN}:1794401200.001200:msg`, from: OPS, thread_ts: ROOT })]);
+  });
+
+  test("anyone but the bot in escalate_dm counts as the operator, with no operators listed", () => {
+    const viaApp = { type: "message", channel_type: "im", channel: OPS_DM, user: OPS, ...APP, text: "status?", ts: "1794401300.001300" };
+    expect(listenAs([viaApp], { botUser: BOT, escalateDm: OPS_DM }).kept).toHaveLength(1);
+    // The same post in another DM is another bot's.
+    expect(listenAs([{ ...viaApp, channel: DM }], { botUser: BOT, escalateDm: OPS_DM }).kept).toEqual([]);
+  });
+
+  test("an app post as a non-operator is dropped, with one line of ids and never the text", () => {
+    const ann = { ...THREAD_REPLY, ...APP, text: "secret words" };
+    const recorded = JSON.stringify(classify([MENTION])[0]) + "\n";
+    const { kept, dropped } = listenAs([ann, { ...DM_TOP, ...APP }], ids, { events: recorded, roots: "" });
+    expect(kept).toEqual([]);
+    expect(dropped).toEqual([`dropped app post ${CHAN} ${ANN} ${APP.bot_id}`, `dropped app post ${DM} ${ANN} ${APP.bot_id}`]);
+    expect(dropped.join("\n")).not.toContain("secret");
+  });
+
+  test("another bot is dropped and logged: its own user, a bot_message with no user, even one claiming an operator", () => {
+    const otherBot = { type: "message", channel_type: "im", channel: DM, user: "U0OTHERB01", ...OTHER, text: "hello bot", ts: "1794401400.001400" };
+    const integration = { type: "message", subtype: "bot_message", channel_type: "channel", channel: CHAN, bot_id: OTHER.bot_id, text: "build passed", ts: "1794401500.001500", thread_ts: "1794400200.000300" };
+    const recorded = JSON.stringify(classify([MENTION])[0]) + "\n";
+    const { kept, dropped } = listenAs([otherBot, integration, { ...integration, user: OPS }], ids, { events: recorded, roots: "" });
+    expect(kept).toEqual([]);
+    expect(dropped).toEqual([
+      `dropped app post ${DM} U0OTHERB01 ${OTHER.bot_id}`,
+      `dropped app post ${CHAN} - ${OTHER.bot_id}`,
+      `dropped app post ${CHAN} ${OPS} ${OTHER.bot_id}`,
+    ]);
+  });
+
+  test("the bot's own posts are never items, by user and by bot id, and are not logged as drops", () => {
+    const byUser = { type: "message", channel_type: "im", channel: OPS_DM, user: BOT, bot_id: OWN_BOT, text: "done", ts: "1794401600.001600" };
+    const byBotId = { type: "message", subtype: "bot_message", channel_type: "im", channel: OPS_DM, bot_id: OWN_BOT, text: "done", ts: "1794401700.001700" };
+    const { kept, dropped } = listenAs([byUser, byBotId, { ...byUser, bot_id: undefined }], { ...ids, escalateDm: OPS_DM });
+    expect(kept).toEqual([]);
+    expect(dropped).toEqual([]);
+    // Its own bot id with no user is its own top-level post, remembered as a root.
+    expect(call("ownRoot", [{ ...ownPost, user: undefined, subtype: "bot_message" }, ids])).toEqual({ conv: CHAN, ts: ROOT });
+    // A post with someone else's user is never the bot's, whatever its bot id.
+    expect(call("sender", [{ ...ownPost, user: ANN }, ids])).toBe("bot");
+    expect(call("sender", [{ ...ownPost, user: OPS }, ids])).toBe("operator");
+    expect(call("ownRoot", [{ ...ownPost, user: OPS }, ids])).toBeNull();
+  });
+
+  test("with no operators configured nothing changes: every bot_id is dropped as before", () => {
+    const evs = [{ ...DM_TOP, user: OPS, ...APP }, { ...MENTION, user: OPS, ...APP }, { ...DM_TOP, ...APP }];
+    expect(classify(evs)).toEqual([null, null, null]);
+    expect(listenAs(evs, { botUser: BOT }).kept).toEqual([]);
+    expect(listenAs([DM_TOP, MENTION], { botUser: BOT }).kept).toEqual(classify([DM_TOP, MENTION]) as Record<string, unknown>[]);
+  });
+
+  test("settings read bot_id, operators and escalate_dm", () => {
+    const s = call("settings", [{ name: "examplebot", streams: { slack: { bot_id: OWN_BOT, operators: [OPS], escalate_dm: OPS_DM } } }]) as Record<string, unknown>;
+    expect(s).toMatchObject({ botId: OWN_BOT, operators: [OPS], escalateDm: OPS_DM });
+    expect(call("settings", [{ name: "examplebot" }])).toMatchObject({ botId: "", operators: [], escalateDm: "" });
+  });
+
+  test("the running listener learns its bot id, keeps an operator's app post, and logs a foreign one", () => {
+    const dir = tmp();
+    const repo = join(dir, "repo");
+    mkdirSync(repo);
+    const tf = join(dir, "app-token");
+    writeFileSync(tf, "xapp-1-FAKE\n", { mode: 0o600 });
+    chmodSync(tf, 0o600);
+    writeFileSync(join(repo, "opsbot.json"), JSON.stringify({ name: "examplebot", streams: { slack: { app_token_file: tf, events_file: join(dir, "slack-events.jsonl"), bot_user: BOT, operators: [OPS] } } }));
+    const now = Math.floor(Date.now() / 1000);
+    const own = { type: "message", channel_type: "im", channel: OPS_DM, user: BOT, bot_id: OWN_BOT, text: "hi", ts: `${now}.000100` };
+    const ownNoUser = { type: "message", subtype: "bot_message", channel_type: "im", channel: OPS_DM, bot_id: OWN_BOT, text: "hi", ts: `${now}.000150` };
+    const ops = { type: "message", channel_type: "im", channel: OPS_DM, user: OPS, ...APP, text: "please check", ts: `${now}.000200` };
+    const foreign = { type: "message", channel_type: "im", channel: DM, user: ANN, ...APP, text: "private words", ts: `${now}.000300` };
+    const preload = join(dir, "fake-slack.mjs");
+    writeFileSync(preload, `
+      const events = ${JSON.stringify([own, ownNoUser, ops, foreign])};
+      globalThis.fetch = async () => ({ json: async () => ({ ok: true, url: "ws://stand-in" }) });
+      globalThis.WebSocket = class {
+        constructor() {
+          setTimeout(() => {
+            this.onopen();
+            let i = 0;
+            const next = () => {
+              if (i >= events.length) { setTimeout(() => process.exit(0), 300); return; }
+              this.onmessage({ data: JSON.stringify({ envelope_id: "e" + i, type: "events_api", payload: { event: events[i++] } }) });
+              setTimeout(next, 150);
+            };
+            next();
+          }, 10);
+        }
+        send() {}
+        close() {}
+      };`);
+    const r = spawnSync(NODE, ["--import", preload, LISTENER], {
+      encoding: "utf8", timeout: 20000,
+      env: { ...process.env, HOME: dir, OPSBOT_ROOT: repo, OPSBOT_CORE: "/bin/true", OPSBOT_SLACK_AXI: "/bin/true" },
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain(`own bot id ${OWN_BOT}`);
+    expect(r.stdout).toContain(`dropped app post ${DM} ${ANN} ${APP.bot_id}`);
+    expect(r.stdout).not.toContain("private words");
+    // The learned bot id makes the user-less post the bot's own: no drop line for it.
+    expect(r.stdout).not.toContain(`dropped app post ${OPS_DM}`);
+    const recorded = readFileSync(join(dir, "slack-events.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(recorded).toEqual([expect.objectContaining({ key: `slack:${OPS_DM}:${ops.ts}:msg`, from: OPS, kind: "dm" })]);
+  });
+});
+
 /** A bot repo with an events file recorded from the raw events above. */
 function readerSetup(slack: Record<string, unknown> = {}, opts: { noEvents?: boolean } = {}) {
   const dir = tmp();

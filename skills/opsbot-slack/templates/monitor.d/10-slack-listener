@@ -17,6 +17,10 @@
 // as thread roots in slack-own-threads.jsonl beside the events file (the last 90 days), so a
 // later reply under one is kept without a mention. A thread it only replied in counts only
 // through a mention.
+// A message carrying a bot_id is dropped, with a journal line, unless an operator wrote it: an
+// app posting with an operator's own user token (streams.slack.operators, or anyone but the bot
+// in escalate_dm) is heard exactly like the operator typing. Any other bot is dropped, so two
+// bots never answer each other forever.
 // The cycle answers; this only watches. It logs every event type it receives, so a missing
 // scope or subscription shows in the journal. Zero dependencies: Node 22's fetch and WebSocket.
 // OPSBOT_SLACK_AXI names another slack-axi binary (a pinned copy, a test double).
@@ -24,6 +28,8 @@
 // opsbot.json, all optional except bot_user:
 //   "streams": { "slack": {
 //     "bot_user": "<the bot's own user id>",
+//     "bot_id": "<the bot's own bot id, B...; learned from its first own message when unset>",
+//     "operators": ["<an operator's user id>"], "escalate_dm": "<the bot's DM with its operator>",
 //     "app_token_file": "~/.config/<bot>/slack-app-token",
 //     "events_file": "~/.cache/<bot>/slack-events.jsonl",
 //     "receipt_emoji": "eyes", "ack_emoji": "gear", "ack_timeout_minutes": 30,
@@ -47,6 +53,9 @@ export function settings(cfg) {
     eventsFile,
     ownThreadsFile: join(dirname(eventsFile), "slack-own-threads.jsonl"),
     botUser: s.bot_user || "",
+    botId: s.bot_id || "",
+    operators: Array.isArray(s.operators) ? s.operators.map(String) : [],
+    escalateDm: s.escalate_dm ? String(s.escalate_dm) : "",
     receiptEmoji: s.receipt_emoji || "eyes",
     ackEmoji: s.ack_emoji || "gear",
     ackTimeoutMs: (Number(s.ack_timeout_minutes) || 30) * 60000,
@@ -65,6 +74,26 @@ const kindOf = (conv) => (String(conv || "").startsWith("D") ? "dm" : "group");
 /** A channel or private channel: where a thread reply needs a reason to be kept. */
 const isChannel = (e) => e.channel_type === "channel" || e.channel_type === "group";
 
+/**
+ * Who sent an event, for the rule on bot_id: "self" (the bot, by user, or by its own bot id on a
+ * post with no user), "person" (no bot_id, no bot_message subtype), "operator" (a bot_id on a
+ * post whose user is an operator, or anyone but the bot in escalate_dm: an app posting with the
+ * operator's own user token), or "bot" (any other bot_id). Pure.
+ */
+export function sender(event, { botUser = "", botIds = [], operators = [], escalateDm = "" } = {}) {
+  if (!event || typeof event !== "object") return "person";
+  const user = typeof event.user === "string" ? event.user : "";
+  if (botUser && user === botUser) return "self";
+  const app = Boolean(event.bot_id) || event.subtype === "bot_message";
+  if (!app) return "person";
+  // A bot_message has no user (Slack's reference), so it is never an operator's.
+  if (user && event.subtype !== "bot_message"
+    && (operators.includes(user) || (escalateDm && event.channel === escalateDm))) return "operator";
+  // Its own bot id counts only with no user: the bot's own posts carry bot_user or no user.
+  if (!user && event.bot_id && botIds.includes(event.bot_id)) return "self";
+  return "bot";
+}
+
 /** How long the bot's own posts are remembered as thread roots. */
 export const OWN_ROOT_DAYS = 90;
 
@@ -73,10 +102,11 @@ export const OWN_ROOT_DAYS = 90;
  * keeps. `inMyThread(conv, threadTs)` says whether a thread holds an @mention already
  * recorded, or is rooted on one of the bot's own posts. A reply whose `parent_user_id` is the
  * bot also counts; Slack sets that field on thread replies, but does not document it on
- * message events, so the remembered roots are the record and the field a backstop.
- * Pure: no file, no network.
+ * message events, so the remembered roots are the record and the field a backstop. A message
+ * with a bot_id is kept only when an operator wrote it (see sender()); then it is treated
+ * exactly like the operator's own. Pure: no file, no network.
  */
-export function classify(event, { botUser = "", inMyThread = () => false } = {}) {
+export function classify(event, { botUser = "", botIds = [], operators = [], escalateDm = "", inMyThread = () => false } = {}) {
   if (!event || typeof event !== "object") return null;
   if (event.type === "team_join") {
     const u = event.user || {};
@@ -86,7 +116,8 @@ export function classify(event, { botUser = "", inMyThread = () => false } = {})
     const ts = event.event_ts || String(Date.now() / 1000);
     return { key: `slack:team_join:${id}`, at: tsToIso(ts), event: "team_join", kind: "group", from: id, text: `joined the workspace${name ? `: ${name}` : ""}`, ts };
   }
-  if (event.bot_id || (botUser && event.user === botUser)) return null;
+  const who = sender(event, { botUser, botIds, operators, escalateDm });
+  if (who === "self" || who === "bot") return null;
   let item = null;
   if (event.type === "app_mention") {
     item = { kind: kindOf(event.channel), conv: event.channel, from: event.user, text: event.text || "", ts: event.ts, thread_ts: event.thread_ts || null };
@@ -123,8 +154,9 @@ export function threadIsMine(lines, conv, threadTs) {
  * null. Its replies are not roots: a thread the bot only answered in counts through a mention.
  * Pure.
  */
-export function ownRoot(event, { botUser = "" } = {}) {
-  if (!event || event.type !== "message" || !botUser || event.user !== botUser || !isChannel(event)) return null;
+export function ownRoot(event, { botUser = "", botIds = [], operators = [], escalateDm = "" } = {}) {
+  if (!event || event.type !== "message" || !botUser || !isChannel(event)) return null;
+  if (sender(event, { botUser, botIds, operators, escalateDm }) !== "self") return null;
   if (event.subtype && event.subtype !== "file_share" && event.subtype !== "bot_message") return null;
   if (!event.channel || !event.ts || (event.thread_ts && event.thread_ts !== event.ts)) return null;
   return { conv: event.channel, ts: event.ts };
@@ -151,6 +183,16 @@ export function pruneRoots(lines, nowMs, days = OWN_ROOT_DAYS) {
     if (!line) return false;
     try { const r = JSON.parse(line); return parseFloat(r.ts) >= cutoff; } catch { return false; }
   }).map((l) => l + "\n").join("");
+}
+
+/**
+ * The journal line for a message dropped because another bot or app sent it, or null. Ids only,
+ * never the text: the drop was silent once, and this makes it diagnosable. Pure.
+ */
+export function droppedAppPost(event, ids = {}) {
+  if (!event || (event.type !== "message" && event.type !== "app_mention")) return null;
+  if (sender(event, ids) !== "bot") return null;
+  return ["dropped app post", event.channel || "-", event.user || "-", event.bot_id || "-"].join(" ");
 }
 
 /** One journal line for every event received, kept or not: the record that shows a missing scope. */
@@ -227,16 +269,28 @@ function main() {
     log("!", "never seen within the timeout:", key);
   }
 
+  // The bot's own bot id: the setting, else learned from the first message bot_user posts.
+  const botIds = s.botId ? [s.botId] : [];
+  const ids = () => ({ botUser: s.botUser, botIds, operators: s.operators, escalateDm: s.escalateDm });
+
   async function handle(event) {
     log(describe(event));
-    const root = ownRoot(event, { botUser: s.botUser });
+    if (event && s.botUser && event.user === s.botUser && event.bot_id && !botIds.includes(event.bot_id)) {
+      botIds.push(event.bot_id);
+      log("own bot id", event.bot_id);
+    }
+    const root = ownRoot(event, ids());
     if (root) {
       try { rememberRoot(root); log("own thread root", root.conv, root.ts); } catch (e) { log("!", "own threads file:", e.message); }
       return;
     }
     const inMyThread = (c, t) => rootIsMine(readRoots(), c, t) || threadIsMine(readEvents(), c, t);
-    const item = classify(event, { botUser: s.botUser, inMyThread });
-    if (!item) return;
+    const item = classify(event, { ...ids(), inMyThread });
+    if (!item) {
+      const dropped = droppedAppPost(event, ids());
+      if (dropped) log(dropped);
+      return;
+    }
     appendFileSync(s.eventsFile, JSON.stringify({ ...item, recorded_at: new Date().toISOString() }) + "\n");
     log("recorded", item.event, item.kind, item.conv || "", item.from || "");
     const message = item.event === "app_mention" || item.event === "message";

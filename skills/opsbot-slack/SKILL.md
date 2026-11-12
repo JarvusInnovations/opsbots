@@ -74,6 +74,14 @@ thread roots in `slack-own-threads.jsonl`, beside the events file, for 90 days. 
 an older root, or one posted while the listener was down, is still kept when Slack's event
 names the bot as the thread's parent author (`parent_user_id`).
 
+A message that carries a `bot_id` is dropped, with a `dropped app post <conv> <user> <bot_id>`
+line in the journal, unless an operator wrote it. An app posting with an operator's own user
+token (an assistant posting as them) has their `user` and its own `bot_id`; when that `user` is
+in `operators`, or the post is in `escalate_dm` and not the bot's, it is heard exactly as if
+the operator typed it. Every other bot, integration or app post stays dropped, so two bots
+never answer each other forever. The bot's own posts are known by `bot_user`, or by its own
+`bot_id` on a post with no user.
+
 The events file is in `wake.files`, so the session's own bounded monitor wakes on it first.
 The nudge is the backstop that survives the session. With `loop.schedule: "monitor"` the one
 schedule monitor is that wake; the nudge stays, with its own cooldown.
@@ -202,7 +210,8 @@ which customer they belong to. That knowledge is the bot's own, so the reader ta
 | Key | Meaning | Default |
 | --- | --- | --- |
 | `bot_user` | the bot's own user id; its own messages are never events, and only reactions on its messages are kept | required |
-| `escalate_dm` | the id of the bot's DM with its operator | required for the sink |
+| `bot_id` | the bot's own bot id (`B…`), for its posts that carry no user | learned from its first own message |
+| `escalate_dm` | the id of the bot's DM with its operator; an app's post there is the operator's | required for the sink |
 | `app_token_file` | the app-level token, mode 600 | `~/.config/<bot>/slack-app-token` |
 | `events_file` | where the listener records and the reader reads; also in `wake.files` | `~/.cache/<bot>/slack-events.jsonl` |
 | `receipt_emoji` | the reaction on arrival | `eyes` |
@@ -212,7 +221,7 @@ which customer they belong to. That knowledge is the bot's own, so the reader ta
 | `bot_name` | the name the bot posts under, to find its last message in a thread | the bot's `name` |
 | `team` | the workspace id, when slack-axi holds more than one | slack-axi's default |
 | `sender_lookup` | the hook above | unset |
-| `operators` | the operator's user ids; a DM with one is `operator-dm` | none; `escalate_dm` still counts |
+| `operators` | the operator's user ids; a DM with one is `operator-dm`, and an app's post as one is heard as theirs | none; `escalate_dm` still counts |
 | `screen` | the screen (Posting, above) | unset: nothing screened, the class still logged |
 | `post_log` | the post command's decision log, a repo path | `logs/slack-posts.jsonl` |
 

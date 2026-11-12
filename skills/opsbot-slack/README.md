@@ -80,6 +80,9 @@ follows in a thread.
 - Once it has been mentioned in a thread, or has started the thread with a post of its own,
   replies in that thread reach it without another mention. A thread it only answered in still
   needs a mention. It remembers its own posts for 90 days.
+- It ignores posts by other bots and integrations, so two bots never answer each other. A post
+  your own assistant makes as you, with your user token, counts as yours once your user id is
+  in `operators` (or when it is in the bot's DM with you).
 - It does not see member email addresses. The manifest leaves `users:read.email` out on
   purpose.
 - It cannot read direct messages between other people, or channels it is not in.
