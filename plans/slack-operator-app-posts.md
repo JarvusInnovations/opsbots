@@ -1,6 +1,7 @@
 ---
 status: done
 done: 2026-11-12
+pr: 82
 depends: [opsbot-slack, slack-own-threads]
 specs:
   - specs/skills/opsbot-slack.md
