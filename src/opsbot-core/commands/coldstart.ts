@@ -14,26 +14,31 @@
  *   3. the cycle log's last 48 hours: counts, longest gap, last degraded, outages
  *   4. memory before this point is untrusted; open the source before saying
  *
- * --write also writes the pack to ~/.cache/<bot>/reground.md and sets
- * reground.pending, which `gate check` holds until the pack is read whole.
+ * --write first makes sure the checkout has .scratch/, excluded through the
+ * repository's info/exclude, then writes the pack to
+ * .scratch/opsbot-core/reground.md and sets reground.pending beside it, which
+ * `gate check` holds until the pack is read whole. Inside the checkout, the
+ * read needs no permission beyond the working directory.
  * Never fails a start: a part it cannot read says so in its place.
  *
  * gate check — the PreToolUse body. Exit 0 when nothing is pending, or when
  * this call is a Read of the pack with no offset, limit or pages (which
- * clears the flag); otherwise prints the deny reason and exits 2.
+ * clears the flag); otherwise prints the deny reason and exits 2. A flag left
+ * at the pack's earlier home (~/.cache/<bot>/) is honored once the same way.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { parseArgs, setExit, usageError } from "../args.js";
 import { skillDir } from "../invocation.js";
 import { readEvents, sessionLogSection, sessionLogSectionLib } from "../transcript.js";
-import { SCHEDULE_RULES, WAKE_RULES, schedulePackLines, wakeFiles, wakeLines } from "../wake.js";
+import { SCHEDULE_RULES, SLEEP_RULES, WAKE_RULES, schedulePackLines, wakeFiles, wakeLines } from "../wake.js";
 import { gitPath } from "../repo.js";
 import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
 import { findRoot, firstLine, iso, nowIso, nowMs, parseIso, showHead } from "../repo.js";
 import { SETTINGS_FILE, parseSettingsText, trySettings, withDefaults, type Settings } from "../settings.js";
 import { CHECK_OUTCOMES, CYCLE_OUTCOMES, outages, readCycleLog } from "../state.js";
+import { activeSleep, sleepSpans, sleepStatusLine } from "../sleep.js";
 
 /** What the wake.d sections share, in bytes. The rule card, the kit's own sections and the
  * session log are whole and outside it: they are what the bot must read, and a long rule card
@@ -46,9 +51,32 @@ const MIN_SECTION = 300;
 const DAY2 = 48 * 3600_000;
 const MAX_OUTAGES = 5;
 
-export function cacheDir(name: string): string {
+/** The bot's scratch directory, relative to its checkout, and the line that keeps it out of git. */
+export const SCRATCH_DIR = ".scratch";
+export const SCRATCH_EXCLUDE = ".scratch/";
+
+/** The pack's earlier home, kept only to honor a flag set there before the move. */
+export function legacyCacheDir(name: string): string {
   const base = process.env.XDG_CACHE_HOME || join(homedir(), ".cache");
   return join(base, name);
+}
+
+/** Create `.scratch/` in the checkout and add `.scratch/` to the repository's info/exclude,
+ * each only when missing. The exclude path comes from `git rev-parse --git-path`, so a
+ * worktree (where `.git` is a file) writes the shared one. Never `.gitignore`. */
+export function ensureScratch(root: string): { dir: string; exclude: string; created: boolean; excluded: boolean } {
+  const dir = join(root, SCRATCH_DIR);
+  const created = !existsSync(dir);
+  mkdirSync(dir, { recursive: true });
+  const exclude = gitPath(root, "info/exclude");
+  let text = "";
+  try { text = readFileSync(exclude, "utf8"); } catch { /* no exclude file yet */ }
+  const present = text.split("\n").some((l) => ["/.scratch", "/.scratch/", ".scratch", ".scratch/"].includes(l.trim()));
+  if (!present) {
+    mkdirSync(dirname(exclude), { recursive: true });
+    appendFileSync(exclude, `${text && !text.endsWith("\n") ? "\n" : ""}${SCRATCH_EXCLUDE}\n`);
+  }
+  return { dir, exclude, created, excluded: !present };
 }
 
 /** Where this session's log lives, as the SessionStart hook told cold-start; read by cycle and nudge. */
@@ -65,8 +93,14 @@ export function sessionPointer(root: string): SessionPointer | null {
   } catch { return null; }
 }
 
-export function packPaths(name: string): { pack: string; pending: string } {
-  const dir = cacheDir(name);
+/** The pack and its flag: in the checkout's scratch directory, in a folder that is the kit's. */
+export function packPaths(root: string): { dir: string; pack: string; pending: string } {
+  const dir = join(root, SCRATCH_DIR, "opsbot-core");
+  return { dir, pack: join(dir, "reground.md"), pending: join(dir, "reground.pending") };
+}
+
+export function legacyPackPaths(name: string): { pack: string; pending: string } {
+  const dir = legacyCacheDir(name);
   return { pack: join(dir, "reground.md"), pending: join(dir, "reground.pending") };
 }
 
@@ -109,19 +143,29 @@ function logSummary(root: string, now: number): string[] {
     out.push(
       `cycles ${checks.length} · nothing new ${count("nothing-new")} · new ${count("new")} · degraded ${count("degraded")} · items ${items}`,
     );
+    // a sleep...wake span is intended silence: the stretch that starts at a sleep line is no gap
     const times = all
-      .filter((l) => CYCLE_OUTCOMES.includes(l.outcome))
-      .map((l) => parseIso(l.at)!)
-      .sort((a, b) => a - b);
+      .filter((l) => CYCLE_OUTCOMES.includes(l.outcome) || l.outcome === "sleep" || l.outcome === "wake")
+      .map((l) => ({
+        t: parseIso(l.outcome === "wake" && typeof l.woken_at === "string" ? l.woken_at : l.at) ?? parseIso(l.at)!,
+        sleep: l.outcome === "sleep",
+      }))
+      .sort((a, b) => a.t - b.t);
     let gap = 0;
     let from = 0;
     for (let i = 1; i < times.length; i++) {
-      if (times[i]! - times[i - 1]! > gap) {
-        gap = times[i]! - times[i - 1]!;
-        from = times[i - 1]!;
+      if (times[i - 1]!.sleep) continue;
+      if (times[i]!.t - times[i - 1]!.t > gap) {
+        gap = times[i]!.t - times[i - 1]!.t;
+        from = times[i - 1]!.t;
       }
     }
     if (times.length > 1) out.push(`longest gap ${Math.floor(gap / 60_000)} min, from ${iso(from)}`);
+    const spans = sleepSpans(all);
+    if (spans.length) {
+      const asleep = spans.reduce((a, sp) => a + ((sp.to ? parseIso(sp.to)! : now) - parseIso(sp.from)!), 0);
+      out.push(`slept ${spans.length} time${spans.length === 1 ? "" : "s"}, ${Math.floor(asleep / 60_000)} min in all${spans[spans.length - 1]!.to ? "" : ", asleep now"}`);
+    }
     const last = checks[checks.length - 1]!;
     out.push(`last cycle ${last.at} · ${last.outcome}`);
     const lastDeg = [...checks].reverse().find((c) => c.outcome === "degraded");
@@ -188,7 +232,11 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
   if (s.loop.schedule === "monitor") {
     // one monitor is the schedule and the live wake, with or without wake files
     const evs = transcript ? readEvents(transcript) : null;
-    const lines = [...schedulePackLines(s, evs && evs.length ? evs : null, now), ...SCHEDULE_RULES];
+    const slept = activeSleep(root, s);
+    const state = slept
+      ? [`${sleepStatusLine(s, slept)}; arm nothing now: when the loop prompt arrives, run \`cycle begin\``]
+      : schedulePackLines(s, evs && evs.length ? evs : null, now);
+    const lines = [...state, ...SCHEDULE_RULES, ...(s.sleep ? SLEEP_RULES : [])];
     kit.push(`═══ 1.${kit.length + 1} The schedule and live wake (arm it before anything else)\n${lines.join("\n")}`);
   } else if (wakeFiles(s).length) {
     const evs = transcript ? readEvents(transcript) : null;
@@ -257,10 +305,13 @@ export async function coldStartCommand(args: string[]): Promise<string> {
   const libSection = transcript ? await sessionLogSectionLib(transcript, { loopPrompt: s.loop.prompt }) : null;
   const pack = buildPack(root, s, text, transcript, libSection);
   if (!flags.write) return pack.replace(/\n$/, "");
-  const { pack: packFile, pending } = packPaths(s.name);
-  mkdirSync(cacheDir(s.name), { recursive: true });
+  ensureScratch(root);
+  const { dir, pack: packFile, pending } = packPaths(root);
+  mkdirSync(dir, { recursive: true });
   writeFileSync(packFile, pack);
   writeFileSync(pending, `${nowIso()}\n`);
+  // the new pack supersedes any flag left at the earlier home; the old pack file is left alone
+  try { rmSync(legacyPackPaths(s.name).pending, { force: true }); } catch { /* not ours to fail on */ }
   return [
     `═══ READ THE WHOLE PACK BEFORE ANYTHING ELSE: Read ${packFile} now, whole (no offset or limit).`,
     "═══ Every other tool is refused until you do (gate check). This hook output may be cut short; the file is not.",
@@ -289,7 +340,10 @@ export async function gateCommand(args: string[]): Promise<Record<string, unknow
   if (!root) return { gate: "open (not inside a git checkout)" };
   const s = trySettings(root);
   if (!s) return { gate: "open (no settings)" };
-  const { pack, pending } = packPaths(s.name);
+  // the flag in the checkout; else one left at the pack's earlier home, honored once
+  const current = packPaths(root);
+  const legacy = legacyPackPaths(s.name);
+  const { pack, pending } = existsSync(current.pending) ? current : existsSync(legacy.pending) ? legacy : current;
   if (!existsSync(pending)) return { gate: "open" };
   let packSize = 0;
   try {

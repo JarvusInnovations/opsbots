@@ -1,0 +1,14 @@
+# The sleep timer's tick for @NAME@: compacts a session told to sleep once it
+# is idle, wakes it when a stream has something (wake files, `check --peek`),
+# at the due time or at sleep.max_minutes, and tells the operator once about
+# a wake left unanswered. No model involved; a no-op while awake. Rendered by
+# `infra install` only when opsbot.json sets `sleep`.
+[Unit]
+Description=@NAME@ sleep tick: compact, look, wake
+
+[Service]
+Type=oneshot
+WorkingDirectory=@ROOT@
+Environment=PATH=@PATH@
+Environment=OPSBOT_ROOT=@ROOT@
+ExecStart=@CORE@ sleep tick

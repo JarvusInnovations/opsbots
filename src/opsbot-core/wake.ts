@@ -192,6 +192,12 @@ export function schedulePackLines(s: Settings, evs: Ev[] | null, now: number): s
   return [`${evs ? "not armed" : "state unknown (no session log)"} · run \`cycle begin\` now; it prints the one Monitor call to make`];
 }
 
+/** The rules a monitor schedule adds when `sleep` is set, for the pack. */
+export const SLEEP_RULES = [
+  "When `cycle begin` or `cycle end` prints a `sleep` field in place of `wake`, arm no monitor and end your turn: the sleep timer compacts you and wakes you.",
+  "A wake from sleep is the loop prompt followed by `(woken: <reason>)`: run `cycle begin` as after any wake.",
+];
+
 /** The standing rules with a monitor schedule, for the pack. */
 export const SCHEDULE_RULES = [
   "The monitor is your schedule and your live wake.",

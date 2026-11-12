@@ -18,7 +18,7 @@
 # The message.channels, message.groups and message.mpim events below are what let a reply in a
 # thread reach the bot without a new @mention. With them, every message in a channel the bot
 # is in reaches the listener, which keeps only replies in a thread that began with a mention of
-# the bot and drops the rest unrecorded. Remove the three lines for a bot that should hear
+# the bot or that the bot started, and drops the rest unrecorded. Remove the three lines for a bot that should hear
 # only direct messages and @mentions; people will then have to mention it on every reply.
 display_information:
   name: "<Bot name>"
@@ -58,7 +58,7 @@ settings:
     bot_events:
       - app_mention          # someone @mentions the bot
       - message.im           # a direct message to the bot
-      - message.channels     # a reply in a thread it was mentioned in (public channels it is in)
+      - message.channels     # a reply in a thread it was mentioned in or started (public channels it is in)
       - message.groups       # the same, in private channels it has been invited to
       - message.mpim         # and in group direct messages
       - reaction_added       # a reaction (the listener keeps only those on its own messages)

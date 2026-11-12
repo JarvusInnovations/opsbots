@@ -23,10 +23,11 @@ import { AxiError } from "axi-sdk-js";
 import { parseArgs, setExit } from "../args.js";
 import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
 import { blockedBy, firstLine, gitPath, humanTime, nowIso, nowMs, parseIso, requireRoot } from "../repo.js";
-import { loadSettings } from "../settings.js";
-import { runtimeFor } from "../runtime.js";
+import { loadSettings, type Settings } from "../settings.js";
+import { runtimeFor, type Found } from "../runtime.js";
 import { readEvents, turnEnded } from "../transcript.js";
 import { sessionPointer } from "./coldstart.js";
+import { activeSleep, sleepStatusLine, writeSleep } from "../sleep.js";
 import { CYCLE_OUTCOMES, judgeLock, lastCycleAt, openOutage, readCycleLog, readLock, recordOutage, recordOutageEnd } from "../state.js";
 
 // --------------------------------------------------------------- watchdog
@@ -43,6 +44,18 @@ export function watchdogCommand(args: string[]): Record<string, unknown> {
   const lines = readCycleLog(root);
   const last = lastCycleAt(lines);
   const open = openOutage(root);
+  // asleep, the silence is intended; the sleep timer is the clock and escalates a wake left
+  // unanswered. An outage that cycles ended before this sleep is still closed here.
+  const asleep = activeSleep(root, settings);
+  if (asleep) {
+    const said = `asleep · ${sleepStatusLine(settings, asleep)}; the sleep timer watches`;
+    if (open && last && last > open && !blocked && !dry) {
+      const resumed = lines.find((l) => CYCLE_OUTCOMES.includes(l.outcome) && l.at > open)?.at ?? last;
+      recordOutageEnd(root, open, resumed);
+      return { watchdog: `${said} · outage from ${open} ended ${resumed}` };
+    }
+    return { watchdog: said };
+  }
   const gap = last ? now - (parseIso(last) ?? now) : null;
 
   if (gap !== null && gap < watch * 60_000) {
@@ -84,19 +97,14 @@ export function watchdogCommand(args: string[]): Record<string, unknown> {
 
   if (dry) return { watchdog: `stopped since ${started} · would tell the operator`, message: message.split("\n") };
 
-  const scripts = discover(root, "escalate").scripts;
-  if (scripts.length === 0) {
+  const results = escalate(root, settings, text, message);
+  if (results === null) {
     setExit(1);
     return {
       watchdog: `stopped since ${started} · cannot tell the operator: no script in opsbot.d/escalate.d/`,
       help: ["Install an escalation script (a channel skill provides one) so the watchdog can reach the operator"],
     };
   }
-  const configPath = configSnapshot(root, text);
-  const results = scripts.map((s) => {
-    const r = runScript(s, root, baseEnv(root, settings, configPath, "escalate"), `${message}\n`);
-    return { script: s.name, ok: r.code === 0, error: r.code === 0 ? "" : `exit ${r.code}: ${firstLine(r.stderr) || "no message"}` };
-  });
   const sent = results.filter((r) => r.ok);
   if (sent.length === 0) {
     setExit(1);
@@ -117,6 +125,47 @@ export function watchdogCommand(args: string[]): Record<string, unknown> {
   return { watchdog: `stopped since ${started} · the operator told · outage recorded`, escalations: results };
 }
 
+/** Run every escalate.d/ script with the message on stdin; null when there is none. */
+export function escalate(root: string, settings: Settings, text: string, message: string): Array<{ script: string; ok: boolean; error: string }> | null {
+  const scripts = discover(root, "escalate").scripts;
+  if (scripts.length === 0) return null;
+  const configPath = configSnapshot(root, text);
+  return scripts.map((s) => {
+    const r = runScript(s, root, baseEnv(root, settings, configPath, "escalate"), `${message}\n`);
+    return { script: s.name, ok: r.code === 0, error: r.code === 0 ? "" : `exit ${r.code}: ${firstLine(r.stderr) || "no message"}` };
+  });
+}
+
+// ------------------------------------------------------------------ idle
+
+/**
+ * Whether a prompt typed now lands on an idle session. The runtime's `idle` and `done` are
+ * trusted, and `blocked` (a prompt would land in a dialog). Its `working` is not trusted alone:
+ * the herdr adapter reads the terminal title, which keeps its spinner while background work runs
+ * after the turn ended, so the session log decides. Shared by the nudge and the sleep timer.
+ */
+export function sessionIdle(root: string, agent: string, found: Extract<Found, { ok: true }>): { idle: true; via: string } | { idle: false; why: string; blocked: boolean } {
+  switch (found.status) {
+    case "idle":
+    case "done":
+      return { idle: true, via: "" };
+    case "working": {
+      const log = found.log ?? sessionPointer(root)?.transcript_path ?? null;
+      const evs = log ? readEvents(log) : [];
+      if (evs.length === 0) return { idle: false, why: `${agent} is working (mid-turn; no session log to check)`, blocked: false };
+      // a log tail with no assistant entry in it (one enormous line) says nothing about the turn
+      if (!evs.some((e) => e.type === "assistant")) return { idle: false, why: `${agent} is working (mid-turn; the session log's tail shows no turn)`, blocked: false };
+      const t = turnEnded(evs);
+      if (!t.ended) return { idle: false, why: `${agent} is working (mid-turn since ${t.since.slice(11, 16)}Z)`, blocked: false };
+      return { idle: true, via: ` · the runtime said working, but the session log shows the turn ended${t.at ? ` at ${t.at.slice(11, 16)}Z` : ""} (background work only)` };
+    }
+    case "blocked":
+      return { idle: false, why: `${agent} is blocked at a dialog; a prompt would land in it`, blocked: true };
+    default:
+      return { idle: false, why: `the runtime cannot tell what ${agent} is doing (${found.status}); treated as busy`, blocked: false };
+  }
+}
+
 // ------------------------------------------------------------------ nudge
 
 export function nudgeCommand(args: string[]): Record<string, unknown> {
@@ -135,6 +184,11 @@ export function nudgeCommand(args: string[]): Record<string, unknown> {
   const quiet = wake ? settings.liveness.wake_cooldown_minutes : settings.liveness.nudge_minutes;
   const cooldown = wake ? settings.liveness.wake_cooldown_minutes : settings.liveness.nudge_cooldown_minutes;
   const marker = gitPath(root, wake ? "opsbot-nudge-now" : "opsbot-nudge");
+  // asleep: the plain nudge stands down; a listener's --now wakes, and is not held by the cooldown
+  // until the sleep has been woken once
+  const asleep = activeSleep(root, settings);
+  if (asleep && !wake) return { nudge: `nothing · ${sleepStatusLine(settings, asleep)}` };
+  const firstWake = !!asleep && !asleep.woken;
 
   const v = judgeLock(root, settings.lock_max_minutes);
   if (v.state === "held") return { nudge: `nothing · a cycle holds the checkout since ${v.hold.started}` };
@@ -145,7 +199,7 @@ export function nudgeCommand(args: string[]): Record<string, unknown> {
   if (!wake && last && now - (parseIso(last) ?? 0) < quiet * 60_000) {
     return { nudge: `nothing · last cycle ${last}` };
   }
-  if (existsSync(marker)) {
+  if (existsSync(marker) && !firstWake) {
     const [prev, why] = readFileSync(marker, "utf8").split("\n");
     if (prev && /^\d+$/.test(prev) && now - Number(prev) * 1000 < cooldown * 60_000) {
       const ago = Math.floor((now - Number(prev) * 1000) / 60_000);
@@ -159,33 +213,18 @@ export function nudgeCommand(args: string[]): Record<string, unknown> {
     setExit(1);
     return { nudge: found.code === "agent_not_found" ? `cannot · the runtime has no agent named ${agent}` : `cannot · ${rt.name}: ${found.code}: ${found.message}` };
   }
-  let via = "";
-  switch (found.status) {
-    case "idle":
-    case "done":
-      break;
-    case "working": {
-      // The runtime reads the terminal title, and the title keeps its spinner while background
-      // work runs after the turn has ended. The session log knows the difference.
-      const log = found.log ?? sessionPointer(root)?.transcript_path ?? null;
-      const evs = log ? readEvents(log) : [];
-      if (evs.length === 0) return { nudge: `nothing · ${agent} is working (mid-turn; no session log to check)` };
-      // a log tail with no assistant entry in it (one enormous line) says nothing about the turn
-      if (!evs.some((e) => e.type === "assistant")) return { nudge: `nothing · ${agent} is working (mid-turn; the session log's tail shows no turn)` };
-      const t = turnEnded(evs);
-      if (!t.ended) return { nudge: `nothing · ${agent} is working (mid-turn since ${t.since.slice(11, 16)}Z)` };
-      via = ` · the runtime said working, but the session log shows the turn ended${t.at ? ` at ${t.at.slice(11, 16)}Z` : ""} (background work only)`;
-      break;
-    }
-    case "blocked":
-      return { nudge: `nothing · ${agent} is blocked at a dialog; a prompt would land in it` };
-    default:
-      return { nudge: `nothing · the runtime cannot tell what ${agent} is doing (${found.status}); treated as busy` };
-  }
+  const idle = sessionIdle(root, agent, found);
+  if (!idle.idle) return { nudge: `nothing · ${idle.why}` };
+  const via = idle.via;
 
   if (dry) return { nudge: `would prompt ${agent} (${found.pane}, ${found.status})${wake ? ` now${reason ? `, for: ${reason}` : ""}` : ""}: ${line}` };
   const stamp = `${Math.floor(now / 1000)}\n${reason}\n`;
   const r = rt.prompt(agent, line);
+  if (asleep && (r.ok || (r.code !== "agent_blocked" && r.code !== "agent_not_found")) && !asleep.woken) {
+    // the wake `cycle begin` answers; a prompt that may have landed counts, as for the cooldown
+    const at = nowIso();
+    writeSleep(root, { ...asleep, woken: { at, reason: `nudge --now${reason ? `: ${reason}` : ""}`, event_at: at, sent: true } });
+  }
   if (!r.ok) {
     // refused before anything was sent: not a nudge; anything else may have landed
     if (r.code !== "agent_blocked" && r.code !== "agent_not_found") writeFileSync(marker, stamp);

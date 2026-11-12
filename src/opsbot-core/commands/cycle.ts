@@ -45,6 +45,7 @@ import { lastModel, readEvents } from "../transcript.js";
 import { driftReport, sessionDrift } from "../drift.js";
 import { scheduleLines, wakeFiles, wakeLines } from "../wake.js";
 import { existsSync, rmSync } from "node:fs";
+import { clearSleep, decideSleep, readSleep, silenceFrom, sleepFieldLines, sleepLogLine, wakeLogLine, writeSleep, type SleepState } from "../sleep.js";
 
 export const CYCLE_USAGE = "cycle begin | cycle end --records N [--degraded] [--summary TEXT]";
 
@@ -69,6 +70,20 @@ function scheduleReport(root: string, s: Settings): string[] {
   const ptr = sessionPointer(root);
   const evs = ptr ? readEvents(ptr.transcript_path) : [];
   return scheduleLines(s, evs.length ? evs : null, nowMs(), nextDelay(s, readCycleLog(root), nowMs()).seconds);
+}
+
+/** The session log's events, when the pointer names one. */
+function sessionEvents(root: string) {
+  const ptr = sessionPointer(root);
+  return ptr ? readEvents(ptr.transcript_path) : [];
+}
+
+/** With `sleep` set: whether this quiet moment starts a sleep. The state is returned, not written:
+ * the caller writes it once the log line that records it is committed. */
+function sleepDecision(root: string, s: Settings, text: string, by: SleepState["by"]): SleepState | null {
+  if (!s.sleep) return null;
+  const d = decideSleep(root, s, text, readCycleLog(root), nowMs(), sessionEvents(root), by);
+  return d.sleep ? d.state : null;
 }
 
 /** The session-drift lines for `cycle begin`: shown once per session and drift, else empty. */
@@ -119,9 +134,10 @@ function cycleBegin(): Record<string, unknown> {
   }
   if (!takeLock(root)) return wait(root, settings, "another cycle took the checkout at the same moment");
 
-  // a gap
+  // a gap; a sleep is intended silence, and only a wake left unanswered counts
   const lines = readCycleLog(root);
-  const last = lastCycleAt(lines);
+  const slept = readSleep(root);
+  const last = silenceFrom(lines, slept, nowMs(), lastCycleAt(lines));
   if (last && !openOutage(root)) {
     const gap = nowMs() - (parseIso(last) ?? nowMs());
     if (gap >= settings.liveness.watchdog_minutes * 60_000) {
@@ -129,9 +145,16 @@ function cycleBegin(): Record<string, unknown> {
         kind: "stopped",
         started: last,
         ended: nowIso(),
-        note: `no cycle logged for ${Math.floor(gap / 60_000)} minutes; cause not seen from here`,
+        note: slept?.woken
+          ? `woken at ${slept.woken.at} for: ${slept.woken.reason}; no cycle began for ${Math.floor(gap / 60_000)} minutes`
+          : `no cycle logged for ${Math.floor(gap / 60_000)} minutes; cause not seen from here`,
       });
     }
+  }
+  if (slept) {
+    // the sleep is over: the file goes, and the log says why and how long the wake took
+    clearSleep(root);
+    appendJsonl(paths(root).log, wakeLogLine(slept, nowMs()));
   }
 
   // housekeeping that must run first
@@ -175,11 +198,24 @@ function cycleBegin(): Record<string, unknown> {
   }
 
   if (r.code === 0) {
+    let sleep = sleepDecision(root, settings, text, "cycle begin");
+    if (sleep) {
+      const p = paths(root);
+      const size = fileSize(p.log);
+      appendJsonl(p.log, sleepLogLine(sleep));
+      if (commitOnly(root, [p.log], "chore(cycle): sleep") === null) writeSleep(root, sleep);
+      else {
+        // not recorded, so not asleep: the loop goes on as usual
+        truncateTo(p.log, size);
+        sleep = null;
+      }
+    }
     const why = pushCommits(root);
     releaseLock(root);
     setExit(0);
     const out: Record<string, unknown> = { cycle: `${r.line}${why ? ` · not pushed: ${why}` : ""} · next ${next(root, settings)}` };
-    const wake = wakeReport(root, settings, true);
+    const wake = sleep ? [] : wakeReport(root, settings, true);
+    if (sleep) out.sleep = sleepFieldLines(settings, sleep);
     if (wake.length) out.wake = wake;
     const drift = driftLines(root, settings);
     if (drift.length) out.session = drift;
@@ -277,6 +313,8 @@ function cycleEnd(args: string[]): Record<string, unknown> {
   };
   if (summary !== undefined) line.summary = summary;
   appendJsonl(p.log, line);
+  const sleep = sleepDecision(root, settings, text, "cycle end");
+  if (sleep) appendJsonl(p.log, sleepLogLine(sleep));
 
   const files = [p.log];
   if (existsSync(p.watermark)) files.push(p.watermark);
@@ -291,6 +329,7 @@ function cycleEnd(args: string[]): Record<string, unknown> {
       "Fix the repo, then run cycle end again",
     ]);
   }
+  if (sleep) writeSleep(root, sleep);
   const pushed = pushCommits(root);
   releaseLock(root);
   const out: Record<string, unknown> = {
@@ -298,6 +337,10 @@ function cycleEnd(args: string[]): Record<string, unknown> {
   };
   if (notes.length) out.notes = notes;
   out.next = next(root, settings);
+  if (sleep) {
+    out.sleep = sleepFieldLines(settings, sleep);
+    return out;
+  }
   const wake = wakeReport(root, settings, true);
   if (wake.length) out.wake = wake;
   return out;

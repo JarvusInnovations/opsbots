@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-host/version.ts"() {
     "use strict";
-    VERSION = true ? "6149dbb" : "dev";
+    VERSION = true ? "c2acd63" : "dev";
   }
 });
 
@@ -1765,7 +1765,7 @@ var init_reference = __esm({
       {
         group: "Status",
         commands: [
-          { usage: "status", summary: "One row per piece (lingering, session retention, node, each tool, the desktop units, the VNC password, the browser MCP, the environment in repo settings, environment.d and .bashrc): ok, missing or differs, with the command that fixes it. Exit 1 while anything is to fix." }
+          { usage: "status", summary: "One row per piece (lingering, session retention, node, each tool, the desktop units, the VNC password, Chrome, the browser MCP, the environment in repo settings, environment.d and .bashrc): ok, missing or differs, with the command that fixes it. Exit 1 while anything is to fix." }
         ]
       },
       {
@@ -2161,6 +2161,13 @@ function statusRows(h) {
     pwMode === 384 && existsSync5(vncPasswd()) ? true : pwMode === null ? false : "differs",
     pwMode === null ? "none" : `${pw.replace(home(), "~")} mode ${pwMode.toString(8)}`,
     `${cli} desktop install`
+  );
+  const chrome = shell("command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser");
+  add(
+    "chrome",
+    chrome.code === 0,
+    chrome.out.trim().split("\n")[0] || "no Chrome or Chromium on PATH: the browser tool has nothing to drive",
+    "as root: install Google Chrome or Chromium (see the skill's README section)"
   );
   const env = envValues(h);
   const mcp = env.CHROME_DEVTOOLS_AXI_MCP_PATH;

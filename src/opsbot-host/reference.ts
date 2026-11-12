@@ -11,7 +11,7 @@ export const COMMAND_GROUPS: CommandGroup[] = [
   {
     group: "Status",
     commands: [
-      { usage: "status", summary: "One row per piece (lingering, session retention, node, each tool, the desktop units, the VNC password, the browser MCP, the environment in repo settings, environment.d and .bashrc): ok, missing or differs, with the command that fixes it. Exit 1 while anything is to fix." },
+      { usage: "status", summary: "One row per piece (lingering, session retention, node, each tool, the desktop units, the VNC password, Chrome, the browser MCP, the environment in repo settings, environment.d and .bashrc): ok, missing or differs, with the command that fixes it. Exit 1 while anything is to fix." },
     ],
   },
   {

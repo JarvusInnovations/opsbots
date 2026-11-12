@@ -184,3 +184,17 @@ describe("bootstrap", () => {
   });
 });
 
+
+describe("status", () => {
+  test("has a chrome row: missing with no browser on PATH, ok with one", () => {
+    const b = bot();
+    const bin = join(b.home, "bin");
+    mkdirSync(bin, { recursive: true });
+    const none = host(b, ["status"], { PATH: "/usr/bin:/bin", SHELL: "/bin/bash" });
+    const row = (out: string) => out.split("\n").find((l) => /^\s*chrome,/.test(l)) ?? "";
+    if (!existsSync("/usr/bin/google-chrome") && !existsSync("/usr/bin/chromium")) expect(row(none.out)).toMatch(/^\s*chrome,missing,/);
+    writeFileSync(join(bin, "chromium"), "#!/bin/sh\n", { mode: 0o755 });
+    const some = host(b, ["status"], { PATH: `${bin}:/usr/bin:/bin`, SHELL: "/bin/bash" });
+    expect(row(some.out)).toMatch(/^\s*chrome,ok,/);
+  }, 60_000); // two full status runs, each probing every tool through a login shell
+});

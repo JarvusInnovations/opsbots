@@ -32,7 +32,17 @@ sudo loginctl enable-linger <bot>          # user services and timers run while 
 echo '<operator> ALL=(<bot>) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/<bot>-operator
 ```
 
-The desktop also needs the packages: `sudo apt install xvfb openbox x11vnc`. Logging the bot
+The desktop also needs the packages: `sudo apt install xvfb openbox x11vnc`. The browser
+needs a Chrome or Chromium on `PATH`; `status` has a row for it. On Ubuntu the `chromium`
+package is a snap that a service user cannot run reliably, so install Google Chrome's own
+package:
+
+```sh
+curl -fsSLo /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo apt install -y /tmp/chrome.deb && rm /tmp/chrome.deb
+```
+
+Logging the bot
 into its accounts (Claude, Google, Slack, GitHub) is the operator's, by hand: those are the
 bot's credentials, and no command here touches them.
 
@@ -77,6 +87,47 @@ never collide. They come from `opsbot.json`:
 Absent keys derive from the uid (`100 + uid % 100`, `5900 + …`, `9300 + …`). A bot set up by
 hand before this skill pins what it already uses, so `status` compares against reality.
 
+## The desktop and VNC
+
+A bot's browser runs headless, and that is enough for reading pages. The desktop exists for
+the two times a person has to see the browser: signing the bot in to a site by hand (a
+password, a passkey, a second factor the bot must never hold), and watching what the bot's
+browser is doing when a page misbehaves.
+
+`desktop install` writes three user services, started at boot because the user lingers:
+
+| Unit | What it runs | Why |
+| --- | --- | --- |
+| `xvfb` | `Xvfb :<display> -screen 0 1920x1080x24 -nolisten tcp` | a screen that exists with no monitor attached |
+| `openbox` | Openbox on that display | a window manager, so browser windows can be moved, resized and brought forward |
+| `x11vnc` | `x11vnc -display :<display> -forever -shared -listen <tailnet-ip> -rfbport <vnc_port> -rfbauth ~/.vnc/passwd` | shares the screen, to the tailnet only, behind a password |
+
+- **Tailnet only.** x11vnc listens on the machine's Tailscale address and nothing else, so
+  the screen is never on a public interface. A host with no tailnet address gets no desktop:
+  `desktop install` refuses rather than bind wider. Such a host runs the browser headless,
+  and sign-ins that need a screen wait until it joins the tailnet.
+- **A password as well.** macOS Screen Sharing will not connect to a VNC server that has
+  none. `desktop install` generates one once into `~/.config/<bot>/vnc-password` (mode 0600)
+  and never regenerates it. The operator reads it from there.
+- **One display per user.** Each bot's display, VNC port and bridge port come from
+  [the numbers](#the-numbers), so several bots and a person can share a host and each VNC
+  port shows one user's screen.
+
+To connect from a Mac on the tailnet: Finder, Go, Connect to Server, `vnc://<host>:<vnc_port>`,
+then the password. Any VNC client works the same way.
+
+To put the browser on that screen, run the browser tool headed: set
+`CHROME_DEVTOOLS_AXI_HEADED=1`, for one call or in the `env` block for a bot that should
+always run headed. The setting is read when the tool starts its browser, so stop a headless
+one first (`chrome-devtools-axi stop`). `DISPLAY` already points at the bot's screen, so the
+window opens there and the person on VNC can type into it.
+
+The usual sign-in goes: the operator connects over VNC, the bot or the operator opens the
+site headed, the operator signs in by hand, and the bot carries on in that browser. By
+default the tool's browser keeps nothing on disk, so a sign-in lasts only while that browser
+runs. For sign-ins that must survive a restart, set `CHROME_DEVTOOLS_AXI_USER_DATA_DIR` to a
+directory under the bot's home, in the same three places as the other browser settings.
+
 ## How to use it
 
 0. On a new user, `bootstrap` first (above), then `sessions keep`.
@@ -100,7 +151,7 @@ Everything is idempotent. A password that exists is never regenerated (it lives 
 
 ### Status
 
-- `scripts/opsbot-host status` — One row per piece (lingering, session retention, node, each tool, the desktop units, the VNC password, the browser MCP, the environment in repo settings, environment.d and .bashrc): ok, missing or differs, with the command that fixes it. Exit 1 while anything is to fix.
+- `scripts/opsbot-host status` — One row per piece (lingering, session retention, node, each tool, the desktop units, the VNC password, Chrome, the browser MCP, the environment in repo settings, environment.d and .bashrc): ok, missing or differs, with the command that fixes it. Exit 1 while anything is to fix.
 
 ### Install
 

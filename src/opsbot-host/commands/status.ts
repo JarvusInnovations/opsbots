@@ -51,6 +51,10 @@ export function statusRows(h: HostConfig): Row[] {
   add("vnc password", pwMode === 0o600 && existsSync(vncPasswd()) ? true : pwMode === null ? false : "differs",
     pwMode === null ? "none" : `${pw.replace(home(), "~")} mode ${pwMode.toString(8)}`, `${cli} desktop install`);
 
+  const chrome = shell("command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser");
+  add("chrome", chrome.code === 0, chrome.out.trim().split("\n")[0] || "no Chrome or Chromium on PATH: the browser tool has nothing to drive",
+    "as root: install Google Chrome or Chromium (see the skill's README section)");
+
   const env = envValues(h);
   const mcp = env.CHROME_DEVTOOLS_AXI_MCP_PATH;
   add("browser mcp", !!mcp && existsSync(mcp), mcp ?? "npm root -g failed", `${cli} browser install`);

@@ -15,7 +15,7 @@ card and channel configuration are its own.
 | The loop | `opsbot-core` | check, cycle-begin/end, next-delay, cold-start, lock, outage accounting, watchdog + nudge units |
 | The record | `opsbot-record` | the shared sheets: requests (incl. promises), deliveries, decisions, limitations, proposals; the rules they follow |
 | The voice | `opsbot-persona` | the rule-card template, the mark, acknowledge-first, the refusal list a send guard is built from |
-| The channels | `opsbot-<channel>` | one adapter per surface: read, send guard, listener, reaction ack; the first is [`opsbot-slack`](skills/opsbot-slack.md) (listener, reader, reaction ack, escalation; no send guard yet) |
+| The channels | `opsbot-<channel>` | one adapter per surface: read, send guard, listener, reaction ack; the first is [`opsbot-slack`](skills/opsbot-slack.md) (listener, reader, reaction ack, escalation, and a post command that classifies the destination and screens the draft; the send guard's other refusals not yet) |
 | Delivery | `opsbot-deliver` | hand a file to a person and prove they can open it |
 | The bot's own | the bot's repo | its specs, its principal's sheets (people, accounts, clips…), its rule card's contents, its tools in `bin/` |
 
@@ -122,7 +122,8 @@ still one clock, and the nudge is still what restarts a loop that stopped.
 ## Cold start and compaction
 
 A SessionStart hook on `startup | resume | compact | clear` writes the reground pack to a
-file and sets a pending flag; a PreToolUse gate refuses every other tool until the pack
+file inside the bot's checkout (under `.scratch/`, kept out of git through `info/exclude`) and
+sets a pending flag; a PreToolUse gate refuses every other tool until the pack
 has been read whole. The pack, in order, within a size budget the tests hold:
 
 1. the rule card, whole
