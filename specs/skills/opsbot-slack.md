@@ -51,6 +51,7 @@ In the repo, written by the post command:
 | Key | Meaning | Default |
 | --- | --- | --- |
 | `bot_user` | the bot's own user id: its own messages are never events, and only reactions on its messages are kept | required |
+| `bot_id` | the bot's own bot id (`B…`, `auth.test` on the bot token); a message carrying it is the bot's own | unset; learned from the bot's first own message the listener hears |
 | `escalate_dm` | the id of the bot's DM with its operator | required for the sink |
 | `app_token_file` | the app-level token file | `~/.config/<bot>/slack-app-token` |
 | `events_file` | the events file; must also be in `wake.files` | `~/.cache/<bot>/slack-events.jsonl` |
@@ -61,7 +62,7 @@ In the repo, written by the post command:
 | `bot_name` | the name the bot posts under, to find its last message in a thread | the bot's `name` |
 | `team` | the workspace id passed to slack-axi as `--team` | slack-axi's default |
 | `sender_lookup` | a repo path to the sender hook (below) | unset |
-| `operators` | the operator's user ids; a DM with one of them is `operator-dm` | none; `escalate_dm` alone still counts |
+| `operators` | the operator's user ids; a DM with one of them is `operator-dm`; an app's post as one of them is heard like their own ([Posts through an app](#posts-through-an-app)) | none; `escalate_dm` alone still counts |
 | `screen` | the screen ([Posting](#posting-opsbot-slack-post)) | unset: nothing is screened |
 | `post_log` | the post command's decision log, a repo path | `logs/slack-posts.jsonl` |
 
@@ -83,7 +84,9 @@ the app subscribes to channel messages), a `reaction_added` on the bot's own mes
 
 A reply that @mentions the bot is left to its `app_mention` event. A thread the bot only
 replied in, with no mention and not rooted on its own post, does not count, so a busy thread it
-answered once stays quiet. The bot's own messages are never items. Its own top-level post in a
+answered once stays quiet. The bot's own messages, by `bot_user` or by its own `bot_id`, are
+never items. A message carrying any other `bot_id` is dropped unless an operator wrote it
+([Posts through an app](#posts-through-an-app)). Its own top-level post in a
 channel or private channel (no `thread_ts`, or `thread_ts` equal to `ts`; no subtype other than
 `file_share` or `bot_message`) is appended to the own-threads file and nothing else is done
 with it; its replies are not roots. On each append, roots whose `ts` is more than 90 days old
@@ -125,6 +128,37 @@ began with a mention or that the bot started, and drops every other channel mess
 unrecorded. Listed as options in a
 comment, off by default: `users:read.email`, `files:write`, `channels:join`,
 `chat:write.public`.
+
+## Posts through an app
+
+A message can carry a `bot_id` and still be a person's. An app that holds a person's user
+token (an assistant posting as its operator from a command line) posts as that person: `user`
+is theirs, and the message also carries the app's `bot_id`. The listener sorts every message,
+`app_mention` and reaction by its sender, in this order:
+
+1. **The bot itself, by user**: `user` is `bot_user`. Never an item. Its own top-level
+   channel post is only remembered as a root ([the listener](#the-pieces)).
+2. **A person**: no `bot_id` and no `bot_message` subtype. The listener's rules, unchanged.
+3. **An operator through an app**: a `bot_id`, and a `user` that is in `operators`, or any
+   `user` other than the bot in the `escalate_dm` conversation. The post command already
+   treats that conversation as the operator's DM, and a DM has only two members. Heard exactly
+   like a message the operator typed: the DM, mention-thread and own-thread rules all apply,
+   and the item's `from` is the operator. This comes before the `bot_id` test below, so an
+   operator's post through the bot's own app is still the operator's.
+4. **The bot itself, by bot id**: no `user`, and `bot_id` is the bot's own: `bot_id` in the
+   settings, else the `bot_id` on the first message the listener hears from `bot_user`. Never
+   an item, and remembered as a root like step 1. A post with a `user` that is neither the bot
+   nor an operator is never the bot's, whatever its `bot_id`.
+5. **Another bot**: any other `bot_id`: another bot, an integration, a workflow, an app posting
+   as someone who is not an operator. Dropped, with one journal line,
+   `dropped app post <conv> <user> <bot_id>`, never the text.
+
+A `bot_message` subtype is never an item. Slack sends it for a classic integration's post, and
+its reference says such a message "has no associated user", so it cannot be an operator's.
+It is dropped as another bot's unless its `bot_id` is the bot's own.
+
+With no `operators` and no `escalate_dm`, step 3 never applies, and the listener keeps exactly
+what it kept before: every message with a `bot_id` is dropped.
 
 ## The sender hook
 
@@ -281,6 +315,11 @@ Exit 2 is an unknown command or flag, or no `opsbot.json` at the repo root.
 - The bot's own messages are never items; its own top-level channel posts are only remembered
   as thread roots. Why: a bot posted in a channel, a person replied under the post without an
   @mention, and the listener dropped the reply because the thread held no mention.
+- A message carrying another `bot_id` is dropped unless an operator wrote it. Why: two bots
+  that each answer the other's posts reply to each other forever. An operator's post through
+  an app is theirs, though: a bot dropped two replies an operator's assistant posted as the
+  operator in a thread the bot was in, while it heard the replies the operator typed, and the
+  drop left no trace. So the drop is logged.
 - The second reaction means read, by construction: it waits for the seen key. Why: a reaction
   added on arrival promised a read that a busy agent had not done.
 - `install` prints settings and never writes them; the operator commits `opsbot.json`.
