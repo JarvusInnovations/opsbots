@@ -111,9 +111,13 @@ function renderItem(it: Item, n: number, total: number, gateWord: string | null)
     if (it[f] === undefined) continue;
     out[f] = f === "kind" && typeof it.kind === "string" ? it.kind.toUpperCase() : it[f];
   }
-  if (gateWord && typeof it.text === "string" && gateWordIn(it.text, gateWord)) out.gate_word = "present";
+  if (gateWord && typeof it.text === "string" && gateWordIn(it.text, gateWord)) {
+    // An adapter may say the author cannot give the gate word (another bot's message, say).
+    const voided = typeof it.gate_word_void === "string" && it.gate_word_void.trim() !== "";
+    out.gate_word = voided ? `present, does not count: ${String(it.gate_word_void).trim()}` : "present";
+  }
   for (const [k, v] of Object.entries(it)) {
-    if (k === "input" || k === "text" || k === "report" || CORE_FIELDS.includes(k)) continue;
+    if (k === "input" || k === "text" || k === "report" || k === "gate_word_void" || CORE_FIELDS.includes(k)) continue;
     out[k] = v;
   }
   if (it.text !== undefined) out.text = it.text;

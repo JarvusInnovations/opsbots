@@ -106,6 +106,21 @@ If the bot runs as your own Linux user, slack-axi may also hold your own login. 
 checks that it posts as itself: the `identity` row in `opsbot-slack status` says who it would
 post as, and a post as anyone else is refused.
 
+## Two of your bots in one channel (optional)
+
+Bots ignore each other by default, because two bots that answer each other never stop. When
+two of your bots should work together in a shared channel, list each as the other's peer in
+`streams.slack.peers`, with the channel ids where they may talk:
+
+- Each hears the other only in those channels, and only when it is @mentioned or the message is
+  in a thread it is already in. It reacts 🤖 instead of 👀, so you can see it heard its peer.
+- The post command counts the turns. After six messages between the bots with no person in
+  between, it refuses to post more in that thread until you, or anyone, says something there.
+  It also stops at 20 posts to a peer in one channel in an hour. Both numbers are settings.
+- A peer's message never counts as yours: it cannot approve anything, and your gate word in it
+  does not count.
+- Invite each bot to the shared channel. `opsbot-slack status` says if it is not there.
+
 ## Screening what the bot posts (optional)
 
 The bot posts every message through one command, `opsbot-slack post`. Before it posts, the
