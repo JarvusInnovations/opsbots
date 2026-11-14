@@ -6,6 +6,7 @@
 //   classify <conv>
 //   screen-check                       (for `opsbot-slack status`: one row on stdout)
 //   identity-check                     (for `opsbot-slack status`: the posting identity's row)
+//   peers-check                        (for `opsbot-slack status`: the bot's membership in the peers' channels)
 //
 // post, in order: refuse bad usage; classify the destination from Slack's own data
 // (operator-dm, internal, external, unknown); when streams.slack.screen names a policy for that
@@ -16,12 +17,21 @@
 //
 // Exit 0 posted (or would be, with --dry-run) · 1 Slack refused or failed · 2 bad usage or an
 // unusable setting · 3 the screen blocked it · 4 the screen failed; nothing posted, the operator
-// told once per outage through opsbot.d/escalate.d/ · 5 the posting identity is not bot_user.
+// told once per outage through opsbot.d/escalate.d/ · 5 the posting identity is not bot_user ·
+// 6 the loop guard refused it.
+//
+// The loop guard: when streams.slack.peers names other bots and the destination is one of their
+// channels, a reply's thread is read with conversations.replies (who wrote each message, never
+// kept as text). With a peer in it, a run of peer_turns (6) messages from this bot and peers with
+// no person between is refused, and so is a post past peer_posts_per_hour (20) posts to peers in
+// that channel, counted from the decision log. A draft that @mentions an operator gets through
+// once per run, so the bot can ask its operator in the same thread.
 //
 // The destination class comes from `slack-axi audience <conv>` (slack-axi 1.6.0 or later), which
 // reads conversations.info, conversations.members and users.info with slack-axi's own token. The
-// bot token itself is read here for one thing only, the posting identity's auth.test (slack-axi
-// prints no live user id), in slack-axi's own order; it is never printed.
+// bot token itself is read here for two things only, the posting identity's auth.test (slack-axi
+// prints no live user id) and the loop guard's conversations.replies (slack-axi thread prints
+// names, not ids), in slack-axi's own order; it is never printed.
 // OPSBOT_SLACK_AXI names another slack-axi binary (a pinned copy, a test double).
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -29,7 +39,7 @@ import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileS
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-const EXIT = { ok: 0, slack: 1, usage: 2, blocked: 3, screenFailed: 4, identity: 5 };
+const EXIT = { ok: 0, slack: 1, usage: 2, blocked: 3, screenFailed: 4, identity: 5, peerGuard: 6 };
 const CONV_RE = /^[CDG][A-Z0-9]{2,}$/;
 const TS_RE = /^\d+\.\d+$/;
 const SLACK_TIMEOUT_MS = 15000;
@@ -66,6 +76,16 @@ const num = (v, d) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) :
 const cacheMs = num(screenCfg?.cache_seconds, 300) * 1000;
 const maxMembers = Math.floor(num(screenCfg?.max_members, 100));
 const timeoutMs = num(screenCfg?.timeout_seconds, 30) * 1000;
+const posInt = (v, d) => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : typeof v === "string" && /^[1-9]\d*$/.test(v) ? Number(v) : d);
+// Every peer entry with a user id counts for the guard, even one status calls unusable: more
+// guard, never less. A channel list that is not a list guards nothing for that peer.
+const peers = (Array.isArray(slack.peers) ? slack.peers : [])
+  .filter((p) => p && typeof p === "object" && typeof p.user === "string" && p.user)
+  .map((p, i) => ({ name: typeof p.name === "string" && p.name ? p.name : `peer ${i + 1}`, user: p.user, botId: typeof p.bot_id === "string" ? p.bot_id : "", channels: Array.isArray(p.channels) ? p.channels.map(String) : [] }));
+const peerTurns = posInt(slack.peer_turns, 6);
+const peerPerHour = posInt(slack.peer_posts_per_hour, 20);
+const THREAD_CACHE_MS = 20000;
+const THREAD_MAX_PAGES = 10;
 
 /** A repo path resolved inside the repo; null when it points outside. */
 function inRepo(p) {
@@ -166,13 +186,15 @@ async function identityRefusal() {
 function loadCache() {
   try {
     const c = JSON.parse(readFileSync(cacheFile, "utf8"));
-    return { convs: c.convs || {}, team: c.team, ...(c.identity ? { identity: c.identity } : {}) };
-  } catch { return { convs: {}, team: undefined }; }
+    return { convs: c.convs || {}, team: c.team, ...(c.identity ? { identity: c.identity } : {}), threads: c.threads && typeof c.threads === "object" ? c.threads : {} };
+  } catch { return { convs: {}, team: undefined, threads: {} }; }
 }
 function saveCache(c) {
   const now = Date.now();
   for (const [k, v] of Object.entries(c.convs)) if (!v || now - Date.parse(v.at) >= cacheMs) delete c.convs[k];
   if (c.identity && !(now - Date.parse(c.identity.at) < cacheMs)) delete c.identity;
+  for (const [k, v] of Object.entries(c.threads || {})) if (!v || !(now - Date.parse(v.at) < THREAD_CACHE_MS)) delete c.threads[k];
+  if (c.threads && Object.keys(c.threads).length === 0) delete c.threads;
   try {
     mkdirSync(dirname(cacheFile), { recursive: true });
     const tmp = `${cacheFile}.${process.pid}.tmp`;
@@ -348,6 +370,137 @@ function decide(conv, cache) {
   return { class: "internal", why: `not shared; all ${a.checked} members are full members` };
 }
 
+// ------------------------------------------------------------------------------- the loop guard
+
+const mentions = (text, user) => String(text || "").includes(`<@${user}>`);
+const mentionsOperator = (text) => [...operators].some((u) => mentions(text, u));
+
+/**
+ * Who wrote one message of a thread, as the listener sorts senders: "s" the bot ("sa" when it
+ * @mentions an operator), "p:<name>" a peer, "h" a person (no bot_id, or an operator through an
+ * app), "o" any other app. Never the text.
+ */
+function senderKind(m) {
+  const user = typeof m.user === "string" ? m.user : "";
+  const own = () => (mentionsOperator(m.text) ? "sa" : "s");
+  if (slack.bot_user && user === String(slack.bot_user)) return own();
+  const peer = user ? peers.find((p) => p.user === user) : peers.find((p) => p.botId && p.botId === m.bot_id);
+  if (peer) return `p:${peer.name}`;
+  const app = Boolean(m.bot_id) || m.subtype === "bot_message";
+  if (!app) return "h";
+  if (user && m.subtype !== "bot_message" && operators.has(user)) return "h";
+  if (!user && slack.bot_id && m.bot_id === String(slack.bot_id)) return own();
+  return "o";
+}
+
+/** One page of conversations.replies with the post token. */
+async function repliesPage(conv, ts, cursor) {
+  if (token === undefined) token = postToken();
+  const body = new URLSearchParams({ channel: conv, ts, limit: "200", ...(cursor ? { cursor } : {}) }).toString();
+  let res;
+  try {
+    res = await fetch("https://slack.com/api/conversations.replies", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
+      body,
+      signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
+    });
+  } catch (e) {
+    throw new Error(`conversations.replies: ${e.name === "TimeoutError" ? "timed out" : e.message}`);
+  }
+  let j;
+  try { j = await res.json(); } catch { throw new Error(`conversations.replies: HTTP ${res.status}, not JSON`); }
+  if (!j || j.ok !== true || !Array.isArray(j.messages)) throw new Error(`conversations.replies: ${(j && j.error) || `HTTP ${res.status}`}`);
+  return j;
+}
+
+/** The thread's senders in order, oldest first, cached for a few seconds. Throws when unreadable. */
+async function threadSenders(conv, ts) {
+  const key = `${conv}:${ts}`;
+  const cache = loadCache();
+  const c = cache.threads[key];
+  if (c && Date.now() - Date.parse(c.at) < THREAD_CACHE_MS && Array.isArray(c.senders)) return c.senders;
+  const senders = [];
+  let cursor = "";
+  for (let page = 0; ; page++) {
+    if (page >= THREAD_MAX_PAGES) throw new Error(`the thread has more than ${THREAD_MAX_PAGES * 200} messages`);
+    const j = await repliesPage(conv, ts, cursor);
+    for (const m of j.messages) senders.push(senderKind(m));
+    cursor = j.response_metadata && j.response_metadata.next_cursor ? String(j.response_metadata.next_cursor) : "";
+    if (!j.has_more || !cursor) break;
+  }
+  cache.threads[key] = { at: new Date().toISOString(), senders };
+  saveCache(cache);
+  return senders;
+}
+
+/** After a post into a guarded thread: the cached thread gets the bot's message, so a burst counts right. */
+function rememberOwnPost(conv, ts, kind) {
+  const cache = loadCache();
+  const c = cache.threads[`${conv}:${ts}`];
+  if (!c || !Array.isArray(c.senders)) return;
+  c.senders.push(kind);
+  saveCache(cache);
+}
+
+/** This bot's posts that involved a peer, in this channel, in the last hour, from the decision log. */
+function peerPostsLastHour(conv) {
+  const p = inRepo(slack.post_log || "logs/slack-posts.jsonl");
+  if (!p) return 0;
+  let text = "";
+  try { text = readFileSync(p, "utf8"); } catch { return 0; }
+  const since = Date.now() - 3600000;
+  let n = 0;
+  for (const line of text.split("\n")) {
+    if (!line.includes('"peer"')) continue;
+    try { const l = JSON.parse(line); if (l.conv === conv && l.posted === true && l.peer && Date.parse(l.at) > since) n++; } catch { /* skip */ }
+  }
+  return n;
+}
+
+/**
+ * The loop guard. null when the destination is not one of the peers' channels or the thread
+ * involves no peer: posted as before. Otherwise {peer, kind} to post with, or {refuse} with
+ * {peer_guard, error, next, peer?}.
+ */
+async function peerGuard(conv, reply, text) {
+  if (!peers.length || !peers.some((p) => p.channels.includes(conv))) return null;
+  let senders = [];
+  if (reply) {
+    try { senders = await threadSenders(conv, reply); } catch (e) {
+      return { refuse: { peer_guard: "unreadable", error: `could not read the thread to count turns between bots: ${e.message}; nothing posted`, next: "try again shortly, or ask the operator" } };
+    }
+  }
+  const involved = [...new Set([
+    ...senders.filter((k) => k.startsWith("p:")).map((k) => k.slice(2)),
+    ...peers.filter((p) => mentions(text, p.user)).map((p) => p.name),
+  ])];
+  if (!involved.length) return null;
+  const peer = involved.join(",");
+  const asks = mentionsOperator(text);
+  let run = 0, peerInRun = false, askedInRun = false;
+  for (let i = senders.length - 1; i >= 0; i--) {
+    const k = senders[i];
+    if (k === "h") break;
+    if (k === "o") continue;
+    run++;
+    if (k.startsWith("p:")) peerInRun = true;
+    if (k === "sa") askedInRun = true;
+  }
+  if (peerInRun && run >= peerTurns && !(asks && !askedInRun)) {
+    return { refuse: {
+      peer_guard: "turns", peer,
+      error: `${run} turns between bots with no person; ask the operator`,
+      next: askedInRun ? "you already asked the operator in this thread; wait for a person to answer there" : "post once in this thread with an @mention of an operator, or wait for a person to answer",
+    } };
+  }
+  const n = peerPostsLastHour(conv);
+  if (n >= peerPerHour) {
+    return { refuse: { peer_guard: "hourly", peer, error: `${n} posts to peers in ${conv} in the last hour; ask the operator`, next: "wait, or ask the operator" } };
+  }
+  return { peer, kind: asks ? "sa" : "s" };
+}
+
 // ------------------------------------------------------------------------------- the screen
 
 /** The policy text for a class, or null when the class is not screened. Throws on a bad setting. */
@@ -476,6 +629,14 @@ async function cmdPost(args) {
   const c = await classify(conv);
   const base = { at: new Date().toISOString(), conv, ...(reply ? { reply_to: reply } : {}), class: c.class, why: c.why, draft_sha256: createHash("sha256").update(text).digest("hex"), ...(dry ? { dry_run: true } : {}) };
 
+  const guard = await peerGuard(conv, reply, text);
+  if (guard && guard.refuse) {
+    const g = guard.refuse;
+    logDecision({ ...base, screen: "skipped", ...(g.peer ? { peer: g.peer } : {}), peer_guard: g.peer_guard, error: g.error, posted: false });
+    emit({ posted: false, conv, class: c.class, why: c.why, screen: "skipped", ...g }, EXIT.peerGuard);
+  }
+  if (guard) base.peer = guard.peer;
+
   let screen;
   try { screen = screenFor(c.class); } catch (e) {
     logDecision({ ...base, screen: "error", error: e.message, posted: false });
@@ -513,7 +674,8 @@ async function cmdPost(args) {
     emit({ posted: false, conv, class: c.class, why: c.why, screen: verdict, error: sent.error }, EXIT.slack);
   }
   logDecision({ ...base, screen: verdict, posted: true, ...(sent.ts ? { ts: sent.ts } : {}) });
-  emit({ posted: true, conv, ...(sent.ts ? { ts: sent.ts } : {}), class: c.class, why: c.why, screen: verdict }, EXIT.ok);
+  if (guard && reply) rememberOwnPost(conv, reply, guard.kind);
+  emit({ posted: true, conv, ...(sent.ts ? { ts: sent.ts } : {}), class: c.class, why: c.why, screen: verdict, ...(guard ? { peer: guard.peer } : {}) }, EXIT.ok);
 }
 
 async function cmdClassify(args) {
@@ -561,9 +723,39 @@ async function cmdIdentityCheck() {
   process.exit(1);
 }
 
+/**
+ * One status row for the bot's membership in the peers' channels, from `slack-axi audience`'s
+ * is_member: `ok`, `differs` (not a member somewhere) or `missing <detail>` (could not tell).
+ */
+function cmdPeersCheck() {
+  const chans = [...new Set(peers.flatMap((p) => p.channels).filter((ch) => /^[CG][A-Z0-9]{2,}$/.test(ch)))];
+  const inside = [], outside = [], unknown = [];
+  for (const ch of chans) {
+    try {
+      const r = axi(["audience", ch, "--max-members", "1", ...teamArgs]);
+      if (r.error) throw new Error(r.error.code === "ETIMEDOUT" ? "timed out" : r.error.message.split("\n")[0]);
+      const err = firstError(r.out);
+      if (r.code !== 0 || err) throw new Error(err || `slack-axi audience exited ${r.code}`);
+      const m = parseAudience(r.out).conversation.is_member;
+      if (m === true) inside.push(ch);
+      else if (m === false) outside.push(ch);
+      else unknown.push(`${ch} (no is_member)`);
+    } catch (e) { unknown.push(`${ch} (${e.message})`); }
+  }
+  const parts = [];
+  if (outside.length) parts.push(`not a member of ${outside.join(", ")}`);
+  if (unknown.length) parts.push(`could not tell for ${unknown.join(", ")}`);
+  if (inside.length) parts.push(`a member of ${inside.join(", ")}`);
+  if (outside.length) { console.log(`differs ${parts.join("; ")}`); process.exit(1); }
+  if (unknown.length) { console.log(`missing ${parts.join("; ")}`); process.exit(1); }
+  console.log(`ok ${parts.join("; ") || "no channels"}`);
+  process.exit(0);
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
 if (cmd === "post") await cmdPost(rest);
 else if (cmd === "classify") await cmdClassify(rest);
 else if (cmd === "screen-check") cmdScreenCheck();
 else if (cmd === "identity-check") await cmdIdentityCheck();
+else if (cmd === "peers-check") cmdPeersCheck();
 else usage(`unknown command: ${cmd ?? "(none)"}`);

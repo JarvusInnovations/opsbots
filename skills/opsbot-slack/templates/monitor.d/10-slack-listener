@@ -21,6 +21,11 @@
 // app posting with an operator's own user token (streams.slack.operators, or anyone but the bot
 // in escalate_dm) is heard exactly like the operator typing. Any other bot is dropped, so two
 // bots never answer each other forever.
+// A peer (streams.slack.peers: another bot the same operator runs) is the one bounded exception:
+// heard only in its own channels, and only on an @mention of this bot or in a thread this bot is
+// in. Its item carries from_peer, gets peer_receipt_emoji (default robot_face), passes
+// listen_to and is never intercepted. Every other peer message is dropped with a journal line.
+// The post command, not this, stops a run of bot turns (peer_turns, peer_posts_per_hour).
 // Three optional steps run on a kept event before it is recorded, in this order:
 //   - listen_to "operators" drops anyone else's event: no record, no reaction, no wake, one
 //     journal line of ids (the sender gets no signal);
@@ -49,7 +54,9 @@
 //     "intercept": [{ "prefix": "+ ", "command": ["bin/capture"], "kinds": ["dm"], "timeout_seconds": 30 }],
 //     "intercept_emoji": "white_check_mark", "intercept_failed_emoji": "warning",
 //     "files": { "save": false, "dir": ".scratch/slack-files", "max_bytes": 26214400,
-//                "types": ["image/*", "application/pdf", "text/*"] }
+//                "types": ["image/*", "application/pdf", "text/*"] },
+//     "peers": [{ "name": "<label>", "user": "<peer bot's user id>", "bot_id": "<optional>", "channels": ["C..."] }],
+//     "peer_receipt_emoji": "robot_face", "peer_turns": 6, "peer_posts_per_hour": 20
 //   } }
 import { execFile, spawn } from "node:child_process";
 import { accessSync, appendFileSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -63,6 +70,42 @@ export const expandHome = (p) => (p && p.startsWith("~") ? join(homedir(), p.sli
 export const FILE_TYPES = ["image/*", "application/pdf", "text/*"];
 export const FILE_MAX_BYTES = 26214400;
 const INTERCEPT_KINDS = ["dm", "mention", "reply"];
+const USER_ID = /^[UW][A-Z0-9]{2,}$/;
+const BOT_ID = /^B[A-Z0-9]{2,}$/;
+const CHANNEL_ID = /^[CG][A-Z0-9]{2,}$/;
+
+/**
+ * The usable peers, each `{name, user, botId, channels}`, and one problem line per peer that
+ * cannot be used: no name or a repeated one, no user, a user that is the bot or an operator, a
+ * bot id that is the bot's own, no channels or a channel that is not C… or G…. Pure.
+ */
+export function peerList(raw, { botUser = "", botId = "", operators = [] } = {}) {
+  const peers = [], problems = [];
+  if (raw === undefined || raw === null) return { peers, problems };
+  if (!Array.isArray(raw)) return { peers, problems: ["peers must be a list"] };
+  const names = new Set();
+  raw.forEach((p, i) => {
+    const label = p && typeof p === "object" && typeof p.name === "string" && p.name ? p.name : `peer ${i + 1}`;
+    const bad = (m) => { problems.push(`${label}: ${m}`); };
+    if (!p || typeof p !== "object" || Array.isArray(p)) return bad("not an object");
+    if (typeof p.name !== "string" || !p.name.trim()) return bad("name must be a non-empty string");
+    if (names.has(p.name)) return bad("name is used twice");
+    names.add(p.name);
+    if (typeof p.user !== "string" || !USER_ID.test(p.user)) return bad("user must be the peer bot's user id (U...)");
+    if (botUser && p.user === botUser) return bad("user is this bot's own bot_user");
+    if (operators.includes(p.user)) return bad("user is an operator; a peer is never an operator");
+    if (p.bot_id !== undefined && (typeof p.bot_id !== "string" || !BOT_ID.test(p.bot_id))) return bad("bot_id must be a bot id (B...)");
+    if (botId && p.bot_id === botId) return bad("bot_id is this bot's own");
+    if (!Array.isArray(p.channels) || p.channels.length === 0) return bad("channels must list at least one channel id");
+    const off = p.channels.filter((c) => typeof c !== "string" || !CHANNEL_ID.test(c));
+    if (off.length) return bad(`channels must be channel ids (C... or G...), never a DM: ${off.map(String).join(", ")}`);
+    peers.push({ name: p.name, user: p.user, botId: p.bot_id || "", channels: [...p.channels] });
+  });
+  return { peers, problems };
+}
+
+/** A positive whole number, else the default. Pure. */
+const positiveInt = (v, d) => (Number.isInteger(Number(v)) && Number(v) > 0 && v !== null && v !== "" && typeof v !== "boolean" ? Number(v) : d);
 
 /** Every value the listener reads from opsbot.json, with its default. */
 export function settings(cfg) {
@@ -85,6 +128,10 @@ export function settings(cfg) {
     intercept: s.intercept,
     interceptEmoji: s.intercept_emoji || "white_check_mark",
     interceptFailedEmoji: s.intercept_failed_emoji || "warning",
+    peers: peerList(s.peers, { botUser: s.bot_user || "", botId: s.bot_id || "", operators: Array.isArray(s.operators) ? s.operators.map(String) : [] }).peers,
+    peerReceiptEmoji: s.peer_receipt_emoji || "robot_face",
+    peerTurns: positiveInt(s.peer_turns, 6),
+    peerPostsPerHour: positiveInt(s.peer_posts_per_hour, 20),
     files: {
       save: f.save === true,
       dir: expandHome(typeof f.dir === "string" && f.dir ? f.dir : ".scratch/slack-files"),
@@ -105,16 +152,26 @@ const kindOf = (conv) => (String(conv || "").startsWith("D") ? "dm" : "group");
 /** A channel or private channel: where a thread reply needs a reason to be kept. */
 const isChannel = (e) => e.channel_type === "channel" || e.channel_type === "group";
 
+/** The configured peer that sent this event: by its user, or by its bot id on a post with no user. Pure. */
+export function peerOf(event, peers = []) {
+  if (!event || typeof event !== "object" || !peers.length) return null;
+  const user = typeof event.user === "string" ? event.user : "";
+  if (user) return peers.find((p) => p.user === user) || null;
+  return (event.bot_id && peers.find((p) => p.botId && p.botId === event.bot_id)) || null;
+}
+
 /**
  * Who sent an event, for the rule on bot_id: "self" (the bot, by user, or by its own bot id on a
- * post with no user), "person" (no bot_id, no bot_message subtype), "operator" (a bot_id on a
- * post whose user is an operator, or anyone but the bot in escalate_dm: an app posting with the
- * operator's own user token), or "bot" (any other bot_id). Pure.
+ * post with no user), "peer" (a configured peer bot, by user or by bot id with no user),
+ * "person" (no bot_id, no bot_message subtype), "operator" (a bot_id on a post whose user is an
+ * operator, or anyone but the bot in escalate_dm: an app posting with the operator's own user
+ * token), or "bot" (any other bot_id). Pure.
  */
-export function sender(event, { botUser = "", botIds = [], operators = [], escalateDm = "" } = {}) {
+export function sender(event, { botUser = "", botIds = [], operators = [], escalateDm = "", peers = [] } = {}) {
   if (!event || typeof event !== "object") return "person";
   const user = typeof event.user === "string" ? event.user : "";
   if (botUser && user === botUser) return "self";
+  if (peerOf(event, peers)) return "peer";
   const app = Boolean(event.bot_id) || event.subtype === "bot_message";
   if (!app) return "person";
   // A bot_message has no user (Slack's reference), so it is never an operator's.
@@ -137,7 +194,7 @@ export const OWN_ROOT_DAYS = 90;
  * with a bot_id is kept only when an operator wrote it (see sender()); then it is treated
  * exactly like the operator's own. Pure: no file, no network.
  */
-export function classify(event, { botUser = "", botIds = [], operators = [], escalateDm = "", inMyThread = () => false } = {}) {
+export function classify(event, { botUser = "", botIds = [], operators = [], escalateDm = "", peers = [], inMyThread = () => false } = {}) {
   if (!event || typeof event !== "object") return null;
   if (event.type === "team_join") {
     const u = event.user || {};
@@ -147,8 +204,9 @@ export function classify(event, { botUser = "", botIds = [], operators = [], esc
     const ts = event.event_ts || String(Date.now() / 1000);
     return { key: `slack:team_join:${id}`, at: tsToIso(ts), event: "team_join", kind: "group", from: id, text: `joined the workspace${name ? `: ${name}` : ""}`, ts };
   }
-  const who = sender(event, { botUser, botIds, operators, escalateDm });
+  const who = sender(event, { botUser, botIds, operators, escalateDm, peers });
   if (who === "self" || who === "bot") return null;
+  if (who === "peer") return peerItem(event, { botUser, peers, inMyThread });
   let item = null;
   if (event.type === "app_mention") {
     item = { kind: kindOf(event.channel), conv: event.channel, from: event.user, text: event.text || "", ts: event.ts, thread_ts: event.thread_ts || null };
@@ -167,6 +225,53 @@ export function classify(event, { botUser = "", botIds = [], operators = [], esc
   const key = `slack:${item.conv}:${item.ts}:${item.reaction ? `${item.reaction}:${item.from}` : "msg"}`;
   const files = item.reaction ? null : fileMeta(event);
   return { key, at: tsToIso(item.ts), event: event.type, ...item, ...(files ? { files } : {}) };
+}
+
+/**
+ * Why a peer's event is not kept, or null when it is: never a DM or a reaction, only in the
+ * peer's own channels, and only an @mention of the bot or a reply in a thread the bot is in. Pure.
+ */
+export function peerSkip(event, { botUser = "", peers = [], inMyThread = () => false } = {}) {
+  const peer = peerOf(event, peers);
+  if (!peer) return "not a peer";
+  if (event.type !== "message" && event.type !== "app_mention") return event.type === "reaction_added" ? "reaction" : "not a message";
+  const conv = String(event.channel || "");
+  if (event.channel_type === "im" || event.channel_type === "mpim" || conv.startsWith("D")) return "dm";
+  if (!peer.channels.includes(conv)) return "not its channel";
+  if (event.type === "message" && !plainMessage(event) && event.subtype !== "bot_message") return "not a message";
+  const mentions = Boolean(botUser) && (event.type === "app_mention" || String(event.text || "").includes(`<@${botUser}>`));
+  const threaded = Boolean(event.thread_ts) && event.thread_ts !== event.ts;
+  const inThread = threaded && ((botUser && event.parent_user_id === botUser) || inMyThread(conv, event.thread_ts));
+  if (!mentions && !inThread) return "no mention or thread";
+  return null;
+}
+
+/** The line to record for a peer's event, or null (see peerSkip). Marked with from_peer. Pure. */
+export function peerItem(event, ids = {}) {
+  if (peerSkip(event, ids)) return null;
+  const peer = peerOf(event, ids.peers);
+  const item = { kind: "group", conv: event.channel, from: event.user || peer.user, text: event.text || "", ts: event.ts, thread_ts: event.thread_ts || null };
+  if (!item.ts) return null;
+  const files = fileMeta(event);
+  return { key: `slack:${item.conv}:${item.ts}:msg`, at: tsToIso(item.ts), event: event.type, ...item, ...(files ? { files } : {}), from_peer: peer.name };
+}
+
+/** The journal line for a peer's event that was not kept: ids and why, never the text. Pure. */
+export function droppedPeer(event, ids = {}) {
+  const why = peerSkip(event, ids);
+  if (!why || why === "not a peer" || why === "not a message") return null;
+  const peer = peerOf(event, ids.peers);
+  const conv = event.channel || (event.item && event.item.channel) || "-";
+  return ["dropped peer", conv, peer.name, why].join(" ");
+}
+
+/** Whether `lines` (the events file) already hold this key. */
+export function keyRecorded(lines, key) {
+  for (const line of lines.split("\n")) {
+    if (!line.includes(key)) continue;
+    try { if (JSON.parse(line).key === key) return true; } catch { /* skip */ }
+  }
+  return false;
 }
 
 /**
@@ -206,6 +311,8 @@ export function listenKind(item) {
 export function heard(item, { listenTo = "anyone", operators = [], escalateDm = "" } = {}) {
   if (listenTo !== "operators") return true;
   if (!item || item.event === "team_join") return false;
+  // The peer list is a second, explicit allow-list.
+  if (item.from_peer) return true;
   if (item.from && operators.includes(item.from)) return true;
   return Boolean(escalateDm) && item.conv === escalateDm;
 }
@@ -253,7 +360,7 @@ export function interceptRules(raw, root) {
  * matches exactly, case-sensitive. Pure.
  */
 export function matchIntercept(item, rules, botUser = "") {
-  if (!item || item.reaction || (item.event !== "message" && item.event !== "app_mention")) return null;
+  if (!item || item.from_peer || item.reaction || (item.event !== "message" && item.event !== "app_mention")) return null;
   const kind = listenKind(item);
   let text = String(item.text || "").replace(/^\s+/, "");
   if (kind === "mention" && botUser && text.startsWith(`<@${botUser}>`)) text = text.slice(botUser.length + 3).replace(/^\s+/, "");
@@ -315,9 +422,9 @@ export function threadIsMine(lines, conv, threadTs) {
  * null. Its replies are not roots: a thread the bot only answered in counts through a mention.
  * Pure.
  */
-export function ownRoot(event, { botUser = "", botIds = [], operators = [], escalateDm = "" } = {}) {
+export function ownRoot(event, { botUser = "", botIds = [], operators = [], escalateDm = "", peers = [] } = {}) {
   if (!event || event.type !== "message" || !botUser || !isChannel(event)) return null;
-  if (sender(event, { botUser, botIds, operators, escalateDm }) !== "self") return null;
+  if (sender(event, { botUser, botIds, operators, escalateDm, peers }) !== "self") return null;
   if (event.subtype && event.subtype !== "file_share" && event.subtype !== "bot_message") return null;
   if (!event.channel || !event.ts || (event.thread_ts && event.thread_ts !== event.ts)) return null;
   return { conv: event.channel, ts: event.ts };
@@ -391,6 +498,15 @@ export function checkRows(cfg, root) {
     if (problems.length) rows.push(`differs intercept ${problems.join("; ")}`);
     else rows.push(`ok intercept ${rules.length} rule${rules.length === 1 ? "" : "s"}; ${who}`);
   }
+  if (raw.peers !== undefined || raw.peer_turns !== undefined || raw.peer_posts_per_hour !== undefined) {
+    const { peers, problems } = peerList(raw.peers, { botUser: s.botUser, botId: s.botId, operators: s.operators });
+    for (const k of ["peer_turns", "peer_posts_per_hour"]) {
+      if (raw[k] !== undefined && positiveInt(raw[k], 0) === 0) problems.push(`${k} must be a positive whole number; using ${k === "peer_turns" ? 6 : 20}`);
+    }
+    if (raw.peers !== undefined && peers.length === 0 && problems.length === 0) problems.push("peers is an empty list");
+    if (problems.length) rows.push(`differs peers ${problems.join("; ")}`);
+    else if (peers.length) rows.push(`ok peers ${peers.map((p) => `${p.name} (${p.user}) in ${p.channels.join(", ")}`).join("; ")}; at most ${s.peerTurns} turns between bots, ${s.peerPostsPerHour} posts to peers an hour a channel`);
+  }
   if (raw.files !== undefined) {
     const f = raw.files;
     const problems = [];
@@ -435,6 +551,8 @@ function main() {
   if (rawListen !== undefined && rawListen !== "operators" && rawListen !== "anyone") log("!", `streams.slack.listen_to ${JSON.stringify(rawListen)} is neither "operators" nor "anyone"; listening to anyone`);
   if (s.listenTo === "operators" && s.operators.length === 0 && !s.escalateDm) log("!", "listen_to is operators, but neither operators nor escalate_dm is set: every event will be dropped");
   for (const p of ruleProblems) log("!", "intercept", p, "(this rule never matches)");
+  const rawSlack = (cfg.streams && cfg.streams.slack) || {};
+  for (const p of peerList(rawSlack.peers, { botUser: s.botUser, botId: s.botId, operators: s.operators }).problems) log("!", "peers", p, "(never heard)");
   mkdirSync(dirname(s.eventsFile), { recursive: true });
   // Created on start, so the reader can tell "no events yet" from "the listener never ran".
   closeSync(openSync(s.eventsFile, "a"));
@@ -547,7 +665,7 @@ function main() {
 
   // The bot's own bot id: the setting, else learned from the first message bot_user posts.
   const botIds = s.botId ? [s.botId] : [];
-  const ids = () => ({ botUser: s.botUser, botIds, operators: s.operators, escalateDm: s.escalateDm });
+  const ids = () => ({ botUser: s.botUser, botIds, operators: s.operators, escalateDm: s.escalateDm, peers: s.peers });
 
   async function handle(event) {
     log(describe(event));
@@ -563,10 +681,12 @@ function main() {
     const inMyThread = (c, t) => rootIsMine(readRoots(), c, t) || threadIsMine(readEvents(), c, t);
     const item = classify(event, { ...ids(), inMyThread });
     if (!item) {
-      const dropped = droppedAppPost(event, ids());
+      const dropped = droppedPeer(event, { ...ids(), inMyThread }) || droppedAppPost(event, ids());
       if (dropped) log(dropped);
       return;
     }
+    // A peer's @mention can arrive twice (app_mention and the channel message): record it once.
+    if (item.from_peer && keyRecorded(readEvents(), item.key)) { log("peer message already recorded", item.key); return; }
     if (!heard(item, s)) { log(droppedNonOperator(item)); return; }
     if (item.files && s.files.save) await saveFiles(item);
     const hit = matchIntercept(item, rules, s.botUser);
@@ -582,10 +702,10 @@ function main() {
       await run(axi, ["react", item.conv, item.ts, `:${s.interceptFailedEmoji}:`, ...teamArgs]);
     }
     appendFileSync(s.eventsFile, JSON.stringify({ ...item, recorded_at: new Date().toISOString() }) + "\n");
-    log("recorded", item.event, item.kind, item.conv || "", item.from || "");
+    log("recorded", item.event, item.kind, item.conv || "", item.from || "", ...(item.from_peer ? [`peer ${item.from_peer}`] : []));
     const message = item.event === "app_mention" || item.event === "message";
     if (message) {
-      await run(axi, ["react", item.conv, item.ts, `:${s.receiptEmoji}:`, ...teamArgs]);
+      await run(axi, ["react", item.conv, item.ts, `:${item.from_peer ? s.peerReceiptEmoji : s.receiptEmoji}:`, ...teamArgs]);
       ackWhenSeen(item.conv, item.ts, item.key).catch((e) => log("!", "ack:", e.message));
     }
     wake(item.key, `slack ${item.event} from ${item.from}${item.conv ? ` in ${item.conv}` : ""}`).catch((e) => log("!", "wake:", e.message));
