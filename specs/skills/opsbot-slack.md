@@ -37,7 +37,7 @@ Outside the repo, on the bot's user:
 | slack-axi's own store | the bot token (`xoxb-`), set by `slack-axi auth login` |
 | `~/.cache/<bot>/slack-events.jsonl` | the events file: the listener appends, the reader reads, the session's monitor wakes on it |
 | `slack-own-threads.jsonl`, beside the events file | the bot's own top-level channel posts, remembered as thread roots: one `{conv, ts, recorded_at}` line each, written and read by the listener only, never items, never in `wake.files` |
-| `slack-classes.json`, beside the events file | the post command's cache: `{team, convs: {<conv>: {class, why, at}}, identity?: {token, user, name, team, at}}`; `identity.token` is the first 16 hex characters of the SHA-256 of the token, never the token; a failed lookup is never cached; never in `wake.files` |
+| `slack-classes.json`, beside the events file | the post command's cache: `{team, convs: {<conv>: {class, why, at}}, identity?: {token, user, name, team, at}, threads?: {<conv>:<ts>: {at, senders}}}`; `identity.token` is the first 16 hex characters of the SHA-256 of the token, never the token; `threads` holds who wrote each message of a thread with a peer in it ([Peer bots](#peer-bots)), never the text; a failed lookup is never cached; never in `wake.files` |
 
 In the repo:
 
@@ -71,6 +71,10 @@ In the repo:
 | `intercept_emoji` | the reaction on a message a command took | `white_check_mark` |
 | `intercept_failed_emoji` | the reaction on a message whose command failed; it is then recorded as usual | `warning` |
 | `files` | whether and how the listener saves a kept message's files ([Files](#files)) | unset: metadata only, nothing saved |
+| `peers` | other bots this bot hears, each only in its own channels ([Peer bots](#peer-bots)) | none: every other bot is dropped |
+| `peer_receipt_emoji` | the listener's reaction on arrival of a peer's message | `robot_face` |
+| `peer_turns` | the most messages in a row between bots, with no person between, before the post command refuses another | `6` |
+| `peer_posts_per_hour` | the most posts this bot makes to peers in one channel in an hour | `20` |
 
 `OPSBOT_SLACK_AXI` in the environment names another slack-axi binary for every piece.
 
@@ -92,7 +96,8 @@ A reply that @mentions the bot is left to its `app_mention` event. A thread the 
 replied in, with no mention and not rooted on its own post, does not count, so a busy thread it
 answered once stays quiet. The bot's own messages, by `bot_user` or by its own `bot_id`, are
 never items. A message carrying any other `bot_id` is dropped unless an operator wrote it
-([Posts through an app](#posts-through-an-app)). Its own top-level post in a
+([Posts through an app](#posts-through-an-app)) or a peer wrote it where the bot hears that
+peer ([Peer bots](#peer-bots)). Its own top-level post in a
 channel or private channel (no `thread_ts`, or `thread_ts` equal to `ts`; no subtype other than
 `file_share` or `bot_message`) is appended to the own-threads file and nothing else is done
 with it; its replies are not roots. On each append, roots whose `ts` is more than 90 days old
@@ -106,9 +111,10 @@ when `files.save` is on ([Files](#files)); an `intercept` rule may hand it to a 
 
 Each recorded event is one line in `events_file`:
 `{key, at, event, kind, conv, from, text, ts, thread_ts, reaction?, files?, intercept?,
-recorded_at}`, keyed `slack:<conv>:<ts>:msg`, `slack:<conv>:<ts>:<emoji>:<user>` or
-`slack:team_join:<user>`. `files` appears only on a message that carries files. On a message
-it reacts `receipt_emoji`. It runs `$OPSBOT_CORE nudge --now --reason …`, again every
+from_peer?, recorded_at}`, keyed `slack:<conv>:<ts>:msg`, `slack:<conv>:<ts>:<emoji>:<user>` or
+`slack:team_join:<user>`. `files` appears only on a message that carries files; `from_peer`
+only on a peer's message. On a message it reacts `receipt_emoji`, or `peer_receipt_emoji` on
+a peer's. It runs `$OPSBOT_CORE nudge --now --reason …`, again every
 10 seconds while the nudge reports the agent busy, until it wakes, the key is seen, or
 `ack_timeout_minutes` pass. It reacts `ack_emoji` only once the key is in `logs/intake/seen`.
 It logs one line for every event it receives, kept or not. It reconnects with backoff (5 s,
@@ -118,8 +124,10 @@ is missing, readable by others, or not `xapp-`.
 **`heartbeat.d/20-slack-events`.** Prints one item per line recorded at or after `OPSBOT_SINCE`
 less `lookback_minutes`, by `recorded_at`:
 `{key, at, conv, kind, from, text, ts, thread_ts?, reply?, event, reaction?, files?,
-intercept?, from_slack?, from_note?, thread?, …lookup}`. `kind` is `dm` or `group`. `files` and
-`intercept` are the recorded line's, as the listener wrote them. `reply` is
+intercept?, from_peer?, peer_note?, gate_word_void?, from_slack?, from_note?, thread?, …lookup}`.
+`kind` is `dm` or `group`. `files`, `intercept` and `from_peer` are the recorded line's, as the
+listener wrote them; a peer's item also carries `peer_note` and `gate_word_void`
+([Peer bots](#peer-bots)). `reply` is
 `<conv> --reply <thread_ts or ts>`, the arguments `opsbot-slack post` takes before the text.
 `from_slack` is the row `slack-axi user` returns, without its id; `from_note` replaces it when
 the sender cannot be resolved. `thread` is `{n, parent, last_mine, full}` from
@@ -151,26 +159,29 @@ is theirs, and the message also carries the app's `bot_id`. The listener sorts e
 
 1. **The bot itself, by user**: `user` is `bot_user`. Never an item. Its own top-level
    channel post is only remembered as a root ([the listener](#the-pieces)).
-2. **A person**: no `bot_id` and no `bot_message` subtype. The listener's rules, unchanged.
-3. **An operator through an app**: a `bot_id`, and a `user` that is in `operators`, or any
+2. **A peer**: `user` is a peer's `user`, or there is no `user` and `bot_id` is a peer's
+   `bot_id`. Heard only by the peer rules ([Peer bots](#peer-bots)); never a person, never an
+   operator.
+3. **A person**: no `bot_id` and no `bot_message` subtype. The listener's rules, unchanged.
+4. **An operator through an app**: a `bot_id`, and a `user` that is in `operators`, or any
    `user` other than the bot in the `escalate_dm` conversation. The post command already
    treats that conversation as the operator's DM, and a DM has only two members. Heard exactly
    like a message the operator typed: the DM, mention-thread and own-thread rules all apply,
    and the item's `from` is the operator. This comes before the `bot_id` test below, so an
    operator's post through the bot's own app is still the operator's.
-4. **The bot itself, by bot id**: no `user`, and `bot_id` is the bot's own: `bot_id` in the
+5. **The bot itself, by bot id**: no `user`, and `bot_id` is the bot's own: `bot_id` in the
    settings, else the `bot_id` on the first message the listener hears from `bot_user`. Never
    an item, and remembered as a root like step 1. A post with a `user` that is neither the bot
    nor an operator is never the bot's, whatever its `bot_id`.
-5. **Another bot**: any other `bot_id`: another bot, an integration, a workflow, an app posting
+6. **Another bot**: any other `bot_id`: another bot, an integration, a workflow, an app posting
    as someone who is not an operator. Dropped, with one journal line,
    `dropped app post <conv> <user> <bot_id>`, never the text.
 
 A `bot_message` subtype is never an item. Slack sends it for a classic integration's post, and
 its reference says such a message "has no associated user", so it cannot be an operator's.
-It is dropped as another bot's unless its `bot_id` is the bot's own.
+It is dropped as another bot's unless its `bot_id` is the bot's own or a peer's.
 
-With no `operators` and no `escalate_dm`, step 3 never applies, and the listener keeps exactly
+With no `operators` and no `escalate_dm`, step 4 never applies, and the listener keeps exactly
 what it kept before: every message with a `bot_id` is dropped.
 
 ## Owner-only listening
@@ -185,7 +196,8 @@ With `operators`, an event the listener would keep is kept only when its author 
   The bot's own events are never items, so anyone else in that DM is the operator, the same rule
   as [Posts through an app](#posts-through-an-app).
 
-An operator's post through an app counts, as it does today. Everything else is dropped: another
+An operator's post through an app counts, as it does today. A peer's message the peer rules kept
+counts too ([Peer bots](#peer-bots)). Everything else is dropped: another
 person's DM, @mention, kept thread reply or reaction, and every `team_join` (the new member is
 its author). A dropped event is not recorded, gets no reaction and wakes nothing, so its sender
 gets no signal. It gets one journal line, `dropped non-operator <conv> <user> <kind>`, with
@@ -199,6 +211,100 @@ it without a mention is not kept either.
 `opsbot-slack status` refuses it as `differs` with the fix, and the listener logs the same line
 at start and drops every event. A value other than the two is `differs` too, and the listener
 treats it as `anyone`.
+
+## Peer bots
+
+One operator may run two bots that should work together in a shared channel: one hands a piece
+of work to the other, or the two agree a change to a rule. Every other bot stays dropped,
+because two bots that answer each other never stop. `streams.slack.peers` is the bounded
+exception:
+
+```json
+"peers": [
+  { "name": "deskbot", "user": "U0PEER0001", "bot_id": "B0PEER0001", "channels": ["C0SHARED01"] }
+]
+```
+
+| Key | Meaning | Default |
+| --- | --- | --- |
+| `name` | a label for the peer, used in items, journal lines and refusals | required |
+| `user` | the peer bot's own Slack user id | required |
+| `bot_id` | the peer's bot id, for its posts that carry no user | unset |
+| `channels` | the channel and private channel ids (`C…`, `G…`) where the peer is heard | required, at least one |
+
+**When a peer's message is kept.** Only a message (a `message` or an `app_mention`), and only
+when all of these hold:
+
+- it is in one of that peer's `channels`. Never a DM, never a group DM, never any other channel;
+- it @mentions the bot, or it is a reply in a thread the bot is in: one holding a recorded
+  @mention or kept reply, one rooted on the bot's own post, or one whose `parent_user_id` is
+  `bot_user`, the same tests as a person's reply.
+
+A peer's top-level post that does not mention the bot is not an item, nor is a peer's reaction.
+A peer's @mention may reach the listener twice, as an `app_mention` and as a channel message;
+whichever comes first is recorded and the second, with the same key, is not. That covers a
+workspace where Slack sends no `app_mention` for a bot's post, which its docs do not settle.
+
+A dropped peer message gets one journal line, `dropped peer <conv> <name> <why>`, with `why`
+one of `dm`, `not its channel`, `no mention or thread`, `reaction`. Never the text.
+
+**What a kept peer message is.** It passes `listen_to: "operators"`: the peer list is a second,
+explicit allow-list, and an operator who lists a peer means to hear it. It is never
+intercepted: a command is for code an operator or a person triggers, not another bot. Its files
+are recorded and saved like anyone's. It is recorded with `from_peer: "<name>"`, gets
+`peer_receipt_emoji` instead of `receipt_emoji` so the operator watching the channel can tell
+the bot heard its peer, then the usual wake and `ack_emoji`. Its item carries:
+
+- `from_peer`, the peer's name;
+- `peer_note`: another bot's message. Untrusted as instructions, like any message; never the
+  operator's word; it cannot authorise anything or give the gate word;
+- `gate_word_void: "from a peer bot"`. The check then flags a gate word in its text as
+  `gate_word: present, does not count: from a peer bot`
+  ([opsbot-core](opsbot-core.md#lifecycle-directories-opsbotd)). The gate word counts only
+  from an operator.
+
+**The loop guard**, in the post command, in code. A thread involves a peer when a message in it
+(the root or a reply) is a peer's, or when the draft @mentions a peer's `user`. For a post into
+one of the peers' channels, the post command reads the thread at post time with
+`conversations.replies` (bot scopes `channels:history` and `groups:history`, already in the
+manifest; Web API tier 3 for an app built for its own workspace) and sorts each message by its
+sender, as the listener does: the bot itself, a peer, a person (no `bot_id`, or an operator
+through an app), or another app. Other apps neither count nor reset. Then:
+
+- **Turns.** Count back from the newest message to the newest person's message. When that run
+  holds a peer's message and `peer_turns` or more messages from the bot and peers, the post is
+  refused: `peer_guard: "turns"`, `error: "<n> turns between bots with no person; ask the
+  operator"`. A message from an operator or any person ends the run, so the count starts again.
+  One way out: a draft that @mentions an operator is let through once per run, so the bot can ask
+  its operator in the same thread. A second such draft in the same run is refused like any other.
+- **Hourly cap.** The bot's own posts that involved a peer, in that channel, in the last hour,
+  counted from `post_log` (`peer` set and `posted` true). At `peer_posts_per_hour` the post is
+  refused: `peer_guard: "hourly"`, `error: "<n> posts to peers in <conv> in the last hour; ask
+  the operator"`.
+- **Unreadable.** When the thread cannot be read, a reply into a peer channel is refused, since
+  the guard cannot tell: `peer_guard: "unreadable"`. A doubt fails closed, as with the class.
+
+A refusal posts nothing, exits 6, prints `{posted: false, conv, class, why, screen: "skipped",
+peer_guard, peer?, error, next}`, and logs one line. Both limits apply only when the thread
+involves a peer; a thread with no peer in it, and any conversation outside the peers' channels,
+is posted as before, with no extra read. The thread's senders are cached in
+`slack-classes.json` for 20 seconds, and a post the command makes is added to the cached thread,
+so a burst of posts costs one read.
+
+The command reads the post token for `conversations.replies` itself, as it does for `auth.test`:
+`slack-axi thread` prints names, and the guard needs user and bot ids.
+
+**What peers do not change.** The destination class of a channel: a bot of the workspace was
+already a full member, so a channel with a peer in it is `internal` or `external` by its other
+members, exactly as before. Who is an operator: a peer can never be one. Every other bot and
+app: still dropped.
+
+**Validation.** A peer whose `user` is `bot_user` or in `operators`, whose `bot_id` is the bot's
+own, with no `name` or a name used twice, no `user`, or an empty or missing `channels` list, or a
+channel id that is not `C…` or `G…`, is refused: the listener logs it at start and never hears
+it, and `opsbot-slack status` shows `differs` with the fix. `peer_turns` and
+`peer_posts_per_hour` must be positive whole numbers; otherwise the defaults apply and status
+says so.
 
 ## The intercept
 
@@ -242,7 +348,7 @@ never holds the command's output, which may echo the text. A failed command lose
 sent: the message reaches the session like any other, marked with what failed.
 
 No model is called anywhere on this path. The intercept runs after `listen_to`, so with
-`operators` only an operator can trigger a command. With `anyone`, anyone who can DM the bot can,
+`operators` only an operator can trigger a command. A peer's message is never intercepted. With `anyone`, anyone who can DM the bot can,
 which is why `opsbot-slack status` names who can on the intercept row.
 
 ## Files
@@ -312,13 +418,14 @@ Its first arguments are the reader's `reply` column, whole: `opsbot-slack post <
 1. refuses bad usage: no conversation id (`C…`, `D…` or `G…`), a `--reply` that is not a Slack
    `ts`, an empty text;
 2. classifies the destination (below);
-3. screens the draft when the settings name a policy for that class (below);
-4. checks the posting identity (below), then that slack-axi is in bot mode, then posts through
+3. runs the loop guard when the thread involves a peer ([Peer bots](#peer-bots));
+4. screens the draft when the settings name a policy for that class (below);
+5. checks the posting identity (below), then that slack-axi is in bot mode, then posts through
    `slack-axi draft` and `draft send`;
-5. appends one line to `post_log`, whatever happened at 2 to 4;
-6. prints one JSON object on stdout and exits with its code.
+6. appends one line to `post_log`, whatever happened at 2 to 5;
+7. prints one JSON object on stdout and exits with its code.
 
-`--dry-run` does 1 to 3 and 5, and posts nothing. `opsbot-slack classify <conv>` does step 2
+`--dry-run` does 1 to 4 and 6, and posts nothing. `opsbot-slack classify <conv>` does step 2
 alone and prints `{conv, class, why, cached}`.
 
 The escalation sink still posts to `escalate_dm` through slack-axi itself. It is the kit's own
@@ -347,7 +454,8 @@ blocks strictly: a block or a field it needs that is missing is a failed lookup.
 How the categories count, and why:
 
 - `bots` are full members. A bot of the bot's own workspace was always a full member: its
-  `users.info` has the workspace's `team_id` and no guest flag. A bot from another organization is
+  `users.info` has the workspace's `team_id` and no guest flag. A peer is such a bot, so
+  configuring peers changes no class. A bot from another organization is
   never in `bots`: slack-axi counts it `external`, since which organization can read matters more
   than the account type.
 - `other_workspace` is external. It is a member of a sibling workspace in the same Enterprise
@@ -437,7 +545,8 @@ once. Only a match is cached. With `bot_user` unset there is no check; `status` 
 ### The decision log
 
 One line per attempt in `post_log`: `{at, conv, reply_to?, class, why, screen: "pass" | "block" |
-"error" | "skipped", reason?, error?, draft_sha256, posted, ts?, dry_run?}`. The hash is of the
+"error" | "skipped", reason?, error?, peer?, peer_guard?, draft_sha256, posted, ts?, dry_run?}`.
+`peer` names the peers the thread involves, comma-separated, when it involves one. The hash is of the
 text as given. Never the draft, never the passage.
 
 ### Exit codes
@@ -450,6 +559,7 @@ text as given. Never the draft, never the passage.
 | 3 | the screen blocked it | no |
 | 4 | the screen could not be run or answered badly; the operator told once | no |
 | 5 | the token slack-axi would post with is not `bot_user`'s, or `auth.test` failed | no |
+| 6 | the loop guard refused it: too many turns between bots, the hourly cap to peers, or a peer thread that could not be read | no |
 
 ### Limits
 
@@ -464,8 +574,8 @@ another way (slack-axi directly, the API) goes around both: the bot's allow rule
 | Command | Does | Exit |
 | --- | --- | --- |
 | `install [--dry-run] [--force]` | copies the three scripts into `opsbot.d/`, mode 755; a matching file is left, a differing one is left unless `--force`; prints each file written or left, then the `streams.slack` block and the `wake.files` entry to merge, and the manifest's path. Never writes `opsbot.json` | 0 · 2 |
-| `status` | one row each with `ok`, `missing` or `differs` and the fix: the app-level token file (present, mode 600, `xapp-`), slack-axi signed in in bot mode, slack-axi 1.6.0 or later with the `audience` command (`missing` with the upgrade command otherwise), each of the three scripts present, matching its template and executable, `bot_user` and `escalate_dm` set, the events file in `wake.files`, the unit `opsbot-<bot>-monitor-10-slack-listener.service` active; with `bot_user` set, the posting identity (`auth.test`'s user id and name; `ok` only when it is `bot_user`, else `differs`, or `missing` when no token resolves or `auth.test` fails); with `screen` set, the command executable inside the repo and every policy file present; with `listen_to` set, its value usable (`operators` needs `operators` or `escalate_dm`); with `intercept` set, every rule usable, and who can trigger them; with `files` set, the directory and limits | 0 all ok · 1 something to fix · 2 |
-| `post <conv> [--reply <ts>] [--dry-run] [<markdown> \| -]` | [Posting](#posting-opsbot-slack-post) | 0 · 1 · 2 · 3 · 4 · 5 |
+| `status` | one row each with `ok`, `missing` or `differs` and the fix: the app-level token file (present, mode 600, `xapp-`), slack-axi signed in in bot mode, slack-axi 1.6.0 or later with the `audience` command (`missing` with the upgrade command otherwise), each of the three scripts present, matching its template and executable, `bot_user` and `escalate_dm` set, the events file in `wake.files`, the unit `opsbot-<bot>-monitor-10-slack-listener.service` active; with `bot_user` set, the posting identity (`auth.test`'s user id and name; `ok` only when it is `bot_user`, else `differs`, or `missing` when no token resolves or `auth.test` fails); with `screen` set, the command executable inside the repo and every policy file present; with `listen_to` set, its value usable (`operators` needs `operators` or `escalate_dm`); with `intercept` set, every rule usable, and who can trigger them; with `files` set, the directory and limits; with `peers` set, every peer usable (one row naming each peer and its channels, or `differs` with what is wrong), and the bot's membership in each listed channel from `slack-axi audience`'s `is_member` (`differs` for a channel it is not in, with the invite as the fix; `missing` when it could not be read) | 0 all ok · 1 something to fix · 2 |
+| `post <conv> [--reply <ts>] [--dry-run] [<markdown> \| -]` | [Posting](#posting-opsbot-slack-post) | 0 · 1 · 2 · 3 · 4 · 5 · 6 |
 | `classify <conv>` | the destination class alone, `{conv, class, why, cached}` | 0 · 2 |
 
 Exit 2 is an unknown command or flag, or no `opsbot.json` at the repo root.
@@ -483,7 +593,8 @@ Exit 2 is an unknown command or flag, or no `opsbot.json` at the repo root.
   session's sense of a channel is what a confused or injected session gets wrong.
 - That data is read through `slack-axi audience`, not by calling Slack with a token the kit
   reads. Why: one implementation of who can read a conversation, in the tool that already holds
-  the token; the kit reads the token only where slack-axi has no command (the identity check).
+  the token; the kit reads the token only where slack-axi has no command (the identity check,
+  and the loop guard's thread read, which needs ids that `slack-axi thread` does not print).
 - The screen fails closed and never edits. Why: an error that posts lets the one draft the
   screen was for go out; an edited draft can say something its author did not mean.
 - The listener records only what it keeps and logs every event type it receives. Why: the
@@ -497,6 +608,14 @@ Exit 2 is an unknown command or flag, or no `opsbot.json` at the repo root.
   an app is theirs, though: a bot dropped two replies an operator's assistant posted as the
   operator in a thread the bot was in, while it heard the replies the operator typed, and the
   drop left no trace. So the drop is logged.
+- A peer is heard only in its listed channels, only on a mention or in the bot's thread, and
+  the post command, not the session, stops a run of bot turns. Why: an operator's two bots
+  must hand work to each other in a shared channel, and the one thing that must never happen is
+  the loop the `bot_id` drop exists to prevent. A rule in the pack asks the bot to stop; the
+  count in code is what stops it when the session does not.
+- A peer's word is never the operator's: it passes `listen_to`, but never counts as a gate word,
+  never triggers an intercept, and never authorises anything. Why: a peer is another session
+  that can be confused or injected; its message is data with a sender, like any other.
 - With `listen_to: "operators"` a dropped event gets no reaction at all. Why: a receipt tells
   the sender a session heard them; for a bot that answers one person, that is a promise to
   someone it will never answer. The journal line keeps the drop diagnosable.
