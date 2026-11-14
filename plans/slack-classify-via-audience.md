@@ -1,6 +1,7 @@
 ---
 status: done
 done: 2026-11-14
+pr: 87
 depends: [slack-post-screen, slack-owner-intercept-files]
 upstream-specs:
   - slack-axi:specs/commands/audience.md
