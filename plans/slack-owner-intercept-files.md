@@ -1,6 +1,7 @@
 ---
 status: done
 done: 2026-11-14
+pr: 85
 depends: [opsbot-slack, slack-operator-app-posts]
 issues: [81]
 specs:
