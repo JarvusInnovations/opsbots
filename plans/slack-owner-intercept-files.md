@@ -1,5 +1,6 @@
 ---
-status: in-progress
+status: done
+done: 2026-11-14
 depends: [opsbot-slack, slack-operator-app-posts]
 issues: [81]
 specs:
@@ -62,38 +63,70 @@ Connect conversations, which arrive without type or size and are skipped with th
 
 ## Validation
 
-- [ ] `listen_to` unset or `anyone`: everything kept as before; all existing listener tests pass
+- [x] `listen_to` unset or `anyone`: everything kept as before; all existing listener tests pass
       unchanged.
-- [ ] `listen_to: operators`: an operator's DM, mention, reply and reaction are kept, and anyone's
+- [x] `listen_to: operators`: an operator's DM, mention, reply and reaction are kept, and anyone's
       message or reaction in `escalate_dm`; a non-operator's DM, mention, kept reply, reaction and a
       `team_join` are dropped with one `dropped non-operator <conv> <user> <kind>` line and no text.
-- [ ] The running listener drops a non-operator's DM with no reaction and no line in the events
+- [x] The running listener drops a non-operator's DM with no reaction and no line in the events
       file, and still receipts an operator's.
-- [ ] `status` refuses `listen_to: operators` with no `operators` and no `escalate_dm`, and an
+- [x] `status` refuses `listen_to: operators` with no `operators` and no `escalate_dm`, and an
       unknown value.
-- [ ] Intercept matching: leading whitespace trimmed, a leading mention stripped for `mention`,
+- [x] Intercept matching: leading whitespace trimmed, a leading mention stripped for `mention`,
       exact case-sensitive prefix, first rule wins, kinds respected, reactions never matched, a bad
       rule never matches.
-- [ ] Intercept success, in the running listener: the command gets
+- [x] Intercept success, in the running listener: the command gets
       `{text, conv, ts, thread_ts, user, files}` with the prefix stripped, nothing is recorded,
       the reaction is `intercept_emoji`, no receipt, no nudge, a journal line without the text.
-- [ ] Intercept failure: a non-zero exit and a timeout both record the message with
+- [x] Intercept failure: a non-zero exit and a timeout both record the message with
       `intercept: "failed: …"`, react `intercept_failed_emoji` and the receipt, and wake.
-- [ ] Files: a kept DM's file is saved to `<dir>/<conv>/<ts>/<name>` with `path`; an oversize
+- [x] Files: a kept DM's file is saved to `<dir>/<conv>/<ts>/<name>` with `path`; an oversize
       file and a disallowed type are skipped without a download; a traversal name
       (`../../x`) is saved under a safe name inside `dir`; a failed download is skipped; a
       Slack Connect file is skipped; with `save` off only metadata is recorded.
-- [ ] Files are passed to the intercept command when both are set.
-- [ ] The reader passes `files` and `intercept` through.
-- [ ] Post: an `auth.test` user that is not `bot_user` refuses with exit 5, nothing sent; a
+- [x] Files are passed to the intercept command when both are set.
+- [x] The reader passes `files` and `intercept` through.
+- [x] Post: an `auth.test` user that is not `bot_user` refuses with exit 5, nothing sent; a
       match posts; the match is cached and a changed token is checked again; with `bot_user`
       unset nothing is checked.
-- [ ] `status` shows the identity row: `ok` on a match, `differs` on a mismatch, `missing`
+- [x] `status` shows the identity row: `ok` on a match, `differs` on a mismatch, `missing`
       without a token.
-- [ ] `bun run build`, `bun run type-check`, `bun test` and `bun run check` pass.
+- [x] `bun run build`, `bun run type-check`, `bun test` and `bun run check` pass.
 
 ## Notes
 
+- Slack's docs, read on 2026-11-14: a message event with files carries file objects with `id`,
+  `name`, `mimetype`, `size` and `url_private_download`; in a Slack Connect conversation the
+  object has `file_access: "check_file_info"` and none of those, so such a file is skipped with
+  that reason. `url_private_download` needs `Authorization: Bearer` with a token holding
+  `files:read`. `auth.test` needs no scope and returns `user_id`, `team_id`, `user`, and `bot_id`
+  only for a bot token.
+- Who downloads: the listener, at record time, through `slack-axi download`. The listener holds
+  only the app-level token, and slack-axi already holds the bot token and `files:read`; neither
+  process reads the bot token for this. The reader would have shelled out to slack-axi too, but
+  only at the next check, after the intercept that needs the files.
+- `slack-axi download` writes into `--out` under its own sanitized name. The listener gives it a
+  fresh `.incoming-<id>` directory and takes the one regular file it finds there, so it never
+  trusts a reported path; the final name is the kit's own `safeFileName` of the event's name.
+- The identity check talks to `auth.test` directly: no slack-axi command prints the live
+  token's user id (`doctor` prints a name when it has one, `auth workspaces` the stored one).
+- The token resolver had read `SLACK_AXI_TEAM` without an env token; slack-axi ignores it then.
+  It now follows slack-axi's order exactly, since the identity must be the token slack-axi posts
+  with.
+- One existing test's expectation changed: the "status: everything in place" test now sets up a
+  stored token and a stubbed `auth.test` for the new identity row, and counts 9 rows, not 8. The
+  identity row is on whenever `bot_user` is set, which that test sets; making it opt-in would
+  leave the protection off where it is needed.
+
 ## Follow-ups
 
+- Slack Connect files are never saved: their event has no type or size. Fetching `files.info`
+  first (through `slack-axi file`) would cover them.
+
 ## After this plan
+
+Not part of the validation, since it needs live Slack: on the first bot that takes this
+version, a file sent in a DM is saved and opened by the session; a non-operator's DM to a bot
+with `listen_to: "operators"` shows only its journal line; an intercepted DM gets the success
+reaction and its command runs; `opsbot-slack status` shows the identity row `ok` with the bot
+token and `differs` after `slack-axi auth login` with a person's token in the same store.
