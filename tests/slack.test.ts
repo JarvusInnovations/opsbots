@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,6 +22,9 @@ const CHAN = "C0CHAN0001";
 // PATH = the stand-in's bin (which links node) + /usr/bin:/bin, and OPSBOT_SLACK_AXI naming
 // the stand-in, so the real tool is unreachable and no test can touch a live workspace.
 const NODE = spawnSync("node", ["-p", "process.execPath"], { encoding: "utf8" }).stdout.trim();
+
+// Several tests run the listener as a process for a few seconds each; a slow runner needs room.
+setDefaultTimeout(60000);
 
 let dirs: string[] = [];
 afterEach(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); dirs = []; });
@@ -669,6 +672,11 @@ function fakeIdentity(home: string, env: Record<string, string>, user: string) {
     return { status: 200, json: async () => ({ ok: true, team_id: "T0EXAMPLE1", user_id: ${JSON.stringify(user)}, user: "examplebot" }) };
   };\n`);
   env.NODE_OPTIONS = `--import ${preload}`;
+  // The store under this HOME and nothing else: a runner's own XDG_CONFIG_HOME or slack-axi
+  // settings must not decide where the token is read.
+  env.XDG_CONFIG_HOME = join(home, ".config");
+  env.SLACK_AXI_CONFIG_DIR = "";
+  env.SLACK_AXI_TOKEN = "";
 }
 
 describe("scripts/opsbot-slack", () => {
