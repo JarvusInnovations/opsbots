@@ -1,0 +1,52 @@
+# Optional: install as .gitsheets/routine-runs.toml so the run records can also be queried with
+# gitsheets (for example a range on `at`). opsbot-core writes and reads them itself and never
+# needs this file. Set `root` to routines.runs_dir when opsbot.json moves it.
+[gitsheet]
+root = 'records/routine-runs'
+path = '${{ at: YYYY/MM }}/${{ id }}'
+
+[gitsheet.format]
+type = 'markdown'
+body = 'body'
+title = 'title'
+
+[gitsheet.fields.checked]
+sort = false
+
+[gitsheet.schema]
+additionalProperties = false
+type = 'object'
+required = ['id', 'title', 'routine', 'at', 'outcome', 'body']
+
+[gitsheet.schema.properties.id]
+type = 'string'
+pattern = '^[a-z0-9][a-z0-9-]*-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{4}(-[0-9]+)?$'
+description = '<routine>-<YYYY-MM-DD>-<HHMM> of the run, in UTC'
+
+[gitsheet.schema.properties.title]
+type = 'string'
+
+[gitsheet.schema.properties.routine]
+type = 'string'
+
+[gitsheet.schema.properties.at]
+type = 'string'
+format = 'date-time'
+
+[gitsheet.schema.properties.outcome]
+type = 'string'
+enum = ['done', 'partial', 'skipped', 'blocked']
+
+[gitsheet.schema.properties.by]
+type = 'string'
+
+[gitsheet.schema.properties.checked]
+type = 'array'
+items = { type = 'string' }
+
+[gitsheet.schema.properties.handed_to]
+type = 'string'
+
+[gitsheet.schema.properties.body]
+type = 'string'
+description = 'A # title line, then what was found, changed and left. A skip says why.'

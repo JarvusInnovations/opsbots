@@ -137,6 +137,12 @@ Auto memory, the notes Claude Code keeps between sessions, lives in the bot's re
 committed with its cycles; a routine review folds each note into the record, updates it,
 keeps it or prunes it ([opsbot-core](skills/opsbot-core.md#auto-memory)).
 
+Recurring work is a routine: a definition in the bot's `routines/` (the schedule as
+frontmatter, the instructions as the body; reviewed like the rule card) and one run record per
+execution in its record. Due is computed from the runs, never stored; a due routine is one
+item in the check ([opsbot-core](skills/opsbot-core.md#routines)). The memory review is the
+first built-in routine.
+
 Autocompaction is on with a window the bot sets in one place; the launch line and the
 settings file agree because the settings file is the only place it is set.
 

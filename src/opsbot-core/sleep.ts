@@ -18,7 +18,8 @@
  */
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { baseEnv, configSnapshot, discover, runScript } from "./lifecycle.js";
-import { gitPath, iso, parseIso } from "./repo.js";
+import { gitPath, iso, nowMs, parseIso } from "./repo.js";
+import { loadRoutines, routineNextTimes } from "./routines.js";
 import type { Settings } from "./settings.js";
 import { CYCLE_OUTCOMES, lastCheck, type LogLine } from "./state.js";
 import { lastArrival } from "./cadence.js";
@@ -118,11 +119,18 @@ export interface Due {
  * that fails, or a line that does not open with a time, is a reason not to sleep: what is due
  * cannot be known.
  */
-export function dueTimes(root: string, s: Settings, settingsText: string): { due: Due[]; problem: string | null } {
+export function dueTimes(root: string, s: Settings, settingsText: string, now: number = nowMs()): { due: Due[]; problem: string | null } {
   const scripts = discover(root, "due").scripts;
-  if (scripts.length === 0) return { due: [], problem: null };
-  const configPath = configSnapshot(root, settingsText);
   const due: Due[] = [];
+  // the core's own lines: when each routine that is not due now next becomes due
+  try {
+    const r = loadRoutines(root, s, now);
+    if (r.problems.length) return { due, problem: `routines: ${r.problems[0]}` };
+    due.push(...routineNextTimes(r));
+  } catch (e) {
+    return { due, problem: `the routines could not be read: ${(e as Error).message}` };
+  }
+  const configPath = scripts.length ? configSnapshot(root, settingsText) : "";
   for (const sc of scripts) {
     const r = runScript(sc, root, baseEnv(root, s, configPath, "due"));
     if (r.code !== 0) return { due, problem: `due.d/${sc.name} failed, exit ${r.code}` };
@@ -173,7 +181,7 @@ export function decideSleep(
   const quietMs = now - (parseIso(quietSince) ?? now);
   const after = sl.after_minutes * 60_000;
   if (quietMs < after) return { sleep: false, why: `quiet for ${Math.floor(quietMs / 60_000)} of ${sl.after_minutes} minutes` };
-  const { due, problem } = dueTimes(root, s, settingsText);
+  const { due, problem } = dueTimes(root, s, settingsText, now);
   if (problem) return { sleep: false, why: problem };
   const next = due[0] ?? null;
   if (next && (parseIso(next.at) ?? 0) < now + after) {
