@@ -686,7 +686,7 @@ describe("scripts/opsbot-slack", () => {
     mkdirSync(root);
     spawnSync("git", ["init", "-q"], { cwd: root });
     writeFileSync(join(root, "opsbot.json"), JSON.stringify({ name: "examplebot" }, null, 2));
-    const bin = standIn(home, { mode: "mode:\n  workspace: Example (T0EXAMPLE1)\n  mode: bot\n" });
+    const bin = standIn(home, { mode: "mode:\n  workspace: Example (T0EXAMPLE1)\n  mode: bot\n", "--version": "1.6.0\n", audience: "usage: slack-axi audience <channel> [flags]\n" });
     writeFileSync(join(bin, "systemctl"), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${home}/systemctl.log"\nif [ -e "${home}/unit-active" ]; then echo active; else echo inactive; exit 3; fi\n`);
     chmodSync(join(bin, "systemctl"), 0o755);
     const env: Record<string, string> = { HOME: home };
@@ -761,7 +761,7 @@ describe("scripts/opsbot-slack", () => {
     fakeIdentity(b.home, b.env, BOT);
     const all = b.cli("status");
     expect(all.out).toMatch(/^ok\s+app-token\s+~\/\.config\/examplebot\/slack-app-token \(600, xapp-\)/m);
-    expect(all.out).toContain("status: all 9 ok");
+    expect(all.out).toContain("status: all 10 ok");
     expect(all.code).toBe(0);
     expect(all.out + all.err).not.toContain("FAKE");
     expect(readFileSync(join(b.home, "systemctl.log"), "utf8")).toContain("--user is-active opsbot-examplebot-monitor-10-slack-listener.service");

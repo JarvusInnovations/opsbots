@@ -172,15 +172,17 @@ before posting, with `bot_user` set, the command asks `auth.test` who the token 
 post with belongs to, and refuses (exit 5) unless it is `bot_user`. A match is cached for
 `cache_seconds` under a hash of the token, so a swapped token is checked at once.
 
-**The classes**, decided from Slack's data (`conversations.info`, `conversations.members`,
-`users.info`, `auth.test`, with slack-axi's own bot token), never from the text:
+**The classes**, decided from Slack's data through `slack-axi audience` (slack-axi 1.6.0 or
+later; `opsbot-slack status` says when it is older), never from the text:
 
 | Class | When | Screened with |
 | --- | --- | --- |
 | `operator-dm` | a DM with someone in `operators`, or the `escalate_dm` conversation | never |
 | `internal` | not shared, and every member a full member of the workspace. A DM with a full member who is not an operator is `internal` | `policy.internal` |
-| `external` | Slack Connect or shared in any way, a guest, a deactivated account or someone from another organization among the members, or more than `max_members` members | `policy.external` |
-| `unknown` | a lookup failed | `policy.external` |
+| `external` | Slack Connect or shared in any way, a guest, a deactivated account or someone from another organization (another workspace of the same org too) among the members, or more than `max_members` members | `policy.external` |
+| `unknown` | a lookup failed, a member could not be read, or slack-axi is older than 1.6.0 | `policy.external` |
+
+Bots of the workspace count as full members.
 
 The class is cached for `cache_seconds` beside the events file (`slack-classes.json`); an
 `unknown` is not.
@@ -270,7 +272,7 @@ which customer they belong to. That knowledge is the bot's own, so the reader ta
 | Command | Does | Exit |
 | --- | --- | --- |
 | `install [--dry-run] [--force]` | copies the three scripts into `opsbot.d/`, executable. A file that already matches is left; one that differs is left unless `--force`. Prints what it wrote and left, then the `streams.slack` block and `wake.files` entry to merge (it never writes `opsbot.json`), and the manifest's path | 0 · 2 |
-| `status` | one row each, `ok`, `missing` or `differs`, with the fix: the app-level token file (present, mode 600, `xapp-`; never printed), slack-axi signed in in bot mode, each script present and matching its template, `bot_user` and `escalate_dm` in `streams.slack`, the events file in `wake.files`, the listener's unit active; with `bot_user` set, the posting identity (`ok` only when `auth.test` names `bot_user`); with `screen` set, its command and policy files; with `listen_to`, `intercept` or `files` set, that setting (`listen_to: operators` with no `operators` and no `escalate_dm` is refused) | 0 all ok · 1 something to fix · 2 |
+| `status` | one row each, `ok`, `missing` or `differs`, with the fix: the app-level token file (present, mode 600, `xapp-`; never printed), slack-axi signed in in bot mode, slack-axi 1.6.0 or later (the `audience` command), each script present and matching its template, `bot_user` and `escalate_dm` in `streams.slack`, the events file in `wake.files`, the listener's unit active; with `bot_user` set, the posting identity (`ok` only when `auth.test` names `bot_user`); with `screen` set, its command and policy files; with `listen_to`, `intercept` or `files` set, that setting (`listen_to: operators` with no `operators` and no `escalate_dm` is refused) | 0 all ok · 1 something to fix · 2 |
 | `post <conv> [--reply <ts>] [--dry-run] [<markdown> \| -]` | classifies, screens when configured, checks the posting identity, posts in bot mode, logs (Posting, above) | 0 · 1 · 2 · 3 blocked · 4 screen failed · 5 not the bot |
 | `classify <conv>` | `{conv, class, why, cached}` | 0 · 2 |
 
