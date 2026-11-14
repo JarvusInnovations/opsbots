@@ -1,15 +1,18 @@
 /**
- * `opsbot-slack post` and `classify`: the destination class from Slack's data, the screen, the
- * told-once escalation, the decision log. Slack's Web API is a fetch stub preloaded into every
- * node process (NODE_OPTIONS), slack-axi is a stand-in script, the screen is a tiny script in the
- * bot's repo, and HOME, XDG_CONFIG_HOME and PATH point into a temp dir: nothing reaches a real
- * workspace, a model, the real home directory or a real tool.
+ * `opsbot-slack post` and `classify`: the destination class from `slack-axi audience`, the
+ * screen, the told-once escalation, the posting identity, the decision log. slack-axi is a
+ * stand-in script that prints canned `audience` reports (built with the TOON encoder slack-axi
+ * itself uses), Slack's auth.test is a fetch stub preloaded into every node process
+ * (NODE_OPTIONS), the screen is a tiny script in the bot's repo, and HOME, XDG_CONFIG_HOME and
+ * PATH point into a temp dir: nothing reaches a real workspace, a model, the real home directory
+ * or a real tool.
  */
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { encode } from "@toon-format/toon";
 
 const SKILL = resolve(import.meta.dir, "..", "skills", "opsbot-slack");
 const CLI = join(SKILL, "scripts/opsbot-slack");
@@ -38,39 +41,52 @@ const BADUSER = "C0BADU0001"; // a member's users.info fails
 const DOWN = "C0DOWN0001"; // the network fails
 const TS = "1794400000.000100";
 
-const user = (id: string, extra: Record<string, unknown> = {}) => ({ ok: true, user: { id, team_id: TEAM, ...extra } });
-const chan = (id: string, extra: Record<string, unknown> = {}) => ({ ok: true, channel: { id, is_channel: true, is_shared: false, is_ext_shared: false, is_org_shared: false, is_pending_ext_shared: false, ...extra } });
-const members = (ids: string[], next = "") => ({ ok: true, members: ids, response_metadata: { next_cursor: next } });
-const many = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${String(i).padStart(4, "0")}`);
+/**
+ * One `slack-axi audience` report, as slack-axi 1.6.0 prints it: the workspace header, the
+ * conversation block, the audience summary, the non-full members (or the definitive empty line).
+ * `members` are [id, category, why]; counts are derived from them, so they always add up.
+ */
+type Member = [string, "full" | "guest" | "external" | "other_workspace" | "deactivated" | "bot" | "unresolved", string];
+function report(conversation: Record<string, unknown>, members: Member[], opts: { truncated?: boolean; total?: number | string } = {}) {
+  const count = (c: string) => members.filter((m) => m[1] === c).length;
+  const total = opts.total ?? members.length;
+  const nonFull = members.filter((m) => m[1] !== "full");
+  const flags = conversation.kind === "im" ? {} : { is_shared: false, is_ext_shared: false, is_org_shared: false, is_pending_ext_shared: false };
+  return [
+    encode({ workspace: `Example (${TEAM})` }),
+    encode({ conversation: { is_member: true, ...flags, ...conversation } }),
+    encode({ audience: { members_checked: `${members.length} of ${total}`, truncated: opts.truncated ?? false, full: count("full"), guests: count("guest"), external: count("external"), other_workspace: count("other_workspace"), deactivated: count("deactivated"), bots: count("bot"), unresolved: count("unresolved") } }),
+    nonFull.length
+      ? encode({ non_full_members: nonFull.map(([id, , why]) => ({ id, name: `Name of ${id}`, why })) })
+      : encode({ non_full_members: "0 (every checked member is a full member of this workspace)" }),
+  ].join("\n") + "\n";
+}
+const many = (prefix: string, n: number): Member[] => Array.from({ length: n }, (_, i) => [`${prefix}${String(i).padStart(4, "0")}`, "full", ""]);
+const bot_: Member = [BOT, "bot", "bot"];
+const im = (id: string, other: string, extra: Member[] = []) => report({ id, name: `@${other}`, kind: "im", user: other }, [bot_, [other, "full", ""], ...extra]);
+const fail = (msg: string) => `error: "${msg}"\ncode: SLACK_ERROR\n`;
 
+// slack-axi audience output per conversation; `<conv>@<max>` wins when --max-members is <max>.
+const AUDIENCE: Record<string, string> = {
+  [ESC]: im(ESC, ANN),
+  [DMOP]: im(DMOP, OPER),
+  [DMANN]: im(DMANN, ANN),
+  [DMGUEST]: report({ id: DMGUEST, name: "@guest", kind: "im", user: GUEST }, [bot_, [GUEST, "guest", "multi-channel guest"]]),
+  [CHAN]: report({ id: CHAN, name: "#ops", kind: "channel", num_members: 2 }, [bot_, [ANN, "full", ""]]),
+  [CONNECT]: report({ id: CONNECT, name: "#shared", kind: "channel", is_shared: true, is_ext_shared: true }, [bot_, [EXT, "external", "other organization (team T0OTHER001)"]]),
+  [GUESTS]: report({ id: GUESTS, name: "#guests", kind: "channel" }, [bot_, [ANN, "full", ""], [GUEST, "guest", "multi-channel guest"]]),
+  [BIG]: report({ id: BIG, name: "#all", kind: "channel", num_members: 5000 }, many("U0B", 100), { truncated: true, total: 5000 }),
+  [BIGPAGES]: report({ id: BIGPAGES, name: "#many", kind: "channel" }, many("U0P", 100), { truncated: true, total: "more than 100" }),
+  [`${BIGPAGES}@1000`]: report({ id: BIGPAGES, name: "#many", kind: "channel" }, many("U0P", 180).map(([id]) => [id, "unresolved", "unresolved (user_not_found)"] as Member)),
+  [MPIM]: report({ id: MPIM, name: "ann, ext", kind: "mpim" }, [bot_, [ANN, "full", ""], [EXT, "external", "other organization (team T0OTHER001)"]]),
+  [MISSING]: fail("conversations.info: not_in_fixture"),
+  [BADUSER]: report({ id: BADUSER, name: "#bad", kind: "channel" }, [bot_, ["U0NOSUCH01", "unresolved", "unresolved (user_not_found)"]]),
+  [DOWN]: fail("conversations.info: network down"),
+};
+
+// The Web API answers only auth.test now: the posting identity.
 const FIXTURE: Record<string, unknown> = {
   "auth.test": { ok: true, team_id: TEAM, user_id: BOT },
-  [`users.info:${BOT}`]: user(BOT, { is_bot: true }),
-  [`users.info:${ANN}`]: user(ANN),
-  [`users.info:${OPER}`]: user(OPER),
-  [`users.info:${GUEST}`]: user(GUEST, { is_restricted: true }),
-  [`users.info:${EXT}`]: user(EXT, { team_id: "T0OTHER001", is_stranger: true }),
-  [`users.info:${GONE}`]: user(GONE, { deleted: true }),
-  [`conversations.info:${ESC}`]: { ok: true, channel: { id: ESC, is_im: true, user: ANN } },
-  [`conversations.info:${DMOP}`]: { ok: true, channel: { id: DMOP, is_im: true, user: OPER } },
-  [`conversations.info:${DMANN}`]: { ok: true, channel: { id: DMANN, is_im: true, user: ANN } },
-  [`conversations.info:${DMGUEST}`]: { ok: true, channel: { id: DMGUEST, is_im: true, user: GUEST } },
-  [`conversations.info:${CHAN}`]: chan(CHAN, { num_members: 2 }),
-  [`conversations.members:${CHAN}:`]: members([BOT], "page2"),
-  [`conversations.members:${CHAN}:page2`]: members([ANN]),
-  [`conversations.info:${CONNECT}`]: chan(CONNECT, { is_shared: true, is_ext_shared: true }),
-  [`conversations.info:${GUESTS}`]: chan(GUESTS),
-  [`conversations.members:${GUESTS}:`]: members([BOT, ANN, GUEST]),
-  [`conversations.info:${BIG}`]: chan(BIG, { num_members: 5000 }),
-  [`conversations.info:${BIGPAGES}`]: chan(BIGPAGES),
-  [`conversations.members:${BIGPAGES}:`]: members(many("U0P1", 60), "p2"),
-  [`conversations.members:${BIGPAGES}:p2`]: members(many("U0P2", 60), "p3"),
-  [`conversations.members:${BIGPAGES}:p3`]: members(many("U0P3", 60)),
-  [`conversations.info:${MPIM}`]: { ok: true, channel: { id: MPIM, is_mpim: true, is_private: true } },
-  [`conversations.members:${MPIM}:`]: members([BOT, ANN, EXT]),
-  [`conversations.info:${BADUSER}`]: chan(BADUSER),
-  [`conversations.members:${BADUSER}:`]: members([BOT, "U0NOSUCH01"]),
-  [`conversations.info:${DOWN}`]: "network",
 };
 
 // Each test spawns bash, node and git several times; the timeout cases wait a second each.
@@ -88,10 +104,7 @@ globalThis.fetch = async (url, init) => {
   const method = u.slice("https://slack.com/api/".length);
   const p = Object.fromEntries(new URLSearchParams(init.body));
   appendFileSync(process.env.FAKE_SLACK_LOG, JSON.stringify({ method, p, auth: init.headers.Authorization }) + "\\n");
-  const key = method === "conversations.info" ? method + ":" + p.channel
-    : method === "conversations.members" ? method + ":" + p.channel + ":" + (p.cursor || "")
-    : method === "users.info" ? method + ":" + p.user : method;
-  const v = fx[key];
+  const v = fx[method];
   if (v === "network") throw new Error("network down");
   return { status: 200, json: async () => v ?? { ok: false, error: "not_in_fixture" } };
 };
@@ -112,7 +125,7 @@ else if (mode === "sleep") setTimeout(() => console.log(JSON.stringify({ verdict
 else { console.error("model gateway refused the key"); process.exit(1); }
 `;
 
-function bot(slack: Record<string, unknown> = {}, opts: { fixture?: Record<string, unknown>; escalate?: boolean } = {}) {
+function bot(slack: Record<string, unknown> = {}, opts: { fixture?: Record<string, unknown>; audience?: Record<string, string>; escalate?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "opsbot-slack-post-test-"));
   dirs.push(dir);
   const root = join(dir, "bot");
@@ -133,11 +146,23 @@ function bot(slack: Record<string, unknown> = {}, opts: { fixture?: Record<strin
     writeFileSync(join(root, "opsbot.d", "escalate.d", "10-test"), `#!/usr/bin/env bash\n[ -e "${dir}/escalate-fail" ] && exit 1\n{ cat; echo "---"; } >> "${dir}/escalations.log"\n`);
     chmodSync(join(root, "opsbot.d", "escalate.d", "10-test"), 0o755);
   }
-  // the slack-axi stand-in
+  // the slack-axi stand-in; an `old-axi` file in the temp dir makes it a 1.4 without audience
   const bin = join(dir, "pathbin");
   mkdirSync(bin);
+  const aud = join(dir, "audience");
+  mkdirSync(aud);
+  for (const [k, v] of Object.entries(opts.audience ?? AUDIENCE)) writeFileSync(join(aud, k), v);
   writeFileSync(join(bin, "slack-axi"), `#!/usr/bin/env bash
-printf '%s\\n' "$*" >> "${dir}/axi-calls.log"
+# audience and --version are reads, logged apart so the post path's calls stay as they were
+case "$1" in audience|--version) printf '%s\\n' "$*" >> "${dir}/audience-calls.log" ;; *) printf '%s\\n' "$*" >> "${dir}/axi-calls.log" ;; esac
+if [ "$1" = --version ]; then if [ -e "${dir}/old-axi" ]; then echo 1.4.1; else echo 1.6.0; fi; exit 0; fi
+if [ "$1" = audience ]; then
+  if [ -e "${dir}/old-axi" ]; then printf 'error: "Unknown command: audience"\\ncode: VALIDATION_ERROR\\n'; exit 1; fi
+  if [ "$2" = --help ]; then echo "usage: slack-axi audience <channel> [flags]"; exit 0; fi
+  f="${aud}/$2@$4"; [ -f "$f" ] || f="${aud}/$2"
+  if [ -f "$f" ]; then cat "$f"; grep -q '^error:' "$f" && exit 1; exit 0; fi
+  echo 'error: "no canned audience"'; exit 1
+fi
 case "$1 $2" in
   "auth mode") if [ -e "${dir}/human-mode" ]; then printf 'mode:\\n  mode: human\\n'; else printf 'mode:\\n  workspace: Example (${TEAM})\\n  mode: bot\\n'; fi ;;
   "draft send") if [ -e "${dir}/fail-send" ]; then echo 'error: "stand-in failure for send"'; exit 1; fi; printf 'sent: d_1a2b3c4d\\nts: "1794400999.000100"\\n' ;;
@@ -166,6 +191,7 @@ esac
     dir, root, env, run,
     api: () => lines("slack-api.log").map((l) => JSON.parse(l)),
     axi: () => lines("axi-calls.log"),
+    audience: () => lines("audience-calls.log"),
     screens: () => lines("screen-calls.jsonl").map((l) => JSON.parse(l)),
     escalations: () => (existsSync(join(dir, "escalations.log")) ? readFileSync(join(dir, "escalations.log"), "utf8").split("---\n").filter((s) => s.trim()) : []),
     log: () => (existsSync(join(root, "logs/slack-posts.jsonl")) ? readFileSync(join(root, "logs/slack-posts.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)) : []),
@@ -204,59 +230,134 @@ describe("classify: the destination from Slack's own data", () => {
     expect(b.run(["classify", ESC]).json.class).toBe("operator-dm");
   });
 
-  test("members are paged to the last cursor; every member is looked up", () => {
+  test("slack-axi audience is asked once, with max_members as its bound and the team when set", () => {
     const b = bot();
     b.run(["classify", CHAN]);
-    const calls = b.api();
-    expect(calls.filter((c) => c.method === "conversations.members").map((c) => c.p.cursor ?? "")).toEqual(["", "page2"]);
-    expect(calls.filter((c) => c.method === "users.info").map((c) => c.p.user).sort()).toEqual([ANN, BOT].sort());
-    expect(calls.find((c) => c.method === "conversations.info")!.p).toEqual({ channel: CHAN, include_num_members: "true" });
+    expect(b.audience()).toEqual([`audience ${CHAN} --max-members 100`]);
+    expect(b.api()).toEqual([]);
+    const t = bot({ team: TEAM, screen: { max_members: 7 } });
+    t.run(["classify", CHAN]);
+    expect(t.audience()).toEqual([`audience ${CHAN} --max-members 7 --team ${TEAM}`]);
   });
 
   test("a large channel is external without listing everyone: by num_members, or once paging passes the bound", () => {
     const b = bot();
     expect(b.run(["classify", BIG]).json).toMatchObject({ class: "external", why: "5000 members, over max_members 100; not all checked" });
-    expect(b.api().some((c) => c.method === "conversations.members" || c.method === "users.info")).toBe(false);
     expect(b.run(["classify", BIGPAGES]).json).toMatchObject({ class: "external", why: "over max_members 100 members; not all checked" });
-    expect(b.api().filter((c) => c.method === "conversations.members").map((c) => c.p.cursor ?? "")).toEqual(["", "p2"]);
-    expect(b.api().some((c) => c.method === "users.info")).toBe(false);
     const raised = bot({ screen: { max_members: 1000 } });
-    expect(raised.run(["classify", BIGPAGES]).json.class).toBe("unknown"); // 180 members, none in the fixture: not established
+    expect(raised.run(["classify", BIGPAGES]).json.class).toBe("unknown"); // 180 members, none resolved: not established
   });
 
   test("a class is cached for cache_seconds; unknown is never cached", () => {
     const b = bot();
     expect(b.run(["classify", CHAN]).json.cached).toBe(false);
-    const n = b.api().length;
+    const n = b.audience().length;
     expect(b.run(["classify", CHAN]).json).toMatchObject({ class: "internal", cached: true });
-    expect(b.api().length).toBe(n);
+    expect(b.audience().length).toBe(n);
     b.run(["classify", MISSING]);
-    const m = b.api().length;
+    const m = b.audience().length;
     expect(b.run(["classify", MISSING]).json.cached).toBe(false);
-    expect(b.api().length).toBeGreaterThan(m);
+    expect(b.audience().length).toBeGreaterThan(m);
     const cache = JSON.parse(readFileSync(join(b.dir, "cache", "slack-classes.json"), "utf8"));
     expect(Object.keys(cache.convs)).toEqual([CHAN]);
+    expect(cache.team).toBe(TEAM);
     const off = bot({ screen: { cache_seconds: 0.001 } });
     off.run(["classify", CHAN]);
-    const k = off.api().length;
+    const k = off.audience().length;
     spawnSync("sleep", ["0.05"]);
     expect(off.run(["classify", CHAN]).json.cached).toBe(false);
-    expect(off.api().length).toBeGreaterThan(k);
+    expect(off.audience().length).toBeGreaterThan(k);
   });
 
-  test("the bot token comes from slack-axi's own store when SLACK_AXI_TOKEN is unset, and is never printed", () => {
+  test("classify reads no token itself; the post's identity check reads slack-axi's store when SLACK_AXI_TOKEN is unset, and never prints it", () => {
     const b = bot();
     const store = join(b.dir, "config", "slack-axi");
     mkdirSync(join(store, "workspaces", TEAM), { recursive: true });
     writeFileSync(join(store, "config.json"), JSON.stringify({ default_team: TEAM }));
     writeFileSync(join(store, "workspaces", TEAM, "token.json"), JSON.stringify({ token: "xoxb-stored-fake-0000", team_id: TEAM }));
-    const r = b.run(["classify", CHAN], { env: { SLACK_AXI_TOKEN: "" } });
-    expect(r.json.class).toBe("internal");
+    expect(b.run(["classify", CHAN], { env: { SLACK_AXI_TOKEN: "" } }).json.class).toBe("internal");
+    expect(b.api()).toEqual([]);
+    const r = b.run(["post", CHAN, "x"], { env: { SLACK_AXI_TOKEN: "" } });
+    expect(r.code).toBe(0);
     expect(new Set(b.api().map((c) => c.auth))).toEqual(new Set(["Bearer xoxb-stored-fake-0000"]));
     expect(r.out + r.err).not.toContain("xoxb-");
     const none = bot();
-    expect(none.run(["classify", CHAN], { env: { SLACK_AXI_TOKEN: "" } }).json).toMatchObject({ class: "unknown", why: "lookup failed: no slack-axi workspace to read the bot token from" });
-    expect(none.api()).toEqual([]);
+    expect(none.run(["classify", CHAN], { env: { SLACK_AXI_TOKEN: "" } }).json.class).toBe("internal");
+    expect(none.run(["post", CHAN, "x"], { env: { SLACK_AXI_TOKEN: "" } }).json.error).toBe("could not confirm the posting identity: no slack-axi workspace to read the bot token from; nothing posted");
+  });
+
+  test("bots of the workspace are full members; another workspace of the same org, a deactivated account and an external bot are not", () => {
+    const ch = (id: string, members: Member[]) => report({ id, name: "#x", kind: "channel" }, members);
+    const b = bot({}, { audience: {
+      C0BOTS0001: ch("C0BOTS0001", [bot_, ["U0OTHERB01", "bot", "bot"], [ANN, "full", ""]]),
+      C0SIBL0001: ch("C0SIBL0001", [bot_, ["U0SIB00001", "other_workspace", "same org, other workspace (team T0SIB00001)"]]),
+      C0GONE0001: ch("C0GONE0001", [bot_, [GONE, "deactivated", "deactivated"]]),
+      C0EXTB0001: ch("C0EXTB0001", [bot_, ["U0EXTBOT01", "external", "other organization (team T0OTHER001)"]]),
+      C0EMPT0001: ch("C0EMPT0001", []),
+      D0NOUSER01: report({ id: "D0NOUSER01", name: "@x", kind: "im" }, [bot_]),
+      C0BROKEN01: "workspace: Example (T0TEAM0001)\nconversation:\n  id: C0BROKEN01\n",
+    } });
+    const cls = (c: string) => b.run(["classify", c]).json;
+    expect(cls("C0BOTS0001")).toMatchObject({ class: "internal", why: "not shared; all 3 members are full members" });
+    expect(cls("C0SIBL0001")).toMatchObject({ class: "external", why: "U0SIB00001 is from another organization" });
+    expect(cls("C0GONE0001")).toMatchObject({ class: "external", why: `${GONE} is deactivated` });
+    expect(cls("C0EXTB0001")).toMatchObject({ class: "external", why: "U0EXTBOT01 is from another organization" });
+    expect(cls("C0EMPT0001")).toMatchObject({ class: "unknown", why: "lookup failed: slack-axi audience listed no one" });
+    expect(cls("D0NOUSER01")).toMatchObject({ class: "unknown", why: "lookup failed: slack-axi audience gave no user for the DM" });
+    expect(cls("C0BROKEN01")).toMatchObject({ class: "unknown", why: "lookup failed: slack-axi audience printed no audience block" });
+  });
+
+  test("the report as slack-axi's own spec prints it parses: quoted names, a comma in a name, a single-channel guest", () => {
+    const sample = [
+      "workspace: \"Acme, Inc (T0TEAM0001)\"",
+      "conversation:",
+      "  id: C0SPEC0001",
+      "  name: \"#proj-shared\"",
+      "  kind: channel",
+      "  is_member: true",
+      "  is_shared: false",
+      "  is_ext_shared: false",
+      "  is_org_shared: false",
+      "  is_pending_ext_shared: false",
+      "  num_members: 4",
+      "audience:",
+      "  members_checked: 4 of 4",
+      "  truncated: false",
+      "  full: 2",
+      "  guests: 1",
+      "  external: 0",
+      "  other_workspace: 0",
+      "  deactivated: 0",
+      "  bots: 1",
+      "  unresolved: 0",
+      "non_full_members[2]{id,name,why}:",
+      "  U0GUEST002,\"Pat, \\\"P\\\" Partner\",single-channel guest",
+      "  U0BUILD001,Build Bot,bot",
+      "help[1]:",
+      "  Add `--members` to list every member with its flags",
+      "",
+    ].join("\n");
+    const b = bot({}, { audience: { C0SPEC0001: sample } });
+    expect(b.run(["classify", "C0SPEC0001"]).json).toMatchObject({ class: "external", why: "U0GUEST002 is a single-channel guest" });
+  });
+
+  test("an older slack-axi without audience: every class is unknown, with the upgrade named", () => {
+    const b = bot();
+    writeFileSync(join(b.dir, "old-axi"), "");
+    expect(b.run(["classify", CHAN]).json).toMatchObject({ class: "unknown", why: "lookup failed: slack-axi has no audience command; it needs 1.6.0 or later (npm install -g slack-axi@latest)" });
+    // operator-dm needs audience too: unknown, so a screen still runs as external
+    expect(b.run(["classify", ESC]).json.class).toBe("unknown");
+  });
+});
+
+describe("status: the slack-axi audience row", () => {
+  test("1.6.0 with audience is ok; an older one is missing with the upgrade", () => {
+    expect(bot().run(["status"]).out).toMatch(/^ok\s+slack-axi-audience\s+slack-axi 1\.6\.0 has audience/m);
+    const old = bot();
+    writeFileSync(join(old.dir, "old-axi"), "");
+    const out = old.run(["status"]).out;
+    expect(out).toMatch(/^missing\s+slack-axi-audience\s+slack-axi 1\.4\.1 is older than 1\.6\.0/m);
+    expect(out).toContain("fix: npm install -g slack-axi@latest");
   });
 });
 
