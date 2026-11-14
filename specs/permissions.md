@@ -24,6 +24,13 @@ may not weigh.
   changes that widen nothing. The cost accepted: an allow rule that names a skill's script
   (the core's own, say) trusts that skill as installed; keep such rules to the vendored,
   `npx skills`-managed skills whose source is a reviewed repo.
+- **A bot does not reprogram itself either.** Two more things change only by a PR a person
+  merges, where the repo requires review: the rule card, and the routine definitions in
+  `routines/` ([opsbot-core](skills/opsbot-core.md#routines)). A definition is what the bot
+  will do on a schedule, unprompted, so a change to one is a change to its behaviour. The
+  bot's merge script refuses PRs that touch them, as it refuses the permission surface. Runs
+  of a routine are the bot's own record and need no review. Why: a bot that could add a
+  routine could schedule itself any work at all, and nobody would read it before it ran.
 
 ## The three layers, as Claude Code applies them
 
