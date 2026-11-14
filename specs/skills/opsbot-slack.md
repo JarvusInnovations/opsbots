@@ -248,8 +248,8 @@ which is why `opsbot-slack status` names who can on the intercept row.
 ## Files
 
 Slack puts a message's files on its event as file objects. The listener records, for every kept
-message that carries them, `files: [{id, name, mimetype, size}]`, whatever the settings. Saving
-the bytes is opt-in:
+message that carries them, `files: [{id, name, mimetype, size, file_access?}]`, the fields
+Slack gave, whatever the settings. Saving the bytes is opt-in:
 
 ```json
 "files": { "save": true, "dir": ".scratch/slack-files", "max_bytes": 26214400, "types": ["image/*", "application/pdf", "text/*"] }

@@ -5,19 +5,22 @@
 //   post <conv> [--reply <ts>] [--dry-run] [<markdown> | -]
 //   classify <conv>
 //   screen-check                       (for `opsbot-slack status`: one row on stdout)
+//   identity-check                     (for `opsbot-slack status`: the posting identity's row)
 //
 // post, in order: refuse bad usage; classify the destination from Slack's own data
 // (operator-dm, internal, external, unknown); when streams.slack.screen names a policy for that
 // class, hand the draft to the bot's own screen command and post only on {"verdict": "pass"};
-// post through `slack-axi draft` and `draft send` in bot mode; append one line to the decision
-// log (a hash of the draft, never the draft). Prints one JSON object.
+// check that the token slack-axi will post with is bot_user's (auth.test); post through
+// `slack-axi draft` and `draft send` in bot mode; append one line to the decision log (a hash of
+// the draft, never the draft). Prints one JSON object.
 //
 // Exit 0 posted (or would be, with --dry-run) · 1 Slack refused or failed · 2 bad usage or an
 // unusable setting · 3 the screen blocked it · 4 the screen failed; nothing posted, the operator
-// told once per outage through opsbot.d/escalate.d/.
+// told once per outage through opsbot.d/escalate.d/ · 5 the posting identity is not bot_user.
 //
-// The bot token is slack-axi's own (SLACK_AXI_TOKEN, else slack-axi's store); it is read here
-// to call conversations.info, conversations.members, users.info and auth.test, and never printed.
+// The bot token is slack-axi's own (SLACK_AXI_TOKEN, else slack-axi's store, in slack-axi's
+// order); it is read here to call conversations.info, conversations.members, users.info and
+// auth.test, and never printed.
 // OPSBOT_SLACK_AXI names another slack-axi binary (a pinned copy, a test double).
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -25,7 +28,7 @@ import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileS
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-const EXIT = { ok: 0, slack: 1, usage: 2, blocked: 3, screenFailed: 4 };
+const EXIT = { ok: 0, slack: 1, usage: 2, blocked: 3, screenFailed: 4, identity: 5 };
 const CONV_RE = /^[CDG][A-Z0-9]{2,}$/;
 const TS_RE = /^\d+\.\d+$/;
 const SLACK_TIMEOUT_MS = 15000;
@@ -71,12 +74,15 @@ function inRepo(p) {
 
 // ------------------------------------------------------------------------------- Slack Web API
 
-/** The bot token as slack-axi resolves it: env, then the --team, default or only workspace. */
+/**
+ * The token slack-axi will post with, in slack-axi's own order: SLACK_AXI_TOKEN, then the
+ * workspace `team` names (passed to it as --team), then its default, then its only one.
+ */
 function slackToken() {
   if (process.env.SLACK_AXI_TOKEN) return process.env.SLACK_AXI_TOKEN;
   const xdg = process.env.XDG_CONFIG_HOME;
   const base = process.env.SLACK_AXI_CONFIG_DIR || join(xdg && xdg.length ? xdg : join(homedir(), ".config"), "slack-axi");
-  let team = slack.team ? String(slack.team) : process.env.SLACK_AXI_TEAM;
+  let team = slack.team ? String(slack.team) : undefined;
   if (!team) {
     try { team = JSON.parse(readFileSync(join(base, "config.json"), "utf8")).default_team; } catch { team = undefined; }
   }
@@ -112,17 +118,55 @@ async function api(method, params = {}) {
   return body;
 }
 
+// ------------------------------------------------------------------------------- the posting identity
+
+/**
+ * Who the post token is, from auth.test: {user, name, team, cached}. A match with bot_user is
+ * cached for cache_seconds under a hash of the token, so a changed token is asked again at once.
+ * Throws when no token resolves or auth.test fails.
+ */
+async function identity() {
+  if (token === undefined) token = slackToken();
+  const key = createHash("sha256").update(token).digest("hex").slice(0, 16);
+  const cache = loadCache();
+  const c = cache.identity;
+  if (c && c.token === key && fresh(c) && c.user === String(slack.bot_user || "")) return { user: c.user, name: c.name, team: c.team, cached: true };
+  const a = await api("auth.test");
+  if (typeof a.user_id !== "string" || !a.user_id) throw new Error("auth.test gave no user_id");
+  const me = { user: a.user_id, name: typeof a.user === "string" ? a.user : "", team: typeof a.team_id === "string" ? a.team_id : "" };
+  if (slack.bot_user && me.user === String(slack.bot_user)) {
+    cache.identity = { token: key, ...me, at: new Date().toISOString() };
+    saveCache(cache);
+  }
+  return { ...me, cached: false };
+}
+
+/** null when the post may go out as bot_user (or bot_user is unset), else {error, identity?}. */
+async function identityRefusal() {
+  if (!slack.bot_user) return null;
+  let me;
+  try { me = await identity(); } catch (e) {
+    return { error: `could not confirm the posting identity: ${e.message}; nothing posted` };
+  }
+  if (me.user === String(slack.bot_user)) return null;
+  return {
+    error: `slack-axi would post as ${me.user}${me.name ? ` (${me.name})` : ""}, not as bot_user ${slack.bot_user}; nothing posted (slack-axi auth login --token xoxb-... with the bot's token, or set streams.slack.team)`,
+    identity: { user: me.user, name: me.name },
+  };
+}
+
 // ------------------------------------------------------------------------------- classification
 
 function loadCache() {
   try {
     const c = JSON.parse(readFileSync(cacheFile, "utf8"));
-    return { convs: c.convs || {}, users: c.users || {}, team: c.team };
+    return { convs: c.convs || {}, users: c.users || {}, team: c.team, ...(c.identity ? { identity: c.identity } : {}) };
   } catch { return { convs: {}, users: {}, team: undefined }; }
 }
 function saveCache(c) {
   const now = Date.now();
   for (const m of [c.convs, c.users]) for (const [k, v] of Object.entries(m)) if (!v || now - Date.parse(v.at) >= cacheMs) delete m[k];
+  if (c.identity && !(now - Date.parse(c.identity.at) < cacheMs)) delete c.identity;
   try {
     mkdirSync(dirname(cacheFile), { recursive: true });
     const tmp = `${cacheFile}.${process.pid}.tmp`;
@@ -357,6 +401,11 @@ async function cmdPost(args) {
     logDecision({ ...base, screen: verdict, posted: false });
     emit({ posted: false, dry_run: true, would_post: true, conv, class: c.class, why: c.why, screen: verdict }, EXIT.ok);
   }
+  const refusal = await identityRefusal();
+  if (refusal) {
+    logDecision({ ...base, screen: verdict, error: refusal.error, posted: false });
+    emit({ posted: false, conv, class: c.class, why: c.why, screen: verdict, ...refusal }, EXIT.identity);
+  }
   const sent = postToSlack(conv, reply, text);
   if (sent.error) {
     logDecision({ ...base, screen: verdict, error: sent.error, posted: false });
@@ -398,8 +447,22 @@ function cmdScreenCheck() {
   process.exit(0);
 }
 
+/** One status row for the posting identity: `ok`, `differs` or `missing <detail>`. */
+async function cmdIdentityCheck() {
+  let me;
+  try { me = await identity(); } catch (e) {
+    console.log(`missing no posting identity: ${e.message}`);
+    process.exit(1);
+  }
+  const who = `${me.user}${me.name ? ` (${me.name})` : ""}`;
+  if (me.user === String(slack.bot_user || "")) { console.log(`ok posts as ${who}, bot_user`); process.exit(0); }
+  console.log(`differs posts as ${who}, not bot_user ${slack.bot_user || "(unset)"}`);
+  process.exit(1);
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
 if (cmd === "post") await cmdPost(rest);
 else if (cmd === "classify") await cmdClassify(rest);
 else if (cmd === "screen-check") cmdScreenCheck();
+else if (cmd === "identity-check") await cmdIdentityCheck();
 else usage(`unknown command: ${cmd ?? "(none)"}`);
