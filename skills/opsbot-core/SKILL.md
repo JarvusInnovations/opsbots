@@ -35,7 +35,8 @@ the CLI is not on PATH.
      and stop.
    - **Exit 10, new.** The digest: every item whole, tagged with its conversation and
      `GROUP` or `DM`. A `gate_word: present` line flags the configured word; it is never
-     judged here.
+     judged here. `present, does not count: <why>` means the adapter said the item's author
+     cannot give it (another bot's message): it approves nothing.
    - **Exit 20, degraded.** The failed inputs by name, then what could be read. Never treat
      it as nothing new: tell the operator what could not be read.
 2. **Act.** Do the work the items ask for, through the bot's own tools. Anything longer than
