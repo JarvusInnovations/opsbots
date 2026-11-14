@@ -85,6 +85,8 @@ export function detail(l: LogLine): string {
       return `outage from ${l.started ?? ""} ended ${l.ended ?? ""}`;
     case "sleep":
       return `quiet since ${l.quiet_since ?? ""}${l.due ? ` · due ${String(l.due)}` : ""}`;
+    case "memory-review":
+      return `kept ${l.kept ?? 0} · updated ${l.updated ?? 0} · removed ${l.removed ?? 0} · added ${l.added ?? 0}${l.note ? ` · ${String(l.note)}` : ""}`;
     case "wake":
       return `${l.reason ?? ""}${typeof l.latency_s === "number" ? ` · ${l.latency_s} s after the event` : ""}`;
     default:
@@ -178,6 +180,11 @@ export function settingsCommand(args: string[]): Record<string, unknown> {
     try {
       const cs = JSON.parse(readFileSync(claude, "utf8"));
       const loop = (raw.loop ?? {}) as Record<string, unknown>;
+      for (const k of ["autoMemoryEnabled", "autoMemoryDirectory"]) {
+        if (cs && cs[k] !== undefined) {
+          problems.push(`.claude/settings.json sets ${k}; auto memory is set by memory in opsbot.json, which start passes to Claude Code, so set it in one place`);
+        }
+      }
       if (cs && cs.autoCompactWindow !== undefined && String(cs.autoCompactWindow) !== String(loop.autocompact ?? "")) {
         problems.push(
           `.claude/settings.json sets autoCompactWindow ${JSON.stringify(cs.autoCompactWindow)} but loop.autocompact is ${JSON.stringify(loop.autocompact ?? null)}; set it in one place`,

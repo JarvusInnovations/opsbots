@@ -22,6 +22,7 @@ import { cliInvocation } from "../invocation.js";
 import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
 import { blockedBy, changedCommitPaths, commitOnly, firstLine, hasHead, iso, nowMs, parseIso, requireRoot } from "../repo.js";
 import { loadSettings } from "../settings.js";
+import { changedMemoryFiles } from "../memory.js";
 import {
   appendJsonl,
   appendSeen,
@@ -264,6 +265,7 @@ function sweep(root: string, opts: { commit: boolean; peek: boolean }): { check:
     if (existsSync(p.watermark)) files.push(p.watermark);
     if (existsSync(p.outages)) files.push(p.outages);
     files.push(...changedCommitPaths(root, settings.commit_paths, files));
+    files.push(...changedMemoryFiles(root, settings, files));
     const why = commitOnly(root, files, `chore(cycle): ${subject}`);
     if (why) {
       // undo what this run logged, so no line claims an outcome that was not recorded
