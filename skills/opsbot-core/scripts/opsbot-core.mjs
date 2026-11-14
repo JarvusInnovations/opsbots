@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "30e8e5e" : "dev";
+    VERSION = true ? "ea33934" : "dev";
   }
 });
 
@@ -9393,9 +9393,12 @@ function renderItem(it, n, total2, gateWord) {
     if (it[f] === void 0) continue;
     out[f] = f === "kind" && typeof it.kind === "string" ? it.kind.toUpperCase() : it[f];
   }
-  if (gateWord && typeof it.text === "string" && gateWordIn(it.text, gateWord)) out.gate_word = "present";
+  if (gateWord && typeof it.text === "string" && gateWordIn(it.text, gateWord)) {
+    const voided = typeof it.gate_word_void === "string" && it.gate_word_void.trim() !== "";
+    out.gate_word = voided ? `present, does not count: ${String(it.gate_word_void).trim()}` : "present";
+  }
   for (const [k, v] of Object.entries(it)) {
-    if (k === "input" || k === "text" || k === "report" || CORE_FIELDS.includes(k)) continue;
+    if (k === "input" || k === "text" || k === "report" || k === "gate_word_void" || CORE_FIELDS.includes(k)) continue;
     out[k] = v;
   }
   if (it.text !== void 0) out.text = it.text;
