@@ -34,6 +34,7 @@ Each step is skipped when the piece is already there, so it is safe to run again
 | [Claude Code](https://code.claude.com/docs) | Runs Anthropic's installer |
 | Session history hook | `agent-recall-axi hook install --scope user`: every Claude Code session starts with the user's past sessions in reach, and gets a resume pack after a compaction |
 | [herdr](https://herdr.dev) | Runs its installer. A terminal multiplexer for agent sessions |
+| Session-log retention | Sets `cleanupPeriodDays` to 36500 in `~/.claude/settings.json`. Claude Code otherwise deletes session logs after 30 days |
 | herdr skill | `npx skills add -g ogulcancelik/herdr --skill herdr`: teaches agents to drive herdr, installed for the user so every project has it |
 | Skills | In a repo with a `skills-lock.json`, restores any skill that is missing |
 

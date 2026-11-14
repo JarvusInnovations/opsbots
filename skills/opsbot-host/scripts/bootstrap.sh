@@ -112,6 +112,9 @@ done
 
 # 6. Claude Code, herdr
 step claude 'claude --version' 'curl -fsSL https://claude.ai/install.sh | bash'
+# Claude Code deletes session logs after 30 days unless told otherwise; a bot's or a person's
+# history is the record agent-recall-axi reads, so keep it. Merged into the user's settings.
+step keep-sessions 'node -e "const fs=require(\"fs\");let j={};try{j=JSON.parse(fs.readFileSync(process.env.HOME+\"/.claude/settings.json\",\"utf8\"))}catch{};process.exit(j.cleanupPeriodDays===36500?0:1)" && echo "cleanupPeriodDays 36500"' 'node -e "const fs=require(\"fs\"),p=process.env.HOME+\"/.claude/settings.json\";let j={};if(fs.existsSync(p))j=JSON.parse(fs.readFileSync(p,\"utf8\"));j.cleanupPeriodDays=36500;fs.mkdirSync(process.env.HOME+\"/.claude\",{recursive:true});fs.writeFileSync(p,JSON.stringify(j,null,2)+\"\\n\")"'
 # agent-recall-axi's session hook, for every project this user opens: an agent starts each
 # session with its past sessions in reach, and gets a resume pack after a compaction.
 case " $TOOLS " in *" agent-recall-axi "*)
