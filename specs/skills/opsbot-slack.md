@@ -37,7 +37,7 @@ Outside the repo, on the bot's user:
 | slack-axi's own store | the bot token (`xoxb-`), set by `slack-axi auth login` |
 | `~/.cache/<bot>/slack-events.jsonl` | the events file: the listener appends, the reader reads, the session's monitor wakes on it |
 | `slack-own-threads.jsonl`, beside the events file | the bot's own top-level channel posts, remembered as thread roots: one `{conv, ts, recorded_at}` line each, written and read by the listener only, never items, never in `wake.files` |
-| `slack-classes.json`, beside the events file | the post command's cache: `{team, convs: {<conv>: {class, why, at}}, users: {<id>: {full, why, at}}, identity?: {token, user, name, team, at}}`; `identity.token` is the first 16 hex characters of the SHA-256 of the token, never the token; a failed lookup is never cached; never in `wake.files` |
+| `slack-classes.json`, beside the events file | the post command's cache: `{team, convs: {<conv>: {class, why, at}}, identity?: {token, user, name, team, at}}`; `identity.token` is the first 16 hex characters of the SHA-256 of the token, never the token; a failed lookup is never cached; never in `wake.files` |
 
 In the repo:
 
@@ -327,26 +327,50 @@ path to the operator, it must work while the screen is down, and its destination
 
 ### Destination classes
 
-Decided in code from Slack's own data, never from the model or the text. The post command reads
-the Web API with the token slack-axi will post with, resolved in slack-axi's own order:
-`SLACK_AXI_TOKEN` when set, else the store's token for the workspace `team` names, else
-slack-axi's default workspace, else its only one. It never prints it.
+Decided in code from Slack's own data, never from the model or the text. The post command runs
+`slack-axi audience <conv> --max-members <screen.max_members>` (with `--team` when `team` is
+set), slack-axi 1.6.0 or later, in the mode slack-axi posts in. slack-axi reads
+`conversations.info`, `conversations.members` and `users.info` with its own token and prints a
+`conversation` block (the sharing flags, `kind`, `num_members` when Slack gives it, `user` for a
+DM) and an `audience` summary (`members_checked: <n> of <total>`, `truncated`, and one count per
+category: `full`, `guests`, `external`, `other_workspace`, `deactivated`, `bots`, `unresolved`;
+each member in exactly one), then the members who are not full. The post command parses those
+blocks strictly: a block or a field it needs that is missing is a failed lookup.
 
 | Class | Decided when | Screened with |
 | --- | --- | --- |
-| `operator-dm` | `conversations.info` says `is_im`, and its `user` is in `operators`, or the conversation is `escalate_dm` | nothing; the screen is never called |
-| `internal` | not shared in any way (`is_shared`, `is_ext_shared`, `is_org_shared`, `is_pending_ext_shared` all false or absent), and every member, read from `conversations.members` to the last page, is a full member: `users.info` gives the bot's own `team_id` (from `auth.test`) and `is_restricted`, `is_ultra_restricted`, `is_stranger` and `deleted` are not true. A DM (`is_im`) is judged by its `user` alone | `screen.policy.internal` |
-| `external` | shared in any of those ways; or any member is a guest, a deactivated account, or from another team; or the conversation has more than `screen.max_members` members (`num_members`, or counted while paging) | `screen.policy.external` |
-| `unknown` | any lookup failed: no token, a Slack error, a missing field it needs, a timeout | as `external` |
+| `operator-dm` | `kind` is `im`, and its `user` is in `operators`, or the conversation is `escalate_dm` | nothing; the screen is never called |
+| `internal` | not shared in any way (`is_shared`, `is_ext_shared`, `is_org_shared`, `is_pending_ext_shared` all false or absent), not `truncated`, at least one member checked, and `guests`, `external`, `other_workspace`, `deactivated` and `unresolved` all `0` | `screen.policy.internal` |
+| `external` | shared in any of those ways; or `truncated` (more than `screen.max_members` members); or any of `guests`, `external`, `other_workspace`, `deactivated` above `0` | `screen.policy.external` |
+| `unknown` | any lookup failed: slack-axi exited non-zero, timed out or printed what the parser cannot read, an older slack-axi without `audience`, `unresolved` above `0`, no member checked, a DM with no `user` | as `external` |
+
+How the categories count, and why:
+
+- `bots` are full members. A bot of the bot's own workspace was always a full member: its
+  `users.info` has the workspace's `team_id` and no guest flag. A bot from another organization is
+  never in `bots`: slack-axi counts it `external`, since which organization can read matters more
+  than the account type.
+- `other_workspace` is external. It is a member of a sibling workspace in the same Enterprise
+  Grid org. The rule has always been that anyone whose `team_id` is not the bot's own is from
+  another organization; a narrower rule would let a reply reach a sibling workspace unscreened.
+- `truncated: true` is `external`, not `unknown`. It means slack-axi stopped paging at the bound,
+  so the channel has more members than `max_members`: that is known, and the class over the bound
+  has always been `external`. The `why` names `num_members` when slack-axi printed it.
+- `unresolved` above `0` is `unknown`: a member whose account could not be read is never assumed
+  full.
 
 - A DM with a full member who is not an operator is `internal`. Its readers are that person and
   the bot, both full members, which is the definition. A bot that must not tell even its own
   team something screens `internal` too.
 - A group DM (`is_mpim`) is judged like a channel, by its members.
-- Large channels: listing members pages by 200 and stops as soon as the count passes
-  `max_members`, and each member's `users.info` is cached in the same file for the same time,
-  so a busy channel costs its lookups once per `cache_seconds`. Over the bound the class is
-  `external`, never a guess at `internal`: the bound trades a screen call for certainty.
+- Large channels: slack-axi pages members and looks each one up, up to `max_members`, and stops
+  there. Nothing it reads is cached by slack-axi, so a channel's lookups are paid once per
+  `cache_seconds`, through the class cache. Over the bound the class is `external`, never a guess
+  at `internal`: the bound trades a screen call for certainty.
+- The post command reads slack-axi's token itself only for the posting identity's `auth.test`
+  (below), since no slack-axi command prints the live token's user id. Its resolver follows
+  slack-axi's own order: `SLACK_AXI_TOKEN` when set, else the store's token for the workspace
+  `team` names, else slack-axi's default workspace, else its only one. It never prints it.
 - The class and the one-line `why` are cached per conversation for `cache_seconds`. `unknown`
   is never cached. There is no invalidation on a membership change: the cache is short instead.
 - Without `screen` the class is still worked out and logged with every post, and an `unknown`
@@ -440,7 +464,7 @@ another way (slack-axi directly, the API) goes around both: the bot's allow rule
 | Command | Does | Exit |
 | --- | --- | --- |
 | `install [--dry-run] [--force]` | copies the three scripts into `opsbot.d/`, mode 755; a matching file is left, a differing one is left unless `--force`; prints each file written or left, then the `streams.slack` block and the `wake.files` entry to merge, and the manifest's path. Never writes `opsbot.json` | 0 · 2 |
-| `status` | one row each with `ok`, `missing` or `differs` and the fix: the app-level token file (present, mode 600, `xapp-`), slack-axi signed in in bot mode, each of the three scripts present, matching its template and executable, `bot_user` and `escalate_dm` set, the events file in `wake.files`, the unit `opsbot-<bot>-monitor-10-slack-listener.service` active; with `bot_user` set, the posting identity (`auth.test`'s user id and name; `ok` only when it is `bot_user`, else `differs`, or `missing` when no token resolves or `auth.test` fails); with `screen` set, the command executable inside the repo and every policy file present; with `listen_to` set, its value usable (`operators` needs `operators` or `escalate_dm`); with `intercept` set, every rule usable, and who can trigger them; with `files` set, the directory and limits | 0 all ok · 1 something to fix · 2 |
+| `status` | one row each with `ok`, `missing` or `differs` and the fix: the app-level token file (present, mode 600, `xapp-`), slack-axi signed in in bot mode, slack-axi 1.6.0 or later with the `audience` command (`missing` with the upgrade command otherwise), each of the three scripts present, matching its template and executable, `bot_user` and `escalate_dm` set, the events file in `wake.files`, the unit `opsbot-<bot>-monitor-10-slack-listener.service` active; with `bot_user` set, the posting identity (`auth.test`'s user id and name; `ok` only when it is `bot_user`, else `differs`, or `missing` when no token resolves or `auth.test` fails); with `screen` set, the command executable inside the repo and every policy file present; with `listen_to` set, its value usable (`operators` needs `operators` or `escalate_dm`); with `intercept` set, every rule usable, and who can trigger them; with `files` set, the directory and limits | 0 all ok · 1 something to fix · 2 |
 | `post <conv> [--reply <ts>] [--dry-run] [<markdown> \| -]` | [Posting](#posting-opsbot-slack-post) | 0 · 1 · 2 · 3 · 4 · 5 |
 | `classify <conv>` | the destination class alone, `{conv, class, why, cached}` | 0 · 2 |
 
@@ -457,6 +481,9 @@ Exit 2 is an unknown command or flag, or no `opsbot.json` at the repo root.
   step around is a rule in prose; the class and the screen live in the one path to Slack.
 - Who reads a destination is decided from Slack's data, and a doubt is `external`. Why: the
   session's sense of a channel is what a confused or injected session gets wrong.
+- That data is read through `slack-axi audience`, not by calling Slack with a token the kit
+  reads. Why: one implementation of who can read a conversation, in the tool that already holds
+  the token; the kit reads the token only where slack-axi has no command (the identity check).
 - The screen fails closed and never edits. Why: an error that posts lets the one draft the
   screen was for go out; an edited draft can say something its author did not mean.
 - The listener records only what it keeps and logs every event type it receives. Why: the
