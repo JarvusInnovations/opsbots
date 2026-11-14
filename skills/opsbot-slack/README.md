@@ -88,6 +88,24 @@ follows in a thread.
 - It cannot read direct messages between other people, or channels it is not in.
 - It knows when a new member joins the workspace.
 
+## A bot that answers only you (optional)
+
+An assistant-style bot works for one person. Three settings in `streams.slack` make it one,
+each off by default:
+
+- `"listen_to": "operators"` with your user id in `operators`: the bot hears only you. Anyone
+  else's DM or mention is dropped without a reaction, so they cannot tell the bot is there.
+- `"files": { "save": true }`: files you send it (images, PDFs and text, up to 25 MB) are saved
+  under `.scratch/slack-files/` in its checkout, where the bot can open them. The `files:read`
+  scope in the manifest already covers this.
+- `"intercept": [{ "prefix": "+ ", "command": ["bin/capture"] }]`: a DM starting with `+` goes
+  straight to a script of yours, with no model involved. It gets ✅ when the script took it, or
+  ⚠️ when the script failed, and then the bot reads the message as usual.
+
+If the bot runs as your own Linux user, slack-axi may also hold your own login. The bot always
+checks that it posts as itself: the `identity` row in `opsbot-slack status` says who it would
+post as, and a post as anyone else is refused.
+
 ## Screening what the bot posts (optional)
 
 The bot posts every message through one command, `opsbot-slack post`. Before it posts, the
