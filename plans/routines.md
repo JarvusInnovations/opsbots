@@ -1,6 +1,7 @@
 ---
 status: done
 done: 2026-11-14
+pr: 90
 depends: [memory-in-repo, sleep-and-wake]
 specs:
   - specs/skills/opsbot-core.md
