@@ -39,5 +39,10 @@
     "//": "Per-stream values the heartbeat scripts in opsbot.d/heartbeat.d/ read through $OPSBOT_CONFIG. The core does not look inside.",
     "chat": { "lookback_minutes": 30 }
   },
-  "repo_sync": "never-pull"
+  "repo_sync": "never-pull",
+  "memory": {
+    "//": "Claude Code's auto memory, kept in this repo: start points the session at dir (repo-relative) and every cycle commits it. review_days: how long after the last review the next one is due. Both optional, defaults shown. Set \"memory\": false to turn auto memory off; nothing leaves it at Claude Code's default location outside the repo.",
+    "dir": "memory",
+    "review_days": 7
+  }
 }
