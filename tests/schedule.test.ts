@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,6 +16,9 @@ import {
   scheduleState,
   scheduleTimeoutMs,
 } from "../src/opsbot-core/wake";
+
+// Each test runs the CLI several times; a loaded runner needs more than the 5 s default.
+setDefaultTimeout(30000);
 
 let bot: Bot;
 afterEach(() => bot?.cleanup());

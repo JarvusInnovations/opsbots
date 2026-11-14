@@ -104,7 +104,9 @@ globalThis.fetch = async (url, init) => {
   const method = u.slice("https://slack.com/api/".length);
   const p = Object.fromEntries(new URLSearchParams(init.body));
   appendFileSync(process.env.FAKE_SLACK_LOG, JSON.stringify({ method, p, auth: init.headers.Authorization }) + "\\n");
-  const v = fx[method];
+  let v = fx[method];
+  // A list is pages: the cursor names the page, the first page has none.
+  if (Array.isArray(v)) v = v[Number(p.cursor || 0)];
   if (v === "network") throw new Error("network down");
   return { status: 200, json: async () => v ?? { ok: false, error: "not_in_fixture" } };
 };
@@ -611,5 +613,148 @@ describe("the posting identity", () => {
     const none = bot().run(["status"], { env: { SLACK_AXI_TOKEN: "" } });
     expect(none.out).toMatch(/^missing\s+identity\s+no posting identity: no slack-axi workspace to read the bot token from/m);
     expect(none.out + none.err).not.toContain("xoxb-fake");
+  });
+});
+
+describe("peer bots: the loop guard", () => {
+  // Another bot the same operator runs, heard in one shared channel. Invented ids throughout.
+  const PEER = "U0PEER0001";
+  const PEER_BOT = "B0PEER0001";
+  const OWN_BOT = "B0BOT00001";
+  const PCHAN = "C0PEERCH01";
+  const ROOT = "1794402000.002000";
+  const PEERS = { peers: [{ name: "deskbot", user: PEER, bot_id: PEER_BOT, channels: [PCHAN] }], operators: [OPER] };
+  const audience = { ...AUDIENCE, [PCHAN]: report({ id: PCHAN, name: "#bots", kind: "channel" }, [bot_, [PEER, "bot", "bot"], [ANN, "full", ""]]) };
+  let n = 0;
+  const msg = (who: "me" | "peer" | "ann" | "oper-app" | "other", text = "words") => {
+    const ts = `1794402${String(100 + n++).padStart(3, "0")}.000100`;
+    if (who === "me") return { type: "message", user: BOT, bot_id: OWN_BOT, text, ts };
+    if (who === "peer") return { type: "message", user: PEER, bot_id: PEER_BOT, text, ts };
+    if (who === "oper-app") return { type: "message", user: OPER, bot_id: "B0ASSIST01", text, ts };
+    if (who === "other") return { type: "message", subtype: "bot_message", bot_id: "B0OTHER001", text, ts };
+    return { type: "message", user: ANN, text, ts };
+  };
+  const thread = (...who: Parameters<typeof msg>[0][]) => ({ ...FIXTURE, "conversations.replies": { ok: true, messages: who.map((w) => msg(w)), has_more: false } });
+  const replies = (b: ReturnType<typeof bot>) => b.api().filter((c) => c.method === "conversations.replies");
+
+  test("a reply in a peer thread is posted while the run is under peer_turns; the next bot-only turn is refused: exit 6, nothing sent, logged", () => {
+    // root by a person, then five bot turns: this post is the sixth
+    const b = bot(PEERS, { fixture: thread("ann", "peer", "me", "peer", "me", "peer"), audience });
+    const ok = b.run(["post", PCHAN, "--reply", ROOT, "done, the batch is filed"]);
+    expect(ok.code).toBe(0);
+    expect(ok.json).toMatchObject({ posted: true, peer: "deskbot" });
+    expect(replies(b)).toEqual([expect.objectContaining({ p: expect.objectContaining({ channel: PCHAN, ts: ROOT, limit: "200" }), auth: "Bearer xoxb-fake-test-token" })]);
+    const no = b.run(["post", PCHAN, "--reply", ROOT, "anything else?"]);
+    expect(no.code).toBe(6);
+    expect(no.json).toMatchObject({ posted: false, conv: PCHAN, screen: "skipped", peer_guard: "turns", peer: "deskbot", error: "6 turns between bots with no person; ask the operator" });
+    expect(no.json.next).toContain("@mention of an operator");
+    expect(posted(b)).toHaveLength(1);
+    // the thread was read once: the bot's own post was added to the cached thread
+    expect(replies(b)).toHaveLength(1);
+    const log = b.log();
+    expect(log.at(-1)).toMatchObject({ conv: PCHAN, reply_to: ROOT, peer: "deskbot", peer_guard: "turns", posted: false, screen: "skipped" });
+    expect(log[0]).toMatchObject({ peer: "deskbot", posted: true });
+    expect(readFileSync(join(b.root, "logs/slack-posts.jsonl"), "utf8")).not.toContain("anything else");
+    const cache = readFileSync(join(b.dir, "cache", "slack-classes.json"), "utf8");
+    expect(JSON.parse(cache).threads[`${PCHAN}:${ROOT}`].senders).toEqual(["h", "p:deskbot", "s", "p:deskbot", "s", "p:deskbot", "s"]);
+    expect(cache).not.toContain("words");
+  });
+
+  test("the root counts: a peer's mention and five replies make six, refused", () => {
+    const b = bot(PEERS, { fixture: thread("peer", "me", "peer", "me", "peer", "me"), audience });
+    expect(b.run(["post", PCHAN, "--reply", ROOT, "x"]).json).toMatchObject({ peer_guard: "turns", error: "6 turns between bots with no person; ask the operator" });
+  });
+
+  test("a person's message resets the count, an operator's post through an app too; other apps neither count nor reset", () => {
+    expect(bot(PEERS, { fixture: thread("peer", "me", "peer", "me", "peer", "me", "ann"), audience }).run(["post", PCHAN, "--reply", ROOT, "x"]).code).toBe(0);
+    expect(bot(PEERS, { fixture: thread("peer", "me", "peer", "me", "peer", "me", "oper-app", "peer"), audience }).run(["post", PCHAN, "--reply", ROOT, "x"]).code).toBe(0);
+    const other = bot(PEERS, { fixture: thread("ann", "peer", "me", "other", "peer", "me", "other", "peer", "me"), audience });
+    expect(other.run(["post", PCHAN, "--reply", ROOT, "x"]).json).toMatchObject({ peer_guard: "turns", error: "6 turns between bots with no person; ask the operator" });
+  });
+
+  test("peer_turns is the setting; a run of the bot alone, with no peer in it, is not a loop", () => {
+    expect(bot({ ...PEERS, peer_turns: 2 }, { fixture: thread("ann", "peer", "me"), audience }).run(["post", PCHAN, "--reply", ROOT, "x"]).json).toMatchObject({ peer_guard: "turns", error: "2 turns between bots with no person; ask the operator" });
+    const alone = bot(PEERS, { fixture: thread("peer", "ann", "me", "me", "me", "me", "me", "me", "me"), audience });
+    expect(alone.run(["post", PCHAN, "--reply", ROOT, "x"]).code).toBe(0);
+  });
+
+  test("a draft that @mentions an operator gets through once per run; a second ask in the same run is refused", () => {
+    const b = bot(PEERS, { fixture: thread("ann", "peer", "me", "peer", "me", "peer", "me"), audience });
+    expect(b.run(["post", PCHAN, "--reply", ROOT, "x"]).code).toBe(6);
+    const ask = b.run(["post", PCHAN, "--reply", ROOT, `<@${OPER}> we disagree on the rule; which way?`]);
+    expect(ask.code).toBe(0);
+    const again = b.run(["post", PCHAN, "--reply", ROOT, `<@${OPER}> still waiting`]);
+    expect(again.code).toBe(6);
+    expect(again.json.next).toContain("already asked the operator");
+    expect(posted(b)).toHaveLength(1);
+  });
+
+  test("the hourly cap: posts to a peer in one channel are counted from the log; another channel and a post with no peer are not limited", () => {
+    const b = bot({ ...PEERS, peer_posts_per_hour: 2 }, { audience });
+    expect(b.run(["post", PCHAN, `<@${PEER}> can you take the batch?`]).code).toBe(0);
+    expect(b.run(["post", PCHAN, `<@${PEER}> and the next one?`]).code).toBe(0);
+    const third = b.run(["post", PCHAN, `<@${PEER}> one more?`]);
+    expect(third.code).toBe(6);
+    expect(third.json).toMatchObject({ peer_guard: "hourly", peer: "deskbot", error: `2 posts to peers in ${PCHAN} in the last hour; ask the operator` });
+    expect(b.run(["post", PCHAN, "a note for the people here"]).code).toBe(0);
+    expect(b.run(["post", CHAN, `<@${PEER}> elsewhere`]).code).toBe(0);
+    expect(posted(b)).toHaveLength(4);
+    // top-level posts read no thread
+    expect(replies(b)).toEqual([]);
+    // an hour-old post no longer counts
+    const logPath = join(b.root, "logs/slack-posts.jsonl");
+    const old = new Date(Date.now() - 3700000).toISOString();
+    writeFileSync(logPath, readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.stringify({ ...JSON.parse(l), at: old })).join("\n") + "\n");
+    expect(b.run(["post", PCHAN, `<@${PEER}> fresh hour`]).code).toBe(0);
+  });
+
+  test("a peer thread that cannot be read refuses the reply: exit 6, unreadable", () => {
+    const b = bot(PEERS, { fixture: { ...FIXTURE, "conversations.replies": { ok: false, error: "missing_scope" } }, audience });
+    const r = b.run(["post", PCHAN, "--reply", ROOT, "x"]);
+    expect(r.code).toBe(6);
+    expect(r.json).toMatchObject({ peer_guard: "unreadable", error: "could not read the thread to count turns between bots: conversations.replies: missing_scope; nothing posted" });
+    expect(posted(b)).toEqual([]);
+    expect(r.out + r.err).not.toContain("xoxb-fake");
+  });
+
+  test("a long thread is read page by page, and the newest messages decide", () => {
+    const page1 = { ok: true, messages: ["ann", "peer", "me"].map((w) => msg(w as any)), has_more: true, response_metadata: { next_cursor: "1" } };
+    const page2 = { ok: true, messages: ["peer", "me", "peer", "me", "peer", "me"].map((w) => msg(w as any)), has_more: false };
+    const b = bot(PEERS, { fixture: { ...FIXTURE, "conversations.replies": [page1, page2] }, audience });
+    expect(b.run(["post", PCHAN, "--reply", ROOT, "x"]).json).toMatchObject({ peer_guard: "turns" });
+    expect(replies(b).map((c) => c.p.cursor ?? null)).toEqual([null, "1"]);
+  });
+
+  test("a thread with no peer in it, and any conversation outside the peers' channels, is posted as before with no extra read", () => {
+    const b = bot(PEERS, { fixture: thread("ann", "me", "me", "me", "me", "me", "me", "me"), audience });
+    const r = b.run(["post", PCHAN, "--reply", ROOT, "x"]);
+    expect(r.code).toBe(0);
+    expect(r.json).not.toHaveProperty("peer");
+    expect(b.log()[0]).not.toHaveProperty("peer");
+    const c = bot(PEERS, { fixture: thread("peer", "me", "peer", "me", "peer", "me", "peer"), audience });
+    expect(c.run(["post", CHAN, "--reply", ROOT, "x"]).code).toBe(0);
+    expect(replies(c)).toEqual([]);
+  });
+
+  test("--dry-run runs the guard and posts nothing", () => {
+    const b = bot(PEERS, { fixture: thread("ann", "peer", "me", "peer", "me", "peer", "me"), audience });
+    expect(b.run(["post", PCHAN, "--reply", ROOT, "--dry-run", "x"]).code).toBe(6);
+    expect(posted(b)).toEqual([]);
+  });
+
+  test("peers do not change the destination class: a channel with a peer in it is internal", () => {
+    const r = bot(PEERS, { audience }).run(["classify", PCHAN]);
+    expect(r.json).toMatchObject({ class: "internal" });
+  });
+
+  test("status: a peer-channels row, ok when the bot is in each listed channel, differs when it is not", () => {
+    expect(bot(PEERS, { audience }).run(["status"]).out).toMatch(new RegExp(`^ok\\s+peer-channels\\s+a member of ${PCHAN}`, "m"));
+    const out = { ...audience, [PCHAN]: report({ id: PCHAN, name: "#bots", kind: "channel", is_member: false }, [[PEER, "bot", "bot"], [ANN, "full", ""]]) };
+    const r = bot(PEERS, { audience: out }).run(["status"]);
+    expect(r.out).toMatch(new RegExp(`^differs\\s+peer-channels\\s+not a member of ${PCHAN}`, "m"));
+    expect(r.out).toMatch(/^\s+fix: invite the bot/m);
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(new RegExp(`^ok\\s+peers\\s+deskbot \\(${PEER}\\) in ${PCHAN}`, "m"));
+    expect(bot({ escalate_dm: ESC }, { audience }).run(["status"]).out).not.toMatch(/peer/);
   });
 });

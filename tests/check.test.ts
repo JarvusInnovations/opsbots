@@ -55,6 +55,17 @@ describe("check exit codes", () => {
     expect(again.code).toBe(0);
   });
 
+  test("a gate word on an item whose author cannot give it is flagged as not counting", () => {
+    bot = makeBot();
+    cli(bot, ["check"], { now: T0 });
+    writeStream(bot, [item(1, { text: "GOAHEAD from a bot", gate_word_void: "from a peer bot" }), item(2, { text: "no word here", gate_word_void: "from a peer bot" })]);
+    const r = cli(bot, ["check"], { now: "2026-03-02T15:10:00Z" });
+    expect(r.code).toBe(10);
+    expect(r.out).toContain("gate_word: \"present, does not count: from a peer bot\"");
+    expect(r.out).not.toMatch(/gate_word: present$/m);
+    expect(r.out).not.toContain("gate_word_void");
+  });
+
   test("20: degraded — the failed input named, what could be read still reported, never 'nothing new'", () => {
     bot = makeBot();
     cli(bot, ["check"], { now: T0 });
