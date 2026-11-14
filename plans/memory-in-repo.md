@@ -2,6 +2,7 @@
 status: done
 done: 2026-11-14
 depends: [start-command, scratch-dir]
+pr: 89
 specs:
   - specs/skills/opsbot-core.md
   - specs/architecture.md
