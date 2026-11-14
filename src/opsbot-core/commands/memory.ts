@@ -16,8 +16,11 @@ import { cliInvocation, skillDir } from "../invocation.js";
 import { nowIso, nowMs, requireRoot } from "../repo.js";
 import { loadSettings, trySettings, type Settings } from "../settings.js";
 import { appendJsonl, paths } from "../state.js";
+import { writeRun } from "../routine-store.js";
 import {
   MEMORY_INDEX,
+  MEMORY_ROUTINE,
+  memoryOverride,
   REVIEW_OUTCOME,
   ageText,
   clearSnapshot,
@@ -146,13 +149,26 @@ function review(args: string[]): Record<string, unknown> {
   }
   const c = reviewCounts(snap, listMemory(root, dir));
   const note = typeof flags.note === "string" ? flags.note : undefined;
+  const at = nowMs();
   const line: Record<string, unknown> = { at: nowIso(), outcome: REVIEW_OUTCOME, files: c.files, kept: c.kept, updated: c.updated, removed: c.removed, added: c.added };
   if (note !== undefined) line.note = note;
+  const counts = `${c.files} reviewed · kept ${c.kept} · updated ${c.updated} · removed ${c.removed} (folded or pruned) · added ${c.added}`;
+  // the review is a run of the memory-review routine; the cycle-log line stays for the counts
+  const run = writeRun(root, s, {
+    routine: MEMORY_ROUTINE,
+    title: memoryOverride(root, s)?.title ?? "Review the memory files",
+    atMs: at,
+    outcome: "done",
+    by: s.name,
+    notes: note !== undefined ? `${note}\n\n${counts}` : counts,
+    checked: [],
+    handed_to: null,
+  });
   appendJsonl(paths(root).log, line);
   clearSnapshot(root);
   const out: Record<string, unknown> = {
-    review: `done · ${c.files} reviewed · kept ${c.kept} · updated ${c.updated} · removed ${c.removed} (folded or pruned) · added ${c.added}`,
-    logged: "a memory-review line in the cycle log, committed with the next cycle",
+    review: `done · ${counts}`,
+    logged: `a run of the ${MEMORY_ROUTINE} routine (${run.file}) and a memory-review line in the cycle log, committed with the next cycle`,
   };
   if (note === undefined && c.removed > 0) out.help = ["Next time add --note saying what was folded where: the counts cannot tell a fold from a prune"];
   return out;

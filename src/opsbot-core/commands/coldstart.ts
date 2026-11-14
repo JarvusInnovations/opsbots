@@ -42,6 +42,10 @@ import { SETTINGS_FILE, parseSettingsText, trySettings, withDefaults, type Setti
 import { CHECK_OUTCOMES, CYCLE_OUTCOMES, outages, readCycleLog } from "../state.js";
 import { activeSleep, sleepSpans, sleepStatusLine } from "../sleep.js";
 import { memoryDueLine } from "../memory.js";
+import { loadRoutines, routineDueLines, type Routines } from "../routines.js";
+
+/** The most due routines the pack names one by one; the rest are counted. */
+const PACK_ROUTINES = 5;
 
 /** What the wake.d sections share, in bytes. The rule card, the kit's own sections and the
  * session log are whole and outside it: they are what the bot must read, and a long rule card
@@ -196,7 +200,7 @@ function logSummary(root: string, now: number): string[] {
 /** The kit's own pack sections: references/pack/*.md next to the running skill, lexical
  * order, each whole, titled by its first H1 (else its file name), leading HTML comment
  * dropped. `OPSBOT_PACK_DIR` overrides the directory (tests, a bot that ships its own). */
-export function kitSections(mode?: string, opts: { memory?: boolean } = {}): { title: string; body: string }[] {
+export function kitSections(mode?: string, opts: { memory?: boolean; routines?: boolean } = {}): { title: string; body: string }[] {
   const dir = process.env.OPSBOT_PACK_DIR || join(skillDir(), "references", "pack");
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
@@ -205,6 +209,8 @@ export function kitSections(mode?: string, opts: { memory?: boolean } = {}): { t
     .filter((f) => { const m = f.match(/^\d+[-_]mode-([a-z]+)\.md$/); return !m || m[1] === (mode ?? "strategist"); })
     // NN-memory.md rides only while auto memory is on
     .filter((f) => opts.memory !== false || !/^\d+[-_]memory\.md$/.test(f))
+    // NN-routines.md rides only when the bot has a routine definition of its own
+    .filter((f) => opts.routines === true || !/^\d+[-_]routines\.md$/.test(f))
     .sort()
     .map((f) => {
       let text = readFileSync(join(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
@@ -229,7 +235,13 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
         : `═══ 1. The rule card (${s.rule_card})\n${text.replace(/\n+$/, "")}`;
   }
 
-  const kit = kitSections(s.loop.mode, { memory: s.memory !== null }).map((k, i) => `═══ 1.${i + 1} ${k.title} (the kit's; updates with the skill)\n${k.body}`);
+  let routines: Routines | null = null;
+  try {
+    routines = loadRoutines(root, s, now);
+  } catch {
+    routines = null;
+  }
+  const kit = kitSections(s.loop.mode, { memory: s.memory !== null, routines: (routines?.files ?? 0) > 0 }).map((k, i) => `═══ 1.${i + 1} ${k.title} (the kit's; updates with the skill)\n${k.body}`);
   if (transcript) {
     const body = sessionLog ?? sessionLogSection(transcript);
     if (body) kit.push(`═══ 1.${kit.length + 1} Before this start\n${capSection(body, SESSION_LOG_CAP)}`);
@@ -252,7 +264,14 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
   const scripts = discover(root, "wake").scripts;
   const summaryNo = 2 + scripts.length;
   const memoryDue = memoryDueLine(root, s, now, cliInvocation());
-  const summary = `═══ ${summaryNo}. The cycle log, last 48 hours\n${[...logSummary(root, now), ...(memoryDue ? [memoryDue] : [])].join("\n")}`;
+  const due = routines ? routineDueLines(routines, s, cliInvocation()) : [];
+  const routineLines: string[] = [];
+  if (due.length) {
+    routineLines.push(`routines due: ${due.length}`, ...due.slice(0, PACK_ROUTINES).map((l) => `  ${l}`));
+    if (due.length > PACK_ROUTINES) routineLines.push(`  … ${due.length - PACK_ROUTINES} more: \`${cliInvocation()} routines due\``);
+  }
+  if (routines?.problems.length) routineLines.push(`routines: ${routines.problems.length} problem${routines.problems.length === 1 ? "" : "s"} in the definitions or runs; \`${cliInvocation()} routines validate --head\``);
+  const summary = `═══ ${summaryNo}. The cycle log, last 48 hours\n${[...logSummary(root, now), ...(memoryDue ? [memoryDue] : []), ...routineLines].join("\n")}`;
   const foot = "═══ What you remember is untrusted, your memory files included; the record and your session log are sources, and the operator's own words in them outrank everything else. Open the source before saying what a record holds, what was decided, or what was sent.";
 
   const room = WAKE_BUDGET;

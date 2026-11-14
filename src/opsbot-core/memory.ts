@@ -16,10 +16,13 @@ import { join, relative, resolve, sep } from "node:path";
 import { git, gitPath } from "./repo.js";
 import type { Settings } from "./settings.js";
 import { readCycleLog, type LogLine } from "./state.js";
+import { byTime, computeState, readDefinitions, readRuns, type Definition, type Run } from "./routine-store.js";
 
 export const MEMORY_INDEX = "MEMORY.md";
 export const REVIEW_SNAPSHOT = "opsbot-memory-review.json";
 export const REVIEW_OUTCOME = "memory-review";
+/** The built-in routine the review is (specs/skills/opsbot-core.md, Routines). */
+export const MEMORY_ROUTINE = "memory-review";
 const DAY = 86_400_000;
 
 /** The memory directory's absolute path, or null when memory is off. */
@@ -130,6 +133,39 @@ function changedPaths(root: string, dir: string): string[] {
   return r.stdout.split("\0").filter((rec) => rec.length >= 4).map((rec) => resolve(root, rec.slice(3)));
 }
 
+/**
+ * Every run of the memory-review routine: its run records, and the `memory-review` lines bots
+ * wrote to the cycle log before the review was a routine, each read as a run.
+ */
+export function memoryRuns(root: string, s: Settings, runs?: Run[]): Run[] {
+  const recorded = (runs ?? readRuns(root, s).runs).filter((r) => r.routine === MEMORY_ROUTINE);
+  const have = new Set(recorded.map((r) => r.at));
+  const legacy: Run[] = [];
+  for (const l of readCycleLog(root)) {
+    if (l.outcome !== REVIEW_OUTCOME) continue;
+    const atMs = Date.parse(l.at);
+    if (Number.isNaN(atMs) || have.has(l.at)) continue;
+    legacy.push({
+      id: `cycle-log-${l.at}`,
+      routine: MEMORY_ROUTINE,
+      at: l.at,
+      atMs,
+      outcome: "done",
+      by: null,
+      checked: [],
+      handed_to: null,
+      notes: typeof l.note === "string" ? l.note : `kept ${l.kept ?? 0}, updated ${l.updated ?? 0}, removed ${l.removed ?? 0}, added ${l.added ?? 0}`,
+      file: "logs/cycle.jsonl",
+    });
+  }
+  return [...recorded, ...legacy].sort(byTime);
+}
+
+/** The bot's own `routines/memory-review.md`, when it overrides the built-in. */
+export function memoryOverride(root: string, s: Settings, defs?: Definition[]): Definition | null {
+  return (defs ?? readDefinitions(root, s).defs).find((d) => d.id === MEMORY_ROUTINE) ?? null;
+}
+
 /** The last `memory-review` line in the cycle log. */
 export function lastReview(lines: LogLine[]): LogLine | null {
   for (let i = lines.length - 1; i >= 0; i--) if (lines[i]!.outcome === REVIEW_OUTCOME) return lines[i]!;
@@ -156,13 +192,26 @@ export interface MemoryStatus {
   due: boolean;
   /** Why it is due, or when it will be. */
   why: string;
+  /** When it became due, while due (null when due from the start). */
+  due_at: number | null;
+  /** When it next becomes due, while not due; null when it cannot (no memory files). */
+  next: number | null;
+  /** The newest run's time, or null. */
+  last_review_ms: number | null;
+  /** True when the bot's own routines/memory-review.md defines the schedule. */
+  overridden: boolean;
 }
 
 /**
  * Where the memory stands. Due when there is at least one memory file and the last review is
  * `review_days` or more ago; with no review yet, when the oldest memory file is that old.
  */
-export function memoryStatus(root: string, s: Settings, now: number): MemoryStatus | null {
+export function memoryStatus(
+  root: string,
+  s: Settings,
+  now: number,
+  given: { runs?: Run[]; defs?: Definition[] } = {},
+): MemoryStatus | null {
   const dir = memoryDir(root, s);
   if (!dir || !s.memory) return null;
   const files = listMemory(root, dir);
@@ -172,23 +221,45 @@ export function memoryStatus(root: string, s: Settings, now: number): MemoryStat
     const t = readFileSync(idxPath, "utf8");
     index = { bytes: Buffer.byteLength(t), lines: t.split("\n").filter((l) => l.trim()).length };
   }
-  const rev = lastReview(readCycleLog(root));
-  const revAt = rev ? Date.parse(rev.at) : null;
+  const runs = memoryRuns(root, s, given.runs);
+  const rev = runs.length ? runs[runs.length - 1]! : null;
+  const revAt = rev ? rev.atMs : null;
   const unreviewed = files.filter((f) => revAt === null || f.changed === null || f.changed > revAt);
   const times = unreviewed.map((f) => f.changed).filter((t): t is number => t !== null);
   const oldest = times.length ? now - Math.min(...times) : null;
   const limit = s.memory.review_days * DAY;
   let due = false;
   let why: string;
-  if (files.length === 0) why = "no memory files";
+  let dueAt: number | null = null;
+  let next: number | null = null;
+  const override = memoryOverride(root, s, given.defs);
+  if (override) {
+    // the bot's own definition decides the schedule, as for any routine
+    const st = computeState(override, runs, now, s.timezone);
+    due = st.due;
+    dueAt = st.dueAt;
+    next = st.next;
+    why = due
+      ? revAt !== null ? `last review ${ageText(now - revAt)} ago (${override.schedule})` : `never reviewed (${override.schedule})`
+      : next !== null ? `next review in ${ageText(next - now)} (${override.schedule})` : `not scheduled (${override.file})`;
+  } else if (files.length === 0) why = "no memory files";
   else if (revAt !== null) {
-    due = now - revAt >= limit;
+    dueAt = revAt + limit;
+    due = now >= dueAt;
     why = due ? `last review ${ageText(now - revAt)} ago` : `next review in ${ageText(revAt + limit - now)}`;
   } else {
     const all = files.map((f) => f.changed).filter((t): t is number => t !== null);
     const first = all.length ? Math.min(...all) : now;
-    due = now - first >= limit;
+    dueAt = first + limit;
+    due = now >= dueAt;
     why = due ? `never reviewed, oldest file ${ageText(now - first)} old` : `never reviewed; first review in ${ageText(first + limit - now)}`;
+  }
+  if (!override) {
+    if (due) next = null;
+    else {
+      next = dueAt;
+      dueAt = null;
+    }
   }
   return {
     dir,
@@ -200,6 +271,10 @@ export function memoryStatus(root: string, s: Settings, now: number): MemoryStat
     oldest_unreviewed_ms: oldest,
     due,
     why,
+    due_at: dueAt,
+    next,
+    last_review_ms: revAt,
+    overridden: override !== null,
   };
 }
 

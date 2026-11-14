@@ -10,7 +10,8 @@ import { delayLine, nextDelay } from "../cadence.js";
 import { cliInvocation } from "../invocation.js";
 import { POINTS, POINT_DIRS, discover, parsePoint, type Point } from "../lifecycle.js";
 import { nowMs, parseIso, requireRoot, showHead } from "../repo.js";
-import { SETTINGS_FILE, loadSettings, parseSettingsText } from "../settings.js";
+import { SETTINGS_FILE, loadSettings, parseSettingsText, withDefaults } from "../settings.js";
+import { routineProblems } from "./routines.js";
 import { judgeLock, pidAlive, readCycleLog, readLock, releaseLock, type LogLine } from "../state.js";
 
 // ------------------------------------------------------------ next-delay
@@ -194,6 +195,8 @@ export function settingsCommand(args: string[]): Record<string, unknown> {
       // not our file to judge
     }
   }
+  // the routine definitions are the bot's program: validated with its settings
+  if (raw && problems.length === 0) problems.push(...routineProblems(root, withDefaults(raw), flags.head === true));
   if (problems.length) {
     setExit(1);
     return { settings: `invalid · ${where} · ${problems.length} problem${problems.length === 1 ? "" : "s"}`, problems };

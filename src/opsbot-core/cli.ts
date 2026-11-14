@@ -14,6 +14,7 @@ import { hookCommand } from "./commands/hook.js";
 import { startCommand } from "./commands/start.js";
 import { sleepCommand } from "./commands/sleep.js";
 import { memoryCommand } from "./commands/memory.js";
+import { routinesCommand } from "./commands/routines.js";
 import { hooksCommand, lockCommand, logCommand, nextDelayCommand, settingsCommand } from "./commands/simple.js";
 
 const CLI = cliInvocation();
@@ -45,6 +46,7 @@ const COMMANDS: Record<string, AxiCliCommand<undefined>> = {
   settings: (a) => settingsCommand(a),
   start: (a) => startCommand(a),
   memory: (a) => memoryCommand(a),
+  routines: (a) => routinesCommand(a),
   // shadows the SDK's npm self-update: this CLI ships inside a skill
   update: () => {
     throw new AxiError("opsbot-core ships inside a skill, not on npm", "VALIDATION_ERROR", [
