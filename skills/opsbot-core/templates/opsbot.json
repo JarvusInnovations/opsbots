@@ -39,5 +39,15 @@
     "//": "Per-stream values the heartbeat scripts in opsbot.d/heartbeat.d/ read through $OPSBOT_CONFIG. The core does not look inside.",
     "chat": { "lookback_minutes": 30 }
   },
-  "repo_sync": "never-pull"
+  "repo_sync": "never-pull",
+  "memory": {
+    "//": "Claude Code's auto memory, kept in this repo: start points the session at dir (repo-relative) and every cycle commits it. review_days: how long after the last review the next one is due. Both optional, defaults shown. Set \"memory\": false to turn auto memory off; nothing leaves it at Claude Code's default location outside the repo.",
+    "dir": "memory",
+    "review_days": 7
+  },
+  "routines": {
+    "//": "Optional; defaults shown. dir holds the routine definitions (one markdown file per routine: the schedule in TOML frontmatter, the instructions in the body), read at HEAD and changed only through review, like the rule card; runs_dir holds one record per run, written by `routines done` and committed with the cycles. A bot without these directories has no routines of its own; the memory review is built in while memory is on. Copy templates/routines/weekly-backup-check.md to start one.",
+    "dir": "routines",
+    "runs_dir": "records/routine-runs"
+  }
 }

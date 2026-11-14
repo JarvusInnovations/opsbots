@@ -64,6 +64,26 @@ export interface Sleep {
   compact: boolean;
 }
 
+/** Auto memory in the bot's repo (specs/skills/opsbot-core.md, Auto memory). */
+export interface Memory {
+  /** Repo-relative directory the session's auto memory lives in. */
+  dir: string;
+  /** Days after the last review that the next one is due. */
+  review_days: number;
+}
+
+export const DEFAULT_MEMORY: Memory = { dir: "memory", review_days: 7 };
+
+/** Where the routine definitions and their run records live (specs/skills/opsbot-core.md, Routines). */
+export interface Routines {
+  /** Repo-relative directory of the definitions, one markdown file per routine; read at HEAD. */
+  dir: string;
+  /** Repo-relative directory of the run records, under YYYY/MM/. */
+  runs_dir: string;
+}
+
+export const DEFAULT_ROUTINES: Routines = { dir: "routines", runs_dir: "records/routine-runs" };
+
 export const DEFAULT_SLEEP: Sleep = { after_minutes: 60, probe_minutes: 10, max_minutes: 480, compact: true };
 
 export interface Settings {
@@ -86,6 +106,10 @@ export interface Settings {
   commit_paths: string[];
   /** Null when `sleep` is absent: the bot never sleeps. */
   sleep: Sleep | null;
+  /** Null when `memory: false`: auto memory is off. Never Claude Code's default location. */
+  memory: Memory | null;
+  /** Always set; absent directories mean no routines of the bot's own. */
+  routines: Routines;
 }
 
 /** The kit's defaults (specs/architecture.md, Next wake; specs/skills/opsbot-core.md). */
@@ -188,6 +212,8 @@ export function validateSettings(raw: unknown): string[] {
     "host",
     "commit_paths",
     "sleep",
+    "memory",
+    "routines",
   ]);
   str(raw, "name", "", true, NAME_RE, "must be lowercase letters, digits and dashes, starting with a letter");
   str(raw, "mark", "", true);
@@ -288,6 +314,21 @@ export function validateSettings(raw: unknown): string[] {
     }
   }
   if (raw.commit_paths !== undefined) problems.push(...commitPathProblems(raw.commit_paths));
+  if (raw.memory !== undefined && raw.memory !== false) {
+    if (!isObj(raw.memory)) problems.push("memory must be an object ({dir, review_days}) or false");
+    else {
+      allow(raw.memory, "memory.", ["dir", "review_days"]);
+      posInt(raw.memory, "review_days", "memory.");
+      if (raw.memory.dir !== undefined) problems.push(...memoryDirProblems(raw.memory.dir));
+    }
+  }
+  const routines = obj(raw, "routines", "", false);
+  if (routines) {
+    allow(routines, "routines.", ["dir", "runs_dir"]);
+    for (const k of ["dir", "runs_dir"]) {
+      if (routines[k] !== undefined) problems.push(...repoDirProblems(routines[k], `routines.${k}`));
+    }
+  }
   const sleep = obj(raw, "sleep", "", false);
   if (sleep) {
     allow(sleep, "sleep.", ["after_minutes", "probe_minutes", "max_minutes", "compact"]);
@@ -322,6 +363,31 @@ function commitPathProblems(v: unknown): string[] {
     else if (segs.length === 0) problems.push(`commit_paths ${JSON.stringify(f)} names the repo itself, not a file`);
   }
   return problems;
+}
+
+/**
+ * `memory.dir`: a repo-relative directory inside the checkout. Refuses an absolute path, a `..`
+ * segment, the repo itself, and anything under `.git/`, `.claude/` or `.scratch/`.
+ */
+function memoryDirProblems(v: unknown): string[] {
+  return repoDirProblems(v, "memory.dir");
+}
+
+/** A repo-relative directory inside the checkout, committed: `memory.dir`, `routines.dir`, `routines.runs_dir`. */
+function repoDirProblems(v: unknown, key: string): string[] {
+  if (typeof v !== "string" || !v.trim()) return [`${key} must be a non-empty repo-relative path`];
+  const segs = v.split(/[\\/]+/).filter((x) => x !== "" && x !== ".");
+  const q = JSON.stringify(v);
+  if (v.startsWith("/") || v.startsWith("~") || /^[A-Za-z]:/.test(v)) return [`${key} ${q} must be relative to the repo, not absolute`];
+  if (segs.includes("..")) return [`${key} ${q} must not contain a .. segment: it stays inside the repo`];
+  if (segs.length === 0) return [`${key} ${q} names the repo itself, not a directory in it`];
+  if ([".git", ".claude", ".scratch"].includes(segs[0]!)) return [`${key} ${q} is under ${segs[0]}/, which is never committed`];
+  return [];
+}
+
+/** A settings directory value made canonical: `/`-separated, no empty or `.` segments. */
+function cleanDir(v: unknown, d: string): string {
+  return typeof v === "string" ? v.split(/[\\/]+/).filter((x) => x !== "" && x !== ".").join("/") : d;
 }
 
 /** Fill defaults into a settings object that validated. */
@@ -403,6 +469,17 @@ export function withDefaults(raw: Json): Settings {
           compact: pick(raw.sleep.compact, DEFAULT_SLEEP.compact),
         }
       : null,
+    memory:
+      raw.memory === false
+        ? null
+        : {
+            dir: isObj(raw.memory) && typeof raw.memory.dir === "string" ? raw.memory.dir.split(/[\\/]+/).filter((x) => x !== "" && x !== ".").join("/") : DEFAULT_MEMORY.dir,
+            review_days: isObj(raw.memory) && typeof raw.memory.review_days === "number" ? raw.memory.review_days : DEFAULT_MEMORY.review_days,
+          },
+    routines: {
+      dir: cleanDir(isObj(raw.routines) ? raw.routines.dir : undefined, DEFAULT_ROUTINES.dir),
+      runs_dir: cleanDir(isObj(raw.routines) ? raw.routines.runs_dir : undefined, DEFAULT_ROUTINES.runs_dir),
+    },
   };
 }
 

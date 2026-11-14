@@ -29,17 +29,17 @@ export const COMMAND_GROUPS: CommandGroup[] = [
       {
         usage: "check [--no-commit]",
         summary:
-          "Run every `opsbot.d/heartbeat.d/` script, record seen keys, log, commit. Exit 0 nothing new · 10 new (digest) · 20 degraded (failed inputs named) · 2 cannot run.",
+          "Run every `opsbot.d/heartbeat.d/` script and the core's `routines` input (one item per due routine occurrence), record seen keys, log, commit. Exit 0 nothing new · 10 new (digest) · 20 degraded (failed inputs named) · 2 cannot run.",
       },
       {
         usage: "cycle end --records N [--degraded] [--summary TEXT]",
         summary:
-          "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle. With `sleep` set, a `sleep` field may replace `wake`, as at `cycle begin`.",
+          "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle. With `sleep` set, a `sleep` field may replace `wake`, as at `cycle begin`. When the memory review is due, one `memory` line says so with the command to run, and a `routines` field names each other due routine; neither blocks the cycle.",
       },
       {
         usage: "check --peek",
         summary:
-          "Run every heartbeat script as a check does (each also gets `OPSBOT_PEEK=1`) and print the count of new items per input. Records, logs and commits nothing; the watermark and seen keys are untouched, so the next check sees the same items. Exit 0 · 10 · 20 · 2 as `check`.",
+          "Run every heartbeat script and the `routines` input as a check does (each script also gets `OPSBOT_PEEK=1`) and print the count of new items per input. Records, logs and commits nothing; the watermark and seen keys are untouched, so the next check sees the same items. Exit 0 · 10 · 20 · 2 as `check`.",
       },
       { usage: "next-delay", summary: "Seconds until the next cycle and why, from the cycle log and the cadence table. With `loop.schedule: monitor`, never over 1740 (29 min), and the reason says when that cap applied." },
     ],
@@ -50,12 +50,12 @@ export const COMMAND_GROUPS: CommandGroup[] = [
       {
         usage: "start [--continue] [--dry-run] [-- <extra claude args>]",
         summary:
-          "Launch the bot's Claude Code session with the flags opsbot.json implies: permission mode (default auto), model, autocompact window, autocompact forced on, and `loop.prompt` as the first message. `--continue` resumes the last session in this checkout. A bot's `bin/start` shim calls this.",
+          "Launch the bot's Claude Code session with the flags opsbot.json implies: permission mode (default auto), model, autocompact window, autocompact forced on, auto memory in the repo (`autoMemoryDirectory` set to `memory.dir` as an absolute path, created when missing; off with `memory: false`), and `loop.prompt` as the first message. `--continue` resumes the last session in this checkout. A bot's `bin/start` shim calls this.",
       },
       {
         usage: "cold-start [--write]",
         summary:
-          "Print the reground pack: the rule card, the kit's sections (house style, delegation, what the session log says, the live wake to arm), each `wake.d/` section, the last 48 hours of the cycle log, the untrusted-memory line. `--write` also makes sure `.scratch/` exists and is git-excluded, writes the pack to `.scratch/opsbot-core/reground.md`, sets the pending flag and records the session log's path for `cycle` and `nudge`.",
+          "Print the reground pack: the rule card, the kit's sections (house style, delegation, what the session log says, the live wake to arm), each `wake.d/` section, the last 48 hours of the cycle log (with one line when the memory review is due and a few naming the other due routines), the untrusted-memory line; the routines section rides when the bot has a routine definition. `--write` also makes sure `.scratch/` exists and is git-excluded, writes the pack to `.scratch/opsbot-core/reground.md`, sets the pending flag and records the session log's path for `cycle` and `nudge`.",
       },
       {
         usage: "gate check",
@@ -72,6 +72,48 @@ export const COMMAND_GROUPS: CommandGroup[] = [
         summary: "Record, close or list outages: failed-turn, refused, plan-limit, session-ended, stopped.",
       },
       { usage: "log tail [--n N]", summary: "The last N cycle-log lines (default 10)." },
+    ],
+  },
+  {
+    group: "Memory",
+    commands: [
+      {
+        usage: "memory status",
+        summary:
+          "The repo's auto-memory directory (`memory.dir`): memory files, their bytes, the `MEMORY.md` index's size, the oldest unreviewed file's age, the last review, and whether one is due (`review_days` after the last run of the `memory-review` routine, or, never reviewed, after the oldest file).",
+      },
+      {
+        usage: "memory review --begin | memory review --done [--note TEXT]",
+        summary:
+          "`--begin` snapshots the directory under `.git/` and prints the worksheet: one row per file (name, frontmatter `type`, bytes, age, changed since the last review), the protocol, and the path of `references/memory-review.md`. `--done` diffs against the snapshot, records a run of the `memory-review` routine and logs `memory-review` with `kept`, `updated`, `removed` (folded or pruned) and `added`; say in `--note` what was folded where.",
+      },
+      {
+        usage: "memory import <path> [--dry-run]",
+        summary:
+          "Copy memory files from another directory (Claude Code's default location) into `memory.dir`: never overwrites (a different file of the same name is a reported clash), merges `MEMORY.md` index lines without duplicates, reads nothing but `<path>`. The next cycle commits them.",
+      },
+    ],
+  },
+  {
+    group: "Routines",
+    commands: [
+      {
+        usage: "routines [due [--all]]",
+        summary:
+          "The routines due now (definitions in `routines.dir` at HEAD, plus the built-in `memory-review` while memory is on): id, title, schedule, since when, last run. `--all` lists every routine with its state, last run, next due time and source. Exit 1 when a definition or run record is invalid (named).",
+      },
+      { usage: "routines view <id>", summary: "One routine: schedule, source (a file at HEAD, or built in), state, last run, and its instructions, the definition's body." },
+      { usage: "routines history <id>", summary: "The routine's runs in order with outcome, days since the one before and any missed stretch or slots; then the time since the last and whether it is due." },
+      {
+        usage: "routines done <id> --notes TEXT [--outcome done|partial|skipped|blocked] [--checked ITEM]... [--handed-to WHO] [--at ISO]",
+        summary:
+          "Record one run under `routines.runs_dir` (`YYYY/MM/<id>.md`), committed with the next cycle; prints when the routine is next due. Refuses an unknown or inactive routine, empty notes, an unknown outcome or a future `--at`. Never touches the definitions.",
+      },
+      {
+        usage: "routines validate [--head]",
+        summary:
+          "Parse every definition (working tree, or HEAD) and run record and name each problem: unparseable file, unknown key, bad or mismatched id, duplicate id, bad cadence, both or neither of interval and slot, a slot without days, bad time, day or `since`.",
+      },
     ],
   },
   {
@@ -101,7 +143,7 @@ export const COMMAND_GROUPS: CommandGroup[] = [
         summary: "Register the SessionStart (`cold-start --write`) and PreToolUse (`gate check`) hooks; project scope by default.",
       },
       { usage: "hooks list [--point P]", summary: "Every script that will run at each lifecycle point, in order, with its source." },
-      { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, or a cadence over the cap." },
+      { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; and any invalid routine definition." },
     ],
   },
 ];

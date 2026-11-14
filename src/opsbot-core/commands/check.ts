@@ -22,6 +22,9 @@ import { cliInvocation } from "../invocation.js";
 import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
 import { blockedBy, changedCommitPaths, commitOnly, firstLine, hasHead, iso, nowMs, parseIso, requireRoot } from "../repo.js";
 import { loadSettings } from "../settings.js";
+import { changedMemoryFiles } from "../memory.js";
+import { changedRunFiles } from "../routine-store.js";
+import { loadRoutines, routineItems } from "../routines.js";
 import {
   appendJsonl,
   appendSeen,
@@ -179,16 +182,8 @@ function sweep(root: string, opts: { commit: boolean; peek: boolean }): { check:
   // every key recorded this run, reported or quiet, in order
   const recorded: string[] = [];
   const recordedSet = new Set<string>();
-  for (const s of scripts) {
-    const env = baseEnv(root, settings, configPath, "heartbeat", {
-      OPSBOT_SINCE: SINCE,
-      OPSBOT_SEEN: p.seen,
-      OPSBOT_WATERMARK: wm ?? "",
-      ...(opts.peek ? { OPSBOT_PEEK: "1" } : {}),
-    });
-    const r = runScript(s, root, env);
-    const { items: got, bad } = parseItems(r.stdout, s.name);
-    // new when any of its keys is not yet seen; then every one of its keys is recorded
+  // new when any of its keys is not yet seen; then every one of its keys is recorded
+  const take = (got: Item[]): { fresh: Item[]; quiet: number } => {
     const fresh: Item[] = [];
     let quiet = 0;
     for (const it of got) {
@@ -202,6 +197,18 @@ function sweep(root: string, opts: { commit: boolean; peek: boolean }): { check:
       if (it.report === false) quiet++;
       else fresh.push(it);
     }
+    return { fresh, quiet };
+  };
+  for (const s of scripts) {
+    const env = baseEnv(root, settings, configPath, "heartbeat", {
+      OPSBOT_SINCE: SINCE,
+      OPSBOT_SEEN: p.seen,
+      OPSBOT_WATERMARK: wm ?? "",
+      ...(opts.peek ? { OPSBOT_PEEK: "1" } : {}),
+    });
+    const r = runScript(s, root, env);
+    const { items: got, bad } = parseItems(r.stdout, s.name);
+    const { fresh, quiet } = take(got);
     items.push(...fresh);
     if (r.code !== 0) {
       failed(s.name, `exit ${r.code}: ${firstLine(r.stderr) || "no message"}`, fresh.length, quiet);
@@ -209,6 +216,29 @@ function sweep(root: string, opts: { commit: boolean; peek: boolean }): { check:
       failed(s.name, `${bad} line${bad === 1 ? "" : "s"} of output not a heartbeat item ({key, at, conv, kind, from, text})`, fresh.length, quiet);
     } else {
       inputs.push({ input: s.name, ok: true, new: fresh.length, quiet });
+    }
+  }
+
+  // the core's own input: one item per due routine occurrence. Listed only when the bot has a
+  // definition or there is something to say, so a bot without routines reads as before.
+  {
+    let got: Item[] = [];
+    let problems: string[] = [];
+    let files = 0;
+    try {
+      const r = loadRoutines(root, settings, startMs);
+      got = routineItems(r, settings, startMs, cliInvocation()).map((it) => ({ ...(it as { key: string }), input: "routines" }));
+      problems = r.problems;
+      files = r.files;
+    } catch (e) {
+      problems = [`the routines could not be read: ${(e as Error).message}`];
+    }
+    if (files > 0 || got.length > 0 || problems.length > 0) {
+      const { fresh, quiet } = take(got);
+      items.push(...fresh);
+      if (problems.length) {
+        failed("routines", `${problems.length} problem${problems.length === 1 ? "" : "s"}, first ${problems[0]}; run \`${cliInvocation()} routines validate --head\``, fresh.length, quiet);
+      } else inputs.push({ input: "routines", ok: true, new: fresh.length, quiet });
     }
   }
 
@@ -264,6 +294,8 @@ function sweep(root: string, opts: { commit: boolean; peek: boolean }): { check:
     if (existsSync(p.watermark)) files.push(p.watermark);
     if (existsSync(p.outages)) files.push(p.outages);
     files.push(...changedCommitPaths(root, settings.commit_paths, files));
+    files.push(...changedMemoryFiles(root, settings, files));
+    files.push(...changedRunFiles(root, settings, files));
     const why = commitOnly(root, files, `chore(cycle): ${subject}`);
     if (why) {
       // undo what this run logged, so no line claims an outcome that was not recorded

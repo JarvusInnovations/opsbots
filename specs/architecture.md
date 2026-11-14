@@ -130,7 +130,18 @@ has been read whole. The pack, in order, within a size budget the tests hold:
 2. what is owed: fixes not yet told, open requests with the bot's next move (overdue
    first), due promises, open escalations
 3. a 48-hour summary of the cycle log: counts, longest gap, last degraded, outages
-4. "memory before this point is untrusted; open the source before saying"
+4. "memory before this point is untrusted; open the source before saying", which covers
+   the auto-memory files the session loaded too
+
+Auto memory, the notes Claude Code keeps between sessions, lives in the bot's repo and is
+committed with its cycles; a routine review folds each note into the record, updates it,
+keeps it or prunes it ([opsbot-core](skills/opsbot-core.md#auto-memory)).
+
+Recurring work is a routine: a definition in the bot's `routines/` (the schedule as
+frontmatter, the instructions as the body; reviewed like the rule card) and one run record per
+execution in its record. Due is computed from the runs, never stored; a due routine is one
+item in the check ([opsbot-core](skills/opsbot-core.md#routines)). The memory review is the
+first built-in routine.
 
 Autocompaction is on with a window the bot sets in one place; the launch line and the
 settings file agree because the settings file is the only place it is set.

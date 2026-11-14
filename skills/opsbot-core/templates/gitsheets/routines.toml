@@ -1,0 +1,56 @@
+# Optional: install as .gitsheets/routines.toml so the routine definitions can also be read with
+# gitsheets. opsbot-core reads and validates them itself and never needs this file. Set `root`
+# to routines.dir when opsbot.json moves it.
+[gitsheet]
+root = 'routines'
+path = '${{ id }}'
+
+[gitsheet.format]
+type = 'markdown'
+body = 'body'
+
+[gitsheet.schema]
+additionalProperties = false
+type = 'object'
+required = ['id', 'title', 'body']
+
+[gitsheet.schema.properties.id]
+type = 'string'
+pattern = '^[a-z0-9][a-z0-9-]{1,60}$'
+
+[gitsheet.schema.properties.title]
+type = 'string'
+
+[gitsheet.schema.properties.cadence]
+type = 'string'
+pattern = '^(daily|weekly|monthly|quarterly|yearly|every [0-9]+d)$'
+
+[gitsheet.schema.properties.every]
+type = 'string'
+pattern = '^[0-9]+d$'
+
+[gitsheet.schema.properties.at]
+type = 'string'
+pattern = '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+description = 'Preferred local time in the bot timezone; goes with days.'
+
+[gitsheet.schema.properties.days]
+type = 'array'
+items = { type = 'integer', minimum = 1, maximum = 7 }
+description = 'ISO weekdays the slot exists on (1 = Monday).'
+
+[gitsheet.schema.properties.since]
+type = 'string'
+
+[gitsheet.schema.properties.active]
+type = 'boolean'
+
+[gitsheet.schema.properties.owner]
+type = 'string'
+
+[gitsheet.schema.properties.hands_to]
+type = 'string'
+
+[gitsheet.schema.properties.body]
+type = 'string'
+description = 'The instructions: what to check, what done looks like, who gets what.'

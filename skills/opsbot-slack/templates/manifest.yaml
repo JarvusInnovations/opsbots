@@ -52,7 +52,7 @@ oauth_config:
       - reactions:read       # see reactions on its own messages
       - reactions:write      # the receipt and read reactions the listener adds
       - users:read           # names for the people it reads; no email addresses
-      - files:read           # attachments in the conversations it reads
+      - files:read           # attachments in the conversations it reads; streams.slack.files saves them
 settings:
   event_subscriptions:
     bot_events:

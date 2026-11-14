@@ -8,6 +8,7 @@ import { cliInvocation } from "../invocation.js";
 import { findRoot, nowMs, parseIso } from "../repo.js";
 import { trySettings } from "../settings.js";
 import { readSleep, sleepStatusLine } from "../sleep.js";
+import { memoryStatus, memoryStatusLine } from "../memory.js";
 import { judgeLock, lastCheck, outages, readCycleLog } from "../state.js";
 
 function age(ms: number): string {
@@ -57,6 +58,9 @@ export function homeCommand(): Record<string, unknown> {
     next_wake: delayLine(nextDelay(s, lines, now)),
     failed_inputs: failed,
     open_outages: open,
+    memory: ((): string => {
+      try { return memoryStatusLine(memoryStatus(root, s, now)); } catch { return "cannot be read"; }
+    })(),
     ...(s.sleep ? { sleep: ((st) => (st ? sleepStatusLine(s, st) : "awake"))(readSleep(root)) } : {}),
     help: [
       `Run \`${cli} cycle begin\` to start a cycle`,

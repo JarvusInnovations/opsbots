@@ -4,7 +4,8 @@
 // after $OPSBOT_SINCE less streams.slack.lookback_minutes:
 //
 //   {key, at, conv, kind: "dm"|"group", from, text, ts, thread_ts?, reply?, event,
-//    reaction?, from_slack?, from_note?, thread?: {n, parent, last_mine, full, note?}, ...lookup}
+//    reaction?, files?, intercept?, from_slack?, from_note?, thread?: {n, parent, last_mine, full, note?},
+//    ...lookup}
 //
 // - key is the listener's (slack:<conv>:<ts>:msg, slack:<conv>:<ts>:<emoji>:<user>,
 //   slack:team_join:<user>), so it is the same on every run and the core drops what it has seen.
@@ -12,6 +13,9 @@
 //   the message is threaded, else the message itself. Use it whole: `opsbot-slack post <reply> "…"`,
 //   the only way the bot posts. The loop never chooses a thread, so an answer cannot land in the
 //   wrong one.
+// - files, as the listener recorded them: [{id, name, mimetype, size, path?, skipped?}]; path is
+//   a saved local copy (streams.slack.files.save), skipped says why there is none.
+// - intercept is "failed: <why>" when an intercept command failed and the message came through anyway.
 // - from_slack is what `slack-axi user` returns for the sender (name, display_name, kind, and
 //   title or email only when the token's scopes return them), one call per sender per check.
 // - thread, for a threaded message: the message count, the parent's first 240 characters, the
@@ -166,6 +170,8 @@ for (const line of readFileSync(file, "utf8").split("\n")) {
     from: ev.from, text: ev.text, ts: ev.ts, thread_ts: ev.thread_ts || undefined,
     reply: ev.conv && ev.ts && ev.event !== "team_join" ? `${ev.conv} --reply ${ev.thread_ts || ev.ts}` : undefined,
     event: ev.event, reaction: ev.reaction,
+    files: Array.isArray(ev.files) && ev.files.length ? ev.files : undefined,
+    intercept: typeof ev.intercept === "string" ? ev.intercept : undefined,
   };
   let profile;
   if (ev.from) {

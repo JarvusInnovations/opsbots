@@ -9,10 +9,12 @@ description: >-
   destination and can screen the draft first. Use when giving a bot a Slack presence, creating
   its Slack app, installing or checking its listener, posting a reply, setting up the reply
   screen, when a DM or @mention to the bot gets no reaction or no answer, when a reply lands in
-  the wrong thread or was blocked, or when the watchdog cannot escalate. Triggers: "Slack for
+  the wrong thread or was blocked, when the watchdog cannot escalate, or when a bot should hear
+  only its owner, save files sent to it, hand prefixed DMs to a script, or must not post as a
+  person. Triggers: "Slack for
   the bot", "Slack listener", "slack app manifest", "the bot did not react", "bot missed my
   DM", "app-level token", "xapp", "escalate to Slack", "screen replies", "post to Slack",
-  "opsbot-slack".
+  "opsbot-slack", "listen_to", "intercept", "slack files".
 ---
 
 # opsbot-slack: the bot in Slack
@@ -82,6 +84,28 @@ the operator typed it. Every other bot, integration or app post stays dropped, s
 never answer each other forever. The bot's own posts are known by `bot_user`, or by its own
 `bot_id` on a post with no user.
 
+**For a bot that answers one person** (an assistant), three opt-in steps run on a kept event
+before it is recorded, in this order. None of them calls a model.
+
+- `listen_to: "operators"` keeps only events whose author is in `operators`, and anything in
+  `escalate_dm`. Anyone else's DM, mention, thread reply or reaction, and every `team_join`, is
+  dropped: no record, no reaction, no wake, so the sender gets no sign. The journal gets
+  `dropped non-operator <conv> <user> <kind>`, never the text. List the operator in `operators`
+  to hear them in channels.
+- `files: {"save": true}` downloads the message's files through `slack-axi download` to
+  `.scratch/slack-files/<conv>/<ts>/<safe name>` and puts `path` on each file of the item. A file
+  over `max_bytes` (25 MiB), of a type not in `types` (`image/*`, `application/pdf`, `text/*`), from
+  a Slack Connect conversation (no type or size in the event), or whose download failed gets
+  `skipped: "<why>"` instead. Without `save`, items still carry each file's id, name, type and size.
+- `intercept: [{"prefix": "+ ", "command": ["bin/capture"], "kinds": ["dm"]}]` hands a message
+  that starts with `prefix` (after leading whitespace, and a leading @mention of the bot for
+  `mention`) to the command: argv, no shell, a path inside the repo or absolute. Its stdin is
+  `{text, conv, ts, thread_ts, user, files}`, `text` after the prefix. Exit 0 within
+  `timeout_seconds` (30): the message gets `intercept_emoji` (`white_check_mark`) and is not
+  recorded and wakes nothing. Anything else: `intercept_failed_emoji` (`warning`), and the
+  message is recorded as usual with `intercept: "failed: <why>"`. With `listen_to: "anyone"`,
+  anyone who can message the bot can run the command.
+
 The events file is in `wake.files`, so the session's own bounded monitor wakes on it first.
 The nudge is the backstop that survives the session. With `loop.schedule: "monitor"` the one
 schedule monitor is that wake; the nudge stays, with its own cooldown.
@@ -107,6 +131,8 @@ can deliver late):
 - `thread` comes from `slack-axi thread`: the count, the parent, the bot's last message there,
   and the command for the whole thread.
 - A reaction item carries `reaction`; a new member is `event: "team_join"` with no `reply`.
+- `files` lists the message's files (`{id, name, mimetype, size, path?, skipped?}`); open a
+  `path` with the file-reading tool. `intercept` says an intercept command failed on it.
 
 Exit 1 when the events file does not exist (the listener creates it on start, so this means
 the listener never ran) or a sender lookup failed.
@@ -135,19 +161,28 @@ through slack-axi in bot mode, and logs the decision. It prints one JSON object.
 | 2 | bad usage, or a screen setting it cannot use | fix the call or `opsbot.json` |
 | 3 | blocked: `{screen: "block", passage, reason}` | rewrite without the passage, or ask the operator. Never post it another way |
 | 4 | the screen failed; the operator was told once | wait for it, or ask the operator; nothing was posted |
+| 5 | the token slack-axi would post with is not `bot_user`'s (`auth.test`), or that could not be checked | fix the slack-axi login (`opsbot-slack status`); never post another way |
 
 `--dry-run` classifies and screens and posts nothing. `opsbot-slack classify <conv>` prints the
 class alone.
 
-**The classes**, decided from Slack's data (`conversations.info`, `conversations.members`,
-`users.info`, `auth.test`, with slack-axi's own bot token), never from the text:
+**The posting identity.** A bot that runs as a person's Unix user may share a slack-axi store
+with that person's own login, and `slack-axi auth mode bot` can be set over a person's token. So
+before posting, with `bot_user` set, the command asks `auth.test` who the token slack-axi will
+post with belongs to, and refuses (exit 5) unless it is `bot_user`. A match is cached for
+`cache_seconds` under a hash of the token, so a swapped token is checked at once.
+
+**The classes**, decided from Slack's data through `slack-axi audience` (slack-axi 1.6.0 or
+later; `opsbot-slack status` says when it is older), never from the text:
 
 | Class | When | Screened with |
 | --- | --- | --- |
 | `operator-dm` | a DM with someone in `operators`, or the `escalate_dm` conversation | never |
 | `internal` | not shared, and every member a full member of the workspace. A DM with a full member who is not an operator is `internal` | `policy.internal` |
-| `external` | Slack Connect or shared in any way, a guest, a deactivated account or someone from another organization among the members, or more than `max_members` members | `policy.external` |
-| `unknown` | a lookup failed | `policy.external` |
+| `external` | Slack Connect or shared in any way, a guest, a deactivated account or someone from another organization (another workspace of the same org too) among the members, or more than `max_members` members | `policy.external` |
+| `unknown` | a lookup failed, a member could not be read, or slack-axi is older than 1.6.0 | `policy.external` |
+
+Bots of the workspace count as full members.
 
 The class is cached for `cache_seconds` beside the events file (`slack-classes.json`); an
 `unknown` is not.
@@ -224,6 +259,11 @@ which customer they belong to. That knowledge is the bot's own, so the reader ta
 | `operators` | the operator's user ids; a DM with one is `operator-dm`, and an app's post as one is heard as theirs | none; `escalate_dm` still counts |
 | `screen` | the screen (Posting, above) | unset: nothing screened, the class still logged |
 | `post_log` | the post command's decision log, a repo path | `logs/slack-posts.jsonl` |
+| `listen_to` | `anyone`, or `operators`: keep only operators' events, silently | `anyone` |
+| `intercept` | rules that hand a prefixed message to a command before it is recorded | none |
+| `intercept_emoji` | the reaction on a message a command took | `white_check_mark` |
+| `intercept_failed_emoji` | the reaction when the command failed; the message is then recorded | `warning` |
+| `files` | `{save, dir, max_bytes, types}`: save a kept message's files | metadata only |
 
 `OPSBOT_SLACK_AXI` in the environment names another slack-axi binary for every piece.
 
@@ -232,8 +272,8 @@ which customer they belong to. That knowledge is the bot's own, so the reader ta
 | Command | Does | Exit |
 | --- | --- | --- |
 | `install [--dry-run] [--force]` | copies the three scripts into `opsbot.d/`, executable. A file that already matches is left; one that differs is left unless `--force`. Prints what it wrote and left, then the `streams.slack` block and `wake.files` entry to merge (it never writes `opsbot.json`), and the manifest's path | 0 · 2 |
-| `status` | one row each, `ok`, `missing` or `differs`, with the fix: the app-level token file (present, mode 600, `xapp-`; never printed), slack-axi signed in in bot mode, each script present and matching its template, `bot_user` and `escalate_dm` in `streams.slack`, the events file in `wake.files`, the listener's unit active; with `screen` set, its command and policy files | 0 all ok · 1 something to fix · 2 |
-| `post <conv> [--reply <ts>] [--dry-run] [<markdown> \| -]` | classifies, screens when configured, posts in bot mode, logs (Posting, above) | 0 · 1 · 2 · 3 blocked · 4 screen failed |
+| `status` | one row each, `ok`, `missing` or `differs`, with the fix: the app-level token file (present, mode 600, `xapp-`; never printed), slack-axi signed in in bot mode, slack-axi 1.6.0 or later (the `audience` command), each script present and matching its template, `bot_user` and `escalate_dm` in `streams.slack`, the events file in `wake.files`, the listener's unit active; with `bot_user` set, the posting identity (`ok` only when `auth.test` names `bot_user`); with `screen` set, its command and policy files; with `listen_to`, `intercept` or `files` set, that setting (`listen_to: operators` with no `operators` and no `escalate_dm` is refused) | 0 all ok · 1 something to fix · 2 |
+| `post <conv> [--reply <ts>] [--dry-run] [<markdown> \| -]` | classifies, screens when configured, checks the posting identity, posts in bot mode, logs (Posting, above) | 0 · 1 · 2 · 3 blocked · 4 screen failed · 5 not the bot |
 | `classify <conv>` | `{conv, class, why, cached}` | 0 · 2 |
 
 Exit 2 is bad usage (an unknown command or flag) or not a bot's repo (no `opsbot.json`).
@@ -242,7 +282,8 @@ Exit 2 is bad usage (an unknown command or flag) or not a bot's repo (no `opsbot
 
 - Tokens live in files with mode 600 or in slack-axi's own store. Never in the repo, a chat,
   a log, or a command's output. `status` reads five characters of the token file and its mode.
-- The bot posts as its bot user. The sink refuses to send when slack-axi is in human mode.
+- The bot posts as its bot user. The sink refuses to send when slack-axi is in human mode; the
+  post command refuses when the token is not `bot_user`'s.
 - Answer at `reply`, whole, through `opsbot-slack post`. The column is the address; a trimmed
   digest once put two answers in a third thread.
 - Post only through `opsbot-slack post`. A blocked draft is rewritten or taken to the operator,

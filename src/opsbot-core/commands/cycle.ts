@@ -40,6 +40,9 @@ import {
   writeWatermark,
 } from "../state.js";
 import { runCheck } from "./check.js";
+import { changedMemoryFiles, memoryDueLine } from "../memory.js";
+import { changedRunFiles } from "../routine-store.js";
+import { loadRoutines, routineDueLines } from "../routines.js";
 import { sessionPointer } from "./coldstart.js";
 import { lastModel, readEvents } from "../transcript.js";
 import { driftReport, sessionDrift } from "../drift.js";
@@ -320,6 +323,8 @@ function cycleEnd(args: string[]): Record<string, unknown> {
   if (existsSync(p.watermark)) files.push(p.watermark);
   if (existsSync(p.outages)) files.push(p.outages);
   files.push(...changedCommitPaths(root, settings.commit_paths, files));
+  files.push(...changedMemoryFiles(root, settings, files));
+  files.push(...changedRunFiles(root, settings, files));
   const why = commitOnly(root, files, `chore(cycle): finished, ${records} records`);
   if (why) {
     truncateTo(p.log, logSize);
@@ -340,6 +345,16 @@ function cycleEnd(args: string[]): Record<string, unknown> {
   if (sleep) {
     out.sleep = sleepFieldLines(settings, sleep);
     return out;
+  }
+  // a due memory review: one line, never blocking, never beside a sleep
+  const memory = memoryDueLine(root, settings, nowMs(), cliInvocation());
+  if (memory) out.memory = memory;
+  // the other due routines, one line each
+  try {
+    const due = routineDueLines(loadRoutines(root, settings, nowMs()), settings, cliInvocation());
+    if (due.length) out.routines = due;
+  } catch {
+    // the check names a routine that cannot be read; the close does not repeat it
   }
   const wake = wakeReport(root, settings, true);
   if (wake.length) out.wake = wake;

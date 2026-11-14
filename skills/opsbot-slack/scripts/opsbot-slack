@@ -12,8 +12,9 @@
 #
 # Run from the bot's repo checkout, as the bot's user. install and status: exit 0 all ok,
 # 1 something to fix, 2 bad usage or not in a bot's repo. post: 0 posted, 1 Slack refused,
-# 2 bad usage or setting, 3 the screen blocked it, 4 the screen failed (see SKILL.md). Tokens are never printed: status reads only the first
-# five characters of the app-level token file and its mode.
+# 2 bad usage or setting, 3 the screen blocked it, 4 the screen failed, 5 the token slack-axi
+# would post with is not bot_user's (see SKILL.md). Tokens are never printed: status reads only
+# the first five characters of the app-level token file and its mode.
 set -uo pipefail
 
 SKILL="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
@@ -35,7 +36,8 @@ commands:
                                  or stdin. Classifies the destination, screens the draft when
                                  streams.slack.screen names a policy for its class, posts in
                                  bot mode, logs the decision. Exit 0 posted, 1 Slack refused,
-                                 2 bad usage or setting, 3 blocked, 4 the screen failed
+                                 2 bad usage or setting, 3 blocked, 4 the screen failed,
+                                 5 the posting identity is not bot_user
   classify <conv>                the destination's class: operator-dm, internal, external
                                  or unknown, and why
 EOF
@@ -113,7 +115,8 @@ Merge into opsbot.json yourself (this command never writes it), then commit:
   "wake": { "files": ["~/.cache/$name/slack-events.jsonl"] }
 
 Optional keys under streams.slack: receipt_emoji, ack_emoji, ack_timeout_minutes,
-lookback_minutes, bot_name, team, sender_lookup (see the skill's SKILL.md).
+lookback_minutes, bot_name, team, sender_lookup, operators, screen, listen_to, intercept,
+intercept_emoji, intercept_failed_emoji, files (see the skill's SKILL.md).
 
 The Slack app manifest: $TEMPLATES/manifest.yaml
 Copy it into the repo (for example slack/manifest.yaml), fill in the placeholders, and
@@ -165,6 +168,12 @@ cmd_status() {
     if printf '%s\n' "$out" | grep -qE '^\s*mode: bot\s*$'; then row ok slack-axi "signed in, bot mode"
     elif printf '%s\n' "$out" | grep -qE '^\s*mode: '; then row differs slack-axi "signed in, but not in bot mode" "slack-axi auth login --token xoxb-...   (the Bot User OAuth Token)"
     else row missing slack-axi "not signed in" "slack-axi auth login --token xoxb-...   (the Bot User OAuth Token)"; fi
+    # the post command classifies destinations with `slack-axi audience`, new in 1.6.0
+    local ver; ver=$("$axi" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    if [ -z "$ver" ]; then row missing slack-axi-audience "could not read slack-axi's version" "npm install -g slack-axi@latest   (1.6.0 or later)"
+    elif ! printf '%s\n%s\n' 1.6.0 "$ver" | sort -C -V; then row missing slack-axi-audience "slack-axi $ver is older than 1.6.0: no audience command, so every destination is unknown" "npm install -g slack-axi@latest"
+    elif ! "$axi" audience --help 2>/dev/null | grep -q 'usage: slack-axi audience'; then row missing slack-axi-audience "slack-axi $ver does not know the audience command" "npm install -g slack-axi@latest"
+    else row ok slack-axi-audience "slack-axi $ver has audience"; fi
   fi
 
   # the scripts
@@ -202,6 +211,28 @@ cmd_status() {
       *) row differs screen "could not check: $(printf '%s\n' "$sc" | head -1)" ;;
     esac
   fi
+
+  # the posting identity: the token slack-axi would post with must be bot_user's (auth.test)
+  if [ -n "$(cfg streams.slack.bot_user)" ]; then
+    local id; id=$(OPSBOT_ROOT="$ROOT" OPSBOT_CONFIG="$CONFIG" node "$SKILL/scripts/slack-post.mjs" identity-check 2>&1)
+    case "$id" in
+      "ok "*) row ok identity "${id#ok }" ;;
+      "differs "*) row differs identity "${id#differs }" "slack-axi auth login --token xoxb-...   (the bot's own token), or set streams.slack.team to the bot's workspace" ;;
+      "missing "*) row missing identity "${id#missing }" "slack-axi auth login --token xoxb-...   (the Bot User OAuth Token)" ;;
+      *) row missing identity "could not check: $(printf '%s\n' "$id" | head -1)" ;;
+    esac
+  fi
+
+  # listen_to, intercept and files, each only when it is set: the listener checks its own settings
+  local line state piece detail
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    state=${line%% *}; line=${line#* }; piece=${line%% *}; detail=${line#* }
+    case "$state" in
+      ok) row ok "$piece" "$detail" ;;
+      *) row differs "$piece" "$detail" "fix streams.slack.$piece in opsbot.json (see the skill's SKILL.md)" ;;
+    esac
+  done < <(OPSBOT_ROOT="$ROOT" OPSBOT_CONFIG="$CONFIG" node "$TEMPLATES/monitor.d/10-slack-listener" --check 2>&1)
 
   # the listener's unit, as opsbot-core infra install names it
   local unit="opsbot-$name-monitor-10-slack-listener.service"

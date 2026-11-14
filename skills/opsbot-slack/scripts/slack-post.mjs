@@ -5,19 +5,23 @@
 //   post <conv> [--reply <ts>] [--dry-run] [<markdown> | -]
 //   classify <conv>
 //   screen-check                       (for `opsbot-slack status`: one row on stdout)
+//   identity-check                     (for `opsbot-slack status`: the posting identity's row)
 //
 // post, in order: refuse bad usage; classify the destination from Slack's own data
 // (operator-dm, internal, external, unknown); when streams.slack.screen names a policy for that
 // class, hand the draft to the bot's own screen command and post only on {"verdict": "pass"};
-// post through `slack-axi draft` and `draft send` in bot mode; append one line to the decision
-// log (a hash of the draft, never the draft). Prints one JSON object.
+// check that the token slack-axi will post with is bot_user's (auth.test); post through
+// `slack-axi draft` and `draft send` in bot mode; append one line to the decision log (a hash of
+// the draft, never the draft). Prints one JSON object.
 //
 // Exit 0 posted (or would be, with --dry-run) · 1 Slack refused or failed · 2 bad usage or an
 // unusable setting · 3 the screen blocked it · 4 the screen failed; nothing posted, the operator
-// told once per outage through opsbot.d/escalate.d/.
+// told once per outage through opsbot.d/escalate.d/ · 5 the posting identity is not bot_user.
 //
-// The bot token is slack-axi's own (SLACK_AXI_TOKEN, else slack-axi's store); it is read here
-// to call conversations.info, conversations.members, users.info and auth.test, and never printed.
+// The destination class comes from `slack-axi audience <conv>` (slack-axi 1.6.0 or later), which
+// reads conversations.info, conversations.members and users.info with slack-axi's own token. The
+// bot token itself is read here for one thing only, the posting identity's auth.test (slack-axi
+// prints no live user id), in slack-axi's own order; it is never printed.
 // OPSBOT_SLACK_AXI names another slack-axi binary (a pinned copy, a test double).
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -25,10 +29,12 @@ import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileS
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-const EXIT = { ok: 0, slack: 1, usage: 2, blocked: 3, screenFailed: 4 };
+const EXIT = { ok: 0, slack: 1, usage: 2, blocked: 3, screenFailed: 4, identity: 5 };
 const CONV_RE = /^[CDG][A-Z0-9]{2,}$/;
 const TS_RE = /^\d+\.\d+$/;
 const SLACK_TIMEOUT_MS = 15000;
+const AUDIENCE_SINCE = "1.6.0";
+const UPGRADE = "npm install -g slack-axi@latest";
 
 const root = process.env.OPSBOT_ROOT || process.cwd();
 const configPath = process.env.OPSBOT_CONFIG || join(root, "opsbot.json");
@@ -69,14 +75,19 @@ function inRepo(p) {
   return rel.startsWith("..") || isAbsolute(rel) ? null : abs;
 }
 
-// ------------------------------------------------------------------------------- Slack Web API
+// ------------------------------------------------------------------------------- the post token
 
-/** The bot token as slack-axi resolves it: env, then the --team, default or only workspace. */
-function slackToken() {
+/**
+ * The one place the kit reads slack-axi's token: the token slack-axi will post with, in its own
+ * order (SLACK_AXI_TOKEN, then the workspace `team` names, then its default, then its only one),
+ * for the posting identity's auth.test. No slack-axi command prints the live token's user id.
+ * Never printed.
+ */
+function postToken() {
   if (process.env.SLACK_AXI_TOKEN) return process.env.SLACK_AXI_TOKEN;
   const xdg = process.env.XDG_CONFIG_HOME;
   const base = process.env.SLACK_AXI_CONFIG_DIR || join(xdg && xdg.length ? xdg : join(homedir(), ".config"), "slack-axi");
-  let team = slack.team ? String(slack.team) : process.env.SLACK_AXI_TEAM;
+  let team = slack.team ? String(slack.team) : undefined;
   if (!team) {
     try { team = JSON.parse(readFileSync(join(base, "config.json"), "utf8")).default_team; } catch { team = undefined; }
   }
@@ -86,30 +97,68 @@ function slackToken() {
     if (ids.length === 1) team = ids[0];
   }
   if (!team) throw new Error("no slack-axi workspace to read the bot token from");
-  let token;
-  try { token = JSON.parse(readFileSync(join(base, "workspaces", team, "token.json"), "utf8")).token; } catch { token = undefined; }
-  if (!token) throw new Error(`slack-axi holds no token for ${team}`);
-  return token;
+  let t;
+  try { t = JSON.parse(readFileSync(join(base, "workspaces", team, "token.json"), "utf8")).token; } catch { t = undefined; }
+  if (!t) throw new Error(`slack-axi holds no token for ${team}`);
+  return t;
 }
 
 let token;
-async function api(method, params = {}) {
-  if (token === undefined) token = slackToken();
+/** Slack's auth.test with the post token: the posting identity's only Web API call. */
+async function authTest() {
+  if (token === undefined) token = postToken();
   let res;
   try {
-    res = await fetch(`https://slack.com/api/${method}`, {
+    res = await fetch("https://slack.com/api/auth.test", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
-      body: new URLSearchParams(params).toString(),
+      body: "",
       signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
     });
   } catch (e) {
-    throw new Error(`${method}: ${e.name === "TimeoutError" ? "timed out" : e.message}`);
+    throw new Error(`auth.test: ${e.name === "TimeoutError" ? "timed out" : e.message}`);
   }
   let body;
-  try { body = await res.json(); } catch { throw new Error(`${method}: HTTP ${res.status}, not JSON`); }
-  if (!body || body.ok !== true) throw new Error(`${method}: ${(body && body.error) || `HTTP ${res.status}`}`);
+  try { body = await res.json(); } catch { throw new Error(`auth.test: HTTP ${res.status}, not JSON`); }
+  if (!body || body.ok !== true) throw new Error(`auth.test: ${(body && body.error) || `HTTP ${res.status}`}`);
   return body;
+}
+
+// ------------------------------------------------------------------------------- the posting identity
+
+/**
+ * Who the post token is, from auth.test: {user, name, team, cached}. A match with bot_user is
+ * cached for cache_seconds under a hash of the token, so a changed token is asked again at once.
+ * Throws when no token resolves or auth.test fails.
+ */
+async function identity() {
+  if (token === undefined) token = postToken();
+  const key = createHash("sha256").update(token).digest("hex").slice(0, 16);
+  const cache = loadCache();
+  const c = cache.identity;
+  if (c && c.token === key && fresh(c) && c.user === String(slack.bot_user || "")) return { user: c.user, name: c.name, team: c.team, cached: true };
+  const a = await authTest();
+  if (typeof a.user_id !== "string" || !a.user_id) throw new Error("auth.test gave no user_id");
+  const me = { user: a.user_id, name: typeof a.user === "string" ? a.user : "", team: typeof a.team_id === "string" ? a.team_id : "" };
+  if (slack.bot_user && me.user === String(slack.bot_user)) {
+    cache.identity = { token: key, ...me, at: new Date().toISOString() };
+    saveCache(cache);
+  }
+  return { ...me, cached: false };
+}
+
+/** null when the post may go out as bot_user (or bot_user is unset), else {error, identity?}. */
+async function identityRefusal() {
+  if (!slack.bot_user) return null;
+  let me;
+  try { me = await identity(); } catch (e) {
+    return { error: `could not confirm the posting identity: ${e.message}; nothing posted` };
+  }
+  if (me.user === String(slack.bot_user)) return null;
+  return {
+    error: `slack-axi would post as ${me.user}${me.name ? ` (${me.name})` : ""}, not as bot_user ${slack.bot_user}; nothing posted (slack-axi auth login --token xoxb-... with the bot's token, or set streams.slack.team)`,
+    identity: { user: me.user, name: me.name },
+  };
 }
 
 // ------------------------------------------------------------------------------- classification
@@ -117,12 +166,13 @@ async function api(method, params = {}) {
 function loadCache() {
   try {
     const c = JSON.parse(readFileSync(cacheFile, "utf8"));
-    return { convs: c.convs || {}, users: c.users || {}, team: c.team };
-  } catch { return { convs: {}, users: {}, team: undefined }; }
+    return { convs: c.convs || {}, team: c.team, ...(c.identity ? { identity: c.identity } : {}) };
+  } catch { return { convs: {}, team: undefined }; }
 }
 function saveCache(c) {
   const now = Date.now();
-  for (const m of [c.convs, c.users]) for (const [k, v] of Object.entries(m)) if (!v || now - Date.parse(v.at) >= cacheMs) delete m[k];
+  for (const [k, v] of Object.entries(c.convs)) if (!v || now - Date.parse(v.at) >= cacheMs) delete c.convs[k];
+  if (c.identity && !(now - Date.parse(c.identity.at) < cacheMs)) delete c.identity;
   try {
     mkdirSync(dirname(cacheFile), { recursive: true });
     const tmp = `${cacheFile}.${process.pid}.tmp`;
@@ -132,28 +182,13 @@ function saveCache(c) {
 }
 const fresh = (v) => v && Date.now() - Date.parse(v.at) < cacheMs;
 
-/** Whether a user is a full member of the bot's workspace, from users.info. */
-async function member(cache, team, id) {
-  if (fresh(cache.users[id])) return cache.users[id];
-  const u = (await api("users.info", { user: id })).user;
-  if (!u || typeof u.team_id !== "string") throw new Error(`users.info gave no team for ${id}`);
-  let why = "";
-  if (u.deleted === true) why = "deactivated";
-  else if (u.is_ultra_restricted === true) why = "a single-channel guest";
-  else if (u.is_restricted === true) why = "a guest";
-  else if (u.is_stranger === true || u.team_id !== team) why = "from another organization";
-  const row = { full: why === "", why, at: new Date().toISOString() };
-  cache.users[id] = row;
-  return row;
-}
-
 /** {class, why, cached}. A failed lookup is `unknown` and is never cached. */
 async function classify(conv) {
   const cache = loadCache();
   if (fresh(cache.convs[conv])) return { class: cache.convs[conv].class, why: cache.convs[conv].why, cached: true };
   let result;
   try {
-    result = await decide(conv, cache);
+    result = decide(conv, cache);
   } catch (e) {
     return { class: "unknown", why: `lookup failed: ${e.message}`, cached: false };
   }
@@ -162,45 +197,155 @@ async function classify(conv) {
   return { ...result, cached: false };
 }
 
-async function decide(conv, cache) {
-  const team = (await api("auth.test")).team_id;
-  if (typeof team !== "string" || !team) throw new Error("auth.test gave no team_id");
-  if (cache.team !== team) { cache.users = {}; cache.convs = {}; cache.team = team; }
-  const info = (await api("conversations.info", { channel: conv, include_num_members: "true" })).channel;
-  if (!info || typeof info !== "object") throw new Error("conversations.info gave no channel");
+/** One TOON scalar: a quoted string with backslash escapes, true, false, null, a number, or bare text. */
+function toonValue(raw) {
+  const v = raw.trim();
+  if (v.startsWith('"')) {
+    if (!v.endsWith('"') || v.length < 2) throw new Error(`unterminated string: ${v.slice(0, 40)}`);
+    let out = "";
+    for (let i = 1; i < v.length - 1; i++) {
+      const c = v[i];
+      if (c === "\\" && i + 1 < v.length - 1) {
+        const n = v[++i];
+        out += n === "n" ? "\n" : n === "r" ? "\r" : n === "t" ? "\t" : n;
+      } else out += c;
+    }
+    return out;
+  }
+  if (v === "true") return true;
+  if (v === "false") return false;
+  if (v === "null") return null;
+  if (/^-?\d+(\.\d+)?$/.test(v)) return Number(v);
+  return v;
+}
 
-  if (info.is_im === true) {
+/** One row of a TOON table: comma-separated cells, a quoted cell may hold commas. */
+function toonCells(line) {
+  const cells = [];
+  let cur = "", quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quoted && c === "\\" && i + 1 < line.length) { cur += c + line[++i]; continue; }
+    if (c === '"') quoted = !quoted;
+    if (c === "," && !quoted) { cells.push(toonValue(cur)); cur = ""; continue; }
+    cur += c;
+  }
+  cells.push(toonValue(cur));
+  return cells;
+}
+
+/**
+ * The parts of `slack-axi audience` output the classifier reads: the workspace's team id, the
+ * `conversation` and `audience` blocks as objects, and the `non_full_members` rows. Strict: a
+ * block or field it needs that is missing is an error, never a default.
+ */
+function parseAudience(out) {
+  const lines = String(out).split("\n");
+  const blocks = {};
+  let rows = [];
+  let team;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim() || line.startsWith(" ")) continue;
+    const ws = line.match(/^workspace:\s*(.*)$/);
+    if (ws) { const m = String(toonValue(ws[1])).match(/\(([A-Z0-9]+)\)\s*$/); team = m ? m[1] : undefined; continue; }
+    const head = line.match(/^(conversation|audience):\s*$/);
+    if (head) {
+      const obj = {};
+      while (i + 1 < lines.length && lines[i + 1].startsWith("  ")) {
+        const kv = lines[++i].trim().match(/^([A-Za-z_]+):\s?(.*)$/);
+        if (!kv) throw new Error(`unreadable line in ${head[1]}: ${lines[i].trim().slice(0, 60)}`);
+        obj[kv[1]] = toonValue(kv[2]);
+      }
+      blocks[head[1]] = obj;
+      continue;
+    }
+    const table = line.match(/^non_full_members\[\d+\]\{([^}]*)\}:\s*$/);
+    if (table) {
+      const cols = table[1].split(",");
+      while (i + 1 < lines.length && lines[i + 1].startsWith("  ")) {
+        const cells = toonCells(lines[++i].trim());
+        const r = {};
+        cols.forEach((c, k) => { r[c] = cells[k] ?? ""; });
+        rows.push(r);
+      }
+    }
+  }
+  const c = blocks.conversation, a = blocks.audience;
+  if (!c) throw new Error("slack-axi audience printed no conversation block");
+  if (!a) throw new Error("slack-axi audience printed no audience block");
+  if (typeof c.kind !== "string") throw new Error("slack-axi audience gave no conversation kind");
+  for (const k of ["full", "guests", "external", "other_workspace", "deactivated", "bots", "unresolved"]) {
+    if (typeof a[k] !== "number") throw new Error(`slack-axi audience gave no ${k} count`);
+  }
+  if (typeof a.truncated !== "boolean") throw new Error("slack-axi audience gave no truncated flag");
+  const checked = String(a.members_checked ?? "").match(/^(\d+) of /);
+  if (!checked) throw new Error("slack-axi audience gave no members_checked");
+  return { team, conversation: c, audience: { ...a, checked: Number(checked[1]) }, nonFull: rows };
+}
+
+/** Today's wording for why a member is not a full member, from audience's `why` column. */
+function memberWhy(why) {
+  const w = String(why || "");
+  if (w === "single-channel guest") return "a single-channel guest";
+  if (w === "multi-channel guest") return "a guest";
+  if (w === "deactivated") return "deactivated";
+  if (w.startsWith("other organization") || w === "stranger" || w.startsWith("same org, other workspace")) return "from another organization";
+  return w;
+}
+
+/** Run `slack-axi audience` and turn a failure into one clear line. */
+function readAudience(conv) {
+  const r = axi(["audience", conv, "--max-members", String(maxMembers), ...teamArgs]);
+  if (r.error) throw new Error(`slack-axi audience: ${r.error.code === "ETIMEDOUT" ? "timed out" : r.error.message.split("\n")[0]}`);
+  const err = firstError(r.out);
+  if (/unknown command/i.test(err)) throw new Error(`slack-axi has no audience command; it needs ${AUDIENCE_SINCE} or later (${UPGRADE})`);
+  if (r.code !== 0 || err) throw new Error(err || `slack-axi audience exited ${r.code}`);
+  return parseAudience(r.out);
+}
+
+/**
+ * The class from slack-axi's audience report. Bots of the bot's own workspace count as full
+ * members (as users.info always had them); a member of another workspace, even in the same
+ * Enterprise org, is from another organization; a truncated list is over max_members.
+ */
+function decide(conv, cache) {
+  const { team, conversation: info, audience: a, nonFull } = readAudience(conv);
+  if (!team) throw new Error("slack-axi audience printed no workspace id");
+  if (cache.team !== team) { cache.convs = {}; cache.team = team; }
+
+  if (info.kind === "im") {
     const other = info.user;
-    if (typeof other !== "string" || !other) throw new Error("conversations.info gave no user for the DM");
+    if (typeof other !== "string" || !other) throw new Error("slack-axi audience gave no user for the DM");
     if (operators.has(other) || (slack.escalate_dm && conv === String(slack.escalate_dm))) return { class: "operator-dm", why: `a DM with the operator ${other}` };
-    const m = await member(cache, team, other);
-    return m.full ? { class: "internal", why: `a DM with ${other}, a full member` } : { class: "external", why: `a DM with ${other}, ${m.why}` };
   }
 
   for (const flag of ["is_ext_shared", "is_org_shared", "is_pending_ext_shared", "is_shared"]) {
     if (info[flag] === true) return { class: "external", why: `${flag} is true` };
   }
-  if (typeof info.num_members === "number" && info.num_members > maxMembers) {
-    return { class: "external", why: `${info.num_members} members, over max_members ${maxMembers}; not all checked` };
+  if (a.truncated) {
+    return typeof info.num_members === "number" && info.num_members > maxMembers
+      ? { class: "external", why: `${info.num_members} members, over max_members ${maxMembers}; not all checked` }
+      : { class: "external", why: `over max_members ${maxMembers} members; not all checked` };
   }
-
-  const ids = [];
-  let cursor = "";
-  do {
-    const page = await api("conversations.members", { channel: conv, limit: "200", ...(cursor ? { cursor } : {}) });
-    if (!Array.isArray(page.members)) throw new Error("conversations.members gave no members");
-    ids.push(...page.members);
-    if (ids.length > maxMembers) return { class: "external", why: `over max_members ${maxMembers} members; not all checked` };
-    cursor = (page.response_metadata && page.response_metadata.next_cursor) || "";
-  } while (cursor);
-  if (ids.length === 0) throw new Error("conversations.members listed no one");
-
-  for (let i = 0; i < ids.length; i += 10) {
-    const rows = await Promise.all(ids.slice(i, i + 10).map((id) => member(cache, team, id).then((m) => ({ id, m }))));
-    const odd = rows.find((r) => !r.m.full);
-    if (odd) return { class: "external", why: `${odd.id} is ${odd.m.why}` };
+  if (a.unresolved > 0) {
+    const u = nonFull.find((r) => String(r.why || "").startsWith("unresolved"));
+    throw new Error(`a member could not be read${u ? `: ${u.id} ${u.why}` : ""}`);
   }
-  return { class: "internal", why: `not shared; all ${ids.length} members are full members` };
+  if (a.checked === 0) throw new Error("slack-axi audience listed no one");
+
+  const odd = a.guests + a.external + a.other_workspace + a.deactivated;
+  if (info.kind === "im") {
+    const row = nonFull.find((r) => r.id === info.user && r.why !== "bot");
+    if (odd > 0 && row) return { class: "external", why: `a DM with ${info.user}, ${memberWhy(row.why)}` };
+    if (odd > 0) return { class: "external", why: `a DM with ${info.user}, and someone in it is not a full member` };
+    return { class: "internal", why: `a DM with ${info.user}, a full member` };
+  }
+  if (odd > 0) {
+    const row = nonFull.find((r) => r.why !== "bot");
+    return { class: "external", why: row ? `${row.id} is ${memberWhy(row.why)}` : `${odd} members are not full members` };
+  }
+  return { class: "internal", why: `not shared; all ${a.checked} members are full members` };
 }
 
 // ------------------------------------------------------------------------------- the screen
@@ -357,6 +502,11 @@ async function cmdPost(args) {
     logDecision({ ...base, screen: verdict, posted: false });
     emit({ posted: false, dry_run: true, would_post: true, conv, class: c.class, why: c.why, screen: verdict }, EXIT.ok);
   }
+  const refusal = await identityRefusal();
+  if (refusal) {
+    logDecision({ ...base, screen: verdict, error: refusal.error, posted: false });
+    emit({ posted: false, conv, class: c.class, why: c.why, screen: verdict, ...refusal }, EXIT.identity);
+  }
   const sent = postToSlack(conv, reply, text);
   if (sent.error) {
     logDecision({ ...base, screen: verdict, error: sent.error, posted: false });
@@ -398,8 +548,22 @@ function cmdScreenCheck() {
   process.exit(0);
 }
 
+/** One status row for the posting identity: `ok`, `differs` or `missing <detail>`. */
+async function cmdIdentityCheck() {
+  let me;
+  try { me = await identity(); } catch (e) {
+    console.log(`missing no posting identity: ${e.message}`);
+    process.exit(1);
+  }
+  const who = `${me.user}${me.name ? ` (${me.name})` : ""}`;
+  if (me.user === String(slack.bot_user || "")) { console.log(`ok posts as ${who}, bot_user`); process.exit(0); }
+  console.log(`differs posts as ${who}, not bot_user ${slack.bot_user || "(unset)"}`);
+  process.exit(1);
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
 if (cmd === "post") await cmdPost(rest);
 else if (cmd === "classify") await cmdClassify(rest);
 else if (cmd === "screen-check") cmdScreenCheck();
+else if (cmd === "identity-check") await cmdIdentityCheck();
 else usage(`unknown command: ${cmd ?? "(none)"}`);
