@@ -21,9 +21,20 @@
 // app posting with an operator's own user token (streams.slack.operators, or anyone but the bot
 // in escalate_dm) is heard exactly like the operator typing. Any other bot is dropped, so two
 // bots never answer each other forever.
+// Three optional steps run on a kept event before it is recorded, in this order:
+//   - listen_to "operators" drops anyone else's event: no record, no reaction, no wake, one
+//     journal line of ids (the sender gets no signal);
+//   - files.save downloads the message's files through `slack-axi download` (the bot token stays
+//     in slack-axi's store) to <files.dir>/<conv>/<ts>/<safe name>, and puts each path on the item;
+//   - an intercept rule whose prefix starts the text hands the message to a command (argv, no
+//     shell, JSON on stdin, a timeout). Success: intercept_emoji, nothing recorded, no wake.
+//     Failure: intercept_failed_emoji, and the message is recorded as usual, marked.
+// No model is called anywhere here.
 // The cycle answers; this only watches. It logs every event type it receives, so a missing
 // scope or subscription shows in the journal. Zero dependencies: Node 22's fetch and WebSocket.
 // OPSBOT_SLACK_AXI names another slack-axi binary (a pinned copy, a test double).
+// `10-slack-listener --check` prints one status row per optional setting and exits; it is what
+// `opsbot-slack status` runs.
 //
 // opsbot.json, all optional except bot_user:
 //   "streams": { "slack": {
@@ -33,21 +44,31 @@
 //     "app_token_file": "~/.config/<bot>/slack-app-token",
 //     "events_file": "~/.cache/<bot>/slack-events.jsonl",
 //     "receipt_emoji": "eyes", "ack_emoji": "gear", "ack_timeout_minutes": 30,
-//     "team": "<team id, when slack-axi holds more than one workspace>"
+//     "team": "<team id, when slack-axi holds more than one workspace>",
+//     "listen_to": "anyone" | "operators",
+//     "intercept": [{ "prefix": "+ ", "command": ["bin/capture"], "kinds": ["dm"], "timeout_seconds": 30 }],
+//     "intercept_emoji": "white_check_mark", "intercept_failed_emoji": "warning",
+//     "files": { "save": false, "dir": ".scratch/slack-files", "max_bytes": 26214400,
+//                "types": ["image/*", "application/pdf", "text/*"] }
 //   } }
-import { execFile } from "node:child_process";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { execFile, spawn } from "node:child_process";
+import { accessSync, appendFileSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** `~/x` to an absolute path. */
 export const expandHome = (p) => (p && p.startsWith("~") ? join(homedir(), p.slice(1)) : p);
 
+export const FILE_TYPES = ["image/*", "application/pdf", "text/*"];
+export const FILE_MAX_BYTES = 26214400;
+const INTERCEPT_KINDS = ["dm", "mention", "reply"];
+
 /** Every value the listener reads from opsbot.json, with its default. */
 export function settings(cfg) {
   const s = (cfg.streams && cfg.streams.slack) || {};
   const eventsFile = expandHome(s.events_file || `~/.cache/${cfg.name}/slack-events.jsonl`);
+  const f = s.files && typeof s.files === "object" ? s.files : {};
   return {
     tokenFile: expandHome(s.app_token_file || `~/.config/${cfg.name}/slack-app-token`),
     eventsFile,
@@ -60,6 +81,16 @@ export function settings(cfg) {
     ackEmoji: s.ack_emoji || "gear",
     ackTimeoutMs: (Number(s.ack_timeout_minutes) || 30) * 60000,
     team: s.team || "",
+    listenTo: s.listen_to === "operators" ? "operators" : "anyone",
+    intercept: s.intercept,
+    interceptEmoji: s.intercept_emoji || "white_check_mark",
+    interceptFailedEmoji: s.intercept_failed_emoji || "warning",
+    files: {
+      save: f.save === true,
+      dir: expandHome(typeof f.dir === "string" && f.dir ? f.dir : ".scratch/slack-files"),
+      maxBytes: Number(f.max_bytes) > 0 ? Math.floor(Number(f.max_bytes)) : FILE_MAX_BYTES,
+      types: Array.isArray(f.types) ? f.types.map((t) => String(t).toLowerCase()) : FILE_TYPES,
+    },
   };
 }
 
@@ -134,8 +165,138 @@ export function classify(event, { botUser = "", botIds = [], operators = [], esc
   }
   if (!item || !item.conv || !item.ts) return null;
   const key = `slack:${item.conv}:${item.ts}:${item.reaction ? `${item.reaction}:${item.from}` : "msg"}`;
-  return { key, at: tsToIso(item.ts), event: event.type, ...item };
+  const files = item.reaction ? null : fileMeta(event);
+  return { key, at: tsToIso(item.ts), event: event.type, ...item, ...(files ? { files } : {}) };
 }
+
+/**
+ * The files column for a message event: `[{id, name, mimetype, size, file_access?}]`, or null when
+ * it carries none. Only the fields Slack gave; a Slack Connect file arrives with `file_access:
+ * "check_file_info"` and no type or size. Pure.
+ */
+export function fileMeta(event) {
+  if (!event || !Array.isArray(event.files) || event.files.length === 0) return null;
+  const out = [];
+  for (const f of event.files) {
+    if (!f || typeof f !== "object" || typeof f.id !== "string") continue;
+    const m = { id: f.id };
+    if (typeof f.name === "string") m.name = f.name;
+    if (typeof f.mimetype === "string" && f.mimetype) m.mimetype = f.mimetype;
+    if (typeof f.size === "number") m.size = f.size;
+    if (typeof f.file_access === "string") m.file_access = f.file_access;
+    out.push(m);
+  }
+  return out.length ? out : null;
+}
+
+/** The item's kind, as the journal and the intercept's `kinds` name it. Pure. */
+export function listenKind(item) {
+  if (!item) return "";
+  if (item.event === "team_join") return "team_join";
+  if (item.reaction || item.event === "reaction_added") return "reaction";
+  if (item.event === "app_mention") return "mention";
+  return item.kind === "dm" ? "dm" : "reply";
+}
+
+/**
+ * Whether listen_to keeps a kept item. With "operators", only an author in `operators`, or any
+ * event in escalate_dm (the bot's own are never items, so anyone else there is the operator).
+ * A team_join is never an operator's. Pure.
+ */
+export function heard(item, { listenTo = "anyone", operators = [], escalateDm = "" } = {}) {
+  if (listenTo !== "operators") return true;
+  if (!item || item.event === "team_join") return false;
+  if (item.from && operators.includes(item.from)) return true;
+  return Boolean(escalateDm) && item.conv === escalateDm;
+}
+
+/** The journal line for an event listen_to dropped: ids and the kind, never the text. Pure. */
+export const droppedNonOperator = (item) => ["dropped non-operator", item.conv || "-", item.from || "-", listenKind(item)].join(" ");
+
+/** A command's first argv entry: absolute as given, or inside the repo; null otherwise. Pure. */
+export function commandPath(p, root) {
+  if (typeof p !== "string" || !p) return null;
+  if (isAbsolute(p)) return p;
+  const abs = resolve(root, p);
+  const rel = relative(root, abs);
+  return rel === "" || rel.startsWith("..") || isAbsolute(rel) ? null : abs;
+}
+
+/**
+ * The usable intercept rules, each `{n, prefix, argv, kinds, timeoutMs}` (n counts from 1 in the
+ * setting's order), and one problem line per rule that cannot be used. Pure.
+ */
+export function interceptRules(raw, root) {
+  const rules = [], problems = [];
+  if (raw === undefined || raw === null) return { rules, problems };
+  if (!Array.isArray(raw)) return { rules, problems: ["intercept must be a list of rules"] };
+  raw.forEach((r, i) => {
+    const n = i + 1;
+    const bad = (m) => { problems.push(`rule ${n}: ${m}`); };
+    if (!r || typeof r !== "object" || Array.isArray(r)) return bad("not an object");
+    if (typeof r.prefix !== "string" || !r.prefix) return bad("prefix must be a non-empty string");
+    if (!Array.isArray(r.command) || r.command.length === 0 || !r.command.every((a) => typeof a === "string")) return bad("command must be a non-empty list of strings");
+    const exe = commandPath(r.command[0], root);
+    if (!exe) return bad(`command must be a path inside the repo or absolute: ${r.command[0]}`);
+    const kinds = r.kinds === undefined ? ["dm"] : r.kinds;
+    if (!Array.isArray(kinds) || kinds.length === 0 || !kinds.every((k) => INTERCEPT_KINDS.includes(k))) return bad(`kinds must be a list of ${INTERCEPT_KINDS.join(", ")}`);
+    const t = r.timeout_seconds === undefined ? 30 : Number(r.timeout_seconds);
+    if (!(t > 0)) return bad("timeout_seconds must be a positive number");
+    rules.push({ n, prefix: r.prefix, argv: [exe, ...r.command.slice(1)], kinds: [...kinds], timeoutMs: t * 1000 });
+  });
+  return { rules, problems };
+}
+
+/**
+ * The first rule that takes this item, and the text after its prefix, or null. Only messages:
+ * leading whitespace is removed, and for a mention a leading <@bot_user> too; the prefix then
+ * matches exactly, case-sensitive. Pure.
+ */
+export function matchIntercept(item, rules, botUser = "") {
+  if (!item || item.reaction || (item.event !== "message" && item.event !== "app_mention")) return null;
+  const kind = listenKind(item);
+  let text = String(item.text || "").replace(/^\s+/, "");
+  if (kind === "mention" && botUser && text.startsWith(`<@${botUser}>`)) text = text.slice(botUser.length + 3).replace(/^\s+/, "");
+  for (const rule of rules || []) {
+    if (rule.kinds.includes(kind) && text.startsWith(rule.prefix)) return { rule, text: text.slice(rule.prefix.length) };
+  }
+  return null;
+}
+
+/** Whether a mimetype is in the allow-list: an exact type, or `<major>/*`. Pure. */
+export function allowedType(mimetype, types = FILE_TYPES) {
+  const m = String(mimetype || "").toLowerCase();
+  if (!m) return false;
+  return types.some((t) => t === m || (t.endsWith("/*") && m.startsWith(t.slice(0, -1))));
+}
+
+/**
+ * A file name that cannot leave its directory: the last segment after / or \, no control
+ * characters, no leading dots or whitespace, at most 200 characters; the id when nothing is left.
+ * Pure.
+ */
+export function safeFileName(name, id) {
+  let n = String(name ?? "").split(/[\\/]/).pop() || "";
+  n = n.replace(/[\u0000-\u001f\u007f]/g, "").replace(/^[\s.]+/, "").trim().slice(0, 200).trim();
+  return n || String(id);
+}
+
+const CONV_ID = /^[CDG][A-Z0-9]{2,}$/;
+const SLACK_TS = /^\d+\.\d+$/;
+const FILE_ID = /^F[A-Z0-9]{2,}$/;
+
+/** Why a file is skipped before any download, or null when it may be fetched. Pure. */
+export function fileSkip(file, item, { maxBytes = FILE_MAX_BYTES, types = FILE_TYPES } = {}) {
+  if (!file || !FILE_ID.test(String(file.id || ""))) return "unsafe file id";
+  if (!item || !CONV_ID.test(String(item.conv || "")) || !SLACK_TS.test(String(item.ts || ""))) return "unsafe conversation or ts";
+  if (file.file_access === "check_file_info" || !file.mimetype || typeof file.size !== "number") return "no type or size in the event";
+  if (!allowedType(file.mimetype, types)) return `type ${file.mimetype} not allowed`;
+  if (file.size > maxBytes) return `${file.size} bytes, over max_bytes ${maxBytes}`;
+  return null;
+}
+
+/** Whether `p` is `dir` or inside it, both already absolute and resolved. Pure. */
+export const isInside = (p, dir) => { const rel = relative(dir, p); return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel)); };
 
 /** Whether `lines` (the events file) hold an @mention, or a kept reply, in this thread. */
 export function threadIsMine(lines, conv, threadTs) {
@@ -206,10 +367,58 @@ export function describe(event) {
 
 // ---------------------------------------------------------------------------------- the process
 
+/**
+ * The status rows for the optional settings, `<state> <piece> <detail>` each: listen_to,
+ * intercept and files, only those that are set. Reads the file system for the commands'
+ * executability; never the network.
+ */
+export function checkRows(cfg, root) {
+  const raw = (cfg.streams && cfg.streams.slack) || {};
+  const s = settings(cfg);
+  const rows = [];
+  if (raw.listen_to !== undefined) {
+    if (raw.listen_to !== "operators" && raw.listen_to !== "anyone") rows.push(`differs listen_to ${JSON.stringify(raw.listen_to)} is neither "operators" nor "anyone"; the listener treats it as anyone`);
+    else if (raw.listen_to === "operators" && s.operators.length === 0 && !s.escalateDm) rows.push("differs listen_to operators, but neither operators nor escalate_dm is set: every event would be dropped");
+    else if (raw.listen_to === "operators") rows.push(`ok listen_to operators: ${[s.operators.length ? s.operators.join(", ") : "", s.escalateDm ? `anyone in ${s.escalateDm}` : ""].filter(Boolean).join(", and ")}`);
+    else rows.push("ok listen_to anyone");
+  }
+  if (raw.intercept !== undefined) {
+    const { rules, problems } = interceptRules(raw.intercept, root);
+    for (const r of rules) {
+      try { accessSync(r.argv[0], constants.X_OK); if (!statSync(r.argv[0]).isFile()) throw new Error(); } catch { problems.push(`rule ${r.n}: command is not an executable file: ${r.argv[0]}`); }
+    }
+    const who = s.listenTo === "operators" ? "only operators can trigger them" : "anyone who can message the bot can trigger them";
+    if (problems.length) rows.push(`differs intercept ${problems.join("; ")}`);
+    else rows.push(`ok intercept ${rules.length} rule${rules.length === 1 ? "" : "s"}; ${who}`);
+  }
+  if (raw.files !== undefined) {
+    const f = raw.files;
+    const problems = [];
+    if (!f || typeof f !== "object" || Array.isArray(f)) problems.push("files must be an object");
+    else {
+      if (f.save !== undefined && typeof f.save !== "boolean") problems.push("save must be true or false");
+      if (f.max_bytes !== undefined && !(Number(f.max_bytes) > 0)) problems.push("max_bytes must be a positive number");
+      if (f.types !== undefined && (!Array.isArray(f.types) || !f.types.every((t) => typeof t === "string" && /^[\w.+-]+\/(\*|[\w.+-]+)$/.test(t)))) problems.push("types must be a list of mimetypes or <major>/*");
+      if (f.dir !== undefined && (typeof f.dir !== "string" || !f.dir)) problems.push("dir must be a path");
+    }
+    if (problems.length) rows.push(`differs files ${problems.join("; ")}`);
+    else if (!s.files.save) rows.push("ok files metadata only (save is off)");
+    else rows.push(`ok files saving ${s.files.types.join(", ")} up to ${s.files.maxBytes} bytes to ${raw.files.dir || ".scratch/slack-files"}`);
+  }
+  return rows;
+}
+
 function main() {
   const root = process.env.OPSBOT_ROOT || process.cwd();
   const cfg = JSON.parse(readFileSync(process.env.OPSBOT_CONFIG || join(root, "opsbot.json"), "utf8"));
+  if (process.argv.includes("--check")) {
+    const rows = checkRows(cfg, root);
+    if (rows.length) console.log(rows.join("\n"));
+    process.exit(rows.some((r) => !r.startsWith("ok ")) ? 1 : 0);
+  }
   const s = settings(cfg);
+  const filesDir = resolve(root, s.files.dir);
+  const { rules, problems: ruleProblems } = interceptRules(s.intercept, root);
   const seenFile = join(root, "logs/intake/seen");
   const core = process.env.OPSBOT_CORE || join(root, ".agents/skills/opsbot-core/scripts/opsbot-core");
   const teamArgs = s.team ? ["--team", s.team] : [];
@@ -222,15 +431,82 @@ function main() {
   const appToken = readFileSync(s.tokenFile, "utf8").trim();
   if (!appToken.startsWith("xapp-")) fail(`${s.tokenFile} does not hold an app-level (xapp-) token`);
   if (!s.botUser) log("!", "streams.slack.bot_user is not set: the bot's own messages and reactions cannot be told apart");
+  const rawListen = cfg.streams && cfg.streams.slack && cfg.streams.slack.listen_to;
+  if (rawListen !== undefined && rawListen !== "operators" && rawListen !== "anyone") log("!", `streams.slack.listen_to ${JSON.stringify(rawListen)} is neither "operators" nor "anyone"; listening to anyone`);
+  if (s.listenTo === "operators" && s.operators.length === 0 && !s.escalateDm) log("!", "listen_to is operators, but neither operators nor escalate_dm is set: every event will be dropped");
+  for (const p of ruleProblems) log("!", "intercept", p, "(this rule never matches)");
   mkdirSync(dirname(s.eventsFile), { recursive: true });
   // Created on start, so the reader can tell "no events yet" from "the listener never ran".
   closeSync(openSync(s.eventsFile, "a"));
 
-  const run = (bin, args) => new Promise((resolve) => {
-    execFile(bin, args, { timeout: 30000 }, (err, stdout, stderr) => {
-      if (err) log("!", basename(bin), args.slice(0, 2).join(" "), (stderr || stdout || err.message).trim().split("\n")[0]);
-      resolve({ ok: !err, out: (stdout || "").trim() });
+  const firstError = (out) => {
+    const lines = String(out || "").trim().split("\n");
+    return (lines.find((l) => l.startsWith("error:")) || lines[0] || "").replace(/^error:\s*/, "").replace(/^"|"$/g, "");
+  };
+  const run = (bin, args, timeout = 30000) => new Promise((resolve) => {
+    execFile(bin, args, { timeout, killSignal: "SIGKILL" }, (err, stdout, stderr) => {
+      const why = err ? (err.killed ? `timed out after ${timeout / 1000} s` : firstError(`${stdout || ""}\n${stderr || ""}`) || err.message.split("\n")[0]) : "";
+      if (err) log("!", basename(bin), args.slice(0, 2).join(" "), why);
+      resolve({ ok: !err, out: (stdout || "").trim(), why });
     });
+  });
+
+  /** Save one allowed file through slack-axi: {path} or {skipped}. */
+  async function saveOne(file, item) {
+    const target = join(filesDir, item.conv, item.ts);
+    const incoming = join(target, `.incoming-${file.id}`);
+    try {
+      mkdirSync(filesDir, { recursive: true });
+      mkdirSync(target, { recursive: true });
+      const base = realpathSync(filesDir);
+      if (!isInside(realpathSync(target), base)) return { skipped: "outside the files dir" };
+      rmSync(incoming, { recursive: true, force: true });
+      mkdirSync(incoming);
+      const r = await run(axi, ["download", file.id, "--out", incoming, ...teamArgs], 60000);
+      if (!r.ok) return { skipped: `download failed: ${r.why}` };
+      const names = readdirSync(incoming);
+      if (names.length !== 1) return { skipped: `download left ${names.length} files` };
+      const got = join(incoming, names[0]);
+      const st = lstatSync(got);
+      if (!st.isFile()) return { skipped: "download is not a regular file" };
+      if (st.size > s.files.maxBytes) return { skipped: `${st.size} bytes, over max_bytes ${s.files.maxBytes}` };
+      const name = safeFileName(file.name, file.id);
+      let dest = join(target, name);
+      if (existsSync(dest)) dest = join(target, `${file.id}-${name}`);
+      renameSync(got, dest);
+      if (!isInside(realpathSync(dest), base)) { rmSync(dest, { force: true }); return { skipped: "outside the files dir" }; }
+      return { path: dest };
+    } catch (e) {
+      return { skipped: `save failed: ${e.code || e.message.split("\n")[0]}` };
+    } finally {
+      try { rmSync(incoming, { recursive: true, force: true }); } catch { /* left for the next try */ }
+    }
+  }
+
+  /** Download every allowed file of a kept message; each gets path or skipped. */
+  async function saveFiles(item) {
+    for (const file of item.files) {
+      const skip = fileSkip(file, item, s.files);
+      if (skip) { file.skipped = skip; continue; }
+      const r = await saveOne(file, item);
+      if (r.path) { file.path = r.path; log("saved file", item.conv, item.ts, file.id); }
+      else { file.skipped = r.skipped; log("!", "file", file.id, "skipped:", r.skipped); }
+    }
+  }
+
+  /** Run an intercept command with the message on stdin: {ok} or {ok: false, why}. */
+  const runIntercept = (rule, payload) => new Promise((done) => {
+    let finished = false, timer;
+    const finish = (r) => { if (!finished) { finished = true; clearTimeout(timer); done(r); } };
+    let child;
+    try {
+      child = spawn(rule.argv[0], rule.argv.slice(1), { cwd: root, env: { ...process.env, OPSBOT_ROOT: root }, stdio: ["pipe", "ignore", "ignore"] });
+    } catch (e) { finish({ ok: false, why: e.code || "could not start" }); return; }
+    timer = setTimeout(() => { try { child.kill("SIGKILL"); } catch {} finish({ ok: false, why: `timed out after ${rule.timeoutMs / 1000} s` }); }, rule.timeoutMs);
+    child.on("error", (e) => finish({ ok: false, why: e.code || "could not start" }));
+    child.on("exit", (code, signal) => finish(code === 0 ? { ok: true } : { ok: false, why: signal ? `signal ${signal}` : `exit ${code}` }));
+    child.stdin.on("error", () => {});
+    child.stdin.end(JSON.stringify(payload));
   });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const isSeen = (key) => { try { return readFileSync(seenFile, "utf8").split("\n").includes(key); } catch { return false; } };
@@ -290,6 +566,20 @@ function main() {
       const dropped = droppedAppPost(event, ids());
       if (dropped) log(dropped);
       return;
+    }
+    if (!heard(item, s)) { log(droppedNonOperator(item)); return; }
+    if (item.files && s.files.save) await saveFiles(item);
+    const hit = matchIntercept(item, rules, s.botUser);
+    if (hit) {
+      const r = await runIntercept(hit.rule, { text: hit.text, conv: item.conv, ts: item.ts, thread_ts: item.thread_ts || null, user: item.from, files: item.files || [] });
+      if (r.ok) {
+        await run(axi, ["react", item.conv, item.ts, `:${s.interceptEmoji}:`, ...teamArgs]);
+        log("intercepted", item.conv, item.ts, item.from || "-", "rule", hit.rule.n);
+        return;
+      }
+      log("!", "intercept failed", item.conv, item.ts, item.from || "-", "rule", `${hit.rule.n}:`, r.why);
+      item.intercept = `failed: ${r.why}`;
+      await run(axi, ["react", item.conv, item.ts, `:${s.interceptFailedEmoji}:`, ...teamArgs]);
     }
     appendFileSync(s.eventsFile, JSON.stringify({ ...item, recorded_at: new Date().toISOString() }) + "\n");
     log("recorded", item.event, item.kind, item.conv || "", item.from || "");

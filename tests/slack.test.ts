@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,6 +22,9 @@ const CHAN = "C0CHAN0001";
 // PATH = the stand-in's bin (which links node) + /usr/bin:/bin, and OPSBOT_SLACK_AXI naming
 // the stand-in, so the real tool is unreachable and no test can touch a live workspace.
 const NODE = spawnSync("node", ["-p", "process.execPath"], { encoding: "utf8" }).stdout.trim();
+
+// Several tests run the listener as a process for a few seconds each; a slow runner needs room.
+setDefaultTimeout(60000);
 
 let dirs: string[] = [];
 afterEach(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); dirs = []; });
@@ -655,6 +658,27 @@ describe("escalate.d/10-slack-dm", () => {
   });
 });
 
+/**
+ * A slack-axi store holding a fake bot token under HOME, and a fetch stub preloaded into every
+ * node process that answers auth.test as `user`: what the status identity row reads.
+ */
+function fakeIdentity(home: string, env: Record<string, string>, user: string) {
+  const store = join(home, ".config", "slack-axi");
+  mkdirSync(join(store, "workspaces", "T0EXAMPLE1"), { recursive: true });
+  writeFileSync(join(store, "workspaces", "T0EXAMPLE1", "token.json"), JSON.stringify({ token: "xoxb-fake-status-0000", team_id: "T0EXAMPLE1" }));
+  const preload = join(home, "fake-auth.mjs");
+  writeFileSync(preload, `globalThis.fetch = async (url) => {
+    if (!String(url).endsWith("/auth.test")) throw new Error("the stub only answers auth.test");
+    return { status: 200, json: async () => ({ ok: true, team_id: "T0EXAMPLE1", user_id: ${JSON.stringify(user)}, user: "examplebot" }) };
+  };\n`);
+  env.NODE_OPTIONS = `--import ${preload}`;
+  // The store under this HOME and nothing else: a runner's own XDG_CONFIG_HOME or slack-axi
+  // settings must not decide where the token is read.
+  env.XDG_CONFIG_HOME = join(home, ".config");
+  env.SLACK_AXI_CONFIG_DIR = "";
+  env.SLACK_AXI_TOKEN = "";
+}
+
 describe("scripts/opsbot-slack", () => {
   function botRepo() {
     const home = tmp();
@@ -665,11 +689,12 @@ describe("scripts/opsbot-slack", () => {
     const bin = standIn(home, { mode: "mode:\n  workspace: Example (T0EXAMPLE1)\n  mode: bot\n" });
     writeFileSync(join(bin, "systemctl"), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${home}/systemctl.log"\nif [ -e "${home}/unit-active" ]; then echo active; else echo inactive; exit 3; fi\n`);
     chmodSync(join(bin, "systemctl"), 0o755);
+    const env: Record<string, string> = { HOME: home };
     const cli = (...args: string[]) => {
-      const r = spawnSync("bash", [CLI, ...args], { cwd: root, encoding: "utf8", env: isolated(bin, { HOME: home }) });
+      const r = spawnSync("bash", [CLI, ...args], { cwd: root, encoding: "utf8", env: isolated(bin, env) });
       return { code: r.status, out: r.stdout, err: r.stderr };
     };
-    return { home, root, cli };
+    return { home, root, cli, env };
   }
 
   test("install --dry-run writes nothing; install writes the three scripts, executable; a second install changes nothing", () => {
@@ -732,9 +757,11 @@ describe("scripts/opsbot-slack", () => {
       wake: { files: ["~/.cache/examplebot/slack-events.jsonl"] },
     }));
     writeFileSync(join(b.home, "unit-active"), "");
+    // The posting identity row (bot_user is set): a stored bot token and a stubbed auth.test.
+    fakeIdentity(b.home, b.env, BOT);
     const all = b.cli("status");
     expect(all.out).toMatch(/^ok\s+app-token\s+~\/\.config\/examplebot\/slack-app-token \(600, xapp-\)/m);
-    expect(all.out).toContain("status: all 8 ok");
+    expect(all.out).toContain("status: all 9 ok");
     expect(all.code).toBe(0);
     expect(all.out + all.err).not.toContain("FAKE");
     expect(readFileSync(join(b.home, "systemctl.log"), "utf8")).toContain("--user is-active opsbot-examplebot-monitor-10-slack-listener.service");
@@ -760,6 +787,382 @@ describe("scripts/opsbot-slack", () => {
     expect(b.cli("--help").code).toBe(0);
     rmSync(join(b.root, "opsbot.json"));
     expect(b.cli("status").code).toBe(2);
+  });
+});
+
+/**
+ * The running listener with Slack, slack-axi and the core all stubbed: a preload stands in for
+ * fetch and the WebSocket and delivers `events` one at a time, then waits `settleMs` and exits;
+ * slack-axi is a script that logs its calls and, for `download`, writes a file into --out (or
+ * fails for an id starting F0FAIL); the core logs every nudge and says it woke. HOME is the
+ * temp dir. Returns what each stub saw.
+ */
+function runListener(slack: Record<string, unknown>, events: unknown[], opts: { settleMs?: number; setup?: (repo: string, dir: string) => void } = {}) {
+  const dir = tmp();
+  const repo = join(dir, "repo");
+  mkdirSync(repo);
+  const tf = join(dir, "app-token");
+  writeFileSync(tf, "xapp-1-FAKE\n", { mode: 0o600 });
+  chmodSync(tf, 0o600);
+  writeFileSync(join(repo, "opsbot.json"), JSON.stringify({ name: "examplebot", streams: { slack: { app_token_file: tf, events_file: join(dir, "slack-events.jsonl"), bot_user: BOT, ...slack } } }));
+  const axi = join(dir, "slack-axi");
+  writeFileSync(axi, `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "${dir}/axi.log"
+if [ "$1" = download ]; then
+  case "$2" in F0FAIL*) echo 'error: "stand-in failure for download"'; exit 1 ;; esac
+  out="$4"; mkdir -p "$out"
+  [ -e "${dir}/download-big" ] && head -c 4096 /dev/zero > "$out/stand-in-name" && exit 0
+  printf 'bytes of %s' "$2" > "$out/stand-in-name"
+fi
+exit 0
+`);
+  chmodSync(axi, 0o755);
+  const core = join(dir, "core");
+  writeFileSync(core, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${dir}/core.log"\necho "woke: stand-in"\n`);
+  chmodSync(core, 0o755);
+  opts.setup?.(repo, dir);
+  const preload = join(dir, "fake-slack.mjs");
+  writeFileSync(preload, `
+    const events = ${JSON.stringify(events)};
+    globalThis.fetch = async () => ({ json: async () => ({ ok: true, url: "ws://stand-in" }) });
+    globalThis.WebSocket = class {
+      constructor() {
+        setTimeout(() => {
+          this.onopen();
+          let i = 0;
+          const next = () => {
+            if (i >= events.length) { setTimeout(() => process.exit(0), ${opts.settleMs ?? 1500}); return; }
+            this.onmessage({ data: JSON.stringify({ envelope_id: "e" + i, type: "events_api", payload: { event: events[i++] } }) });
+            setTimeout(next, 150);
+          };
+          next();
+        }, 10);
+      }
+      send() {}
+      close() {}
+    };`);
+  const r = spawnSync(NODE, ["--import", preload, LISTENER], {
+    encoding: "utf8", timeout: 30000,
+    env: { ...process.env, HOME: dir, OPSBOT_ROOT: repo, OPSBOT_CORE: core, OPSBOT_SLACK_AXI: axi },
+  });
+  const read = (f: string) => (existsSync(join(dir, f)) ? readFileSync(join(dir, f), "utf8").trim().split("\n").filter(Boolean) : []);
+  return {
+    dir, repo, code: r.status, out: r.stdout, err: r.stderr,
+    recorded: read("slack-events.jsonl").map((l) => JSON.parse(l)),
+    axi: read("axi.log"),
+    nudges: read("core.log"),
+    read,
+  };
+}
+
+describe("owner-only listening (listen_to)", () => {
+  const OPS = "U0OPS00001";
+  const OPS_DM = "D0OPSDM001";
+  const ids = { botUser: BOT, operators: [OPS], escalateDm: OPS_DM, listenTo: "operators" };
+  const mention = classify([MENTION])[0]!;
+  const items = (from: string) => [
+    classify([{ ...DM_TOP, user: from }])[0],
+    classify([{ ...MENTION, user: from }])[0],
+    classify([{ ...THREAD_REPLY, user: from }], BOT, JSON.stringify(mention) + "\n")[0],
+    classify([{ ...REACTION, user: from }])[0],
+  ];
+
+  test("unset or anyone keeps everyone, as before", () => {
+    for (const it of [...items(ANN), classify([{ type: "team_join", user: { id: "U0NEW00001" } }])[0]]) {
+      expect(call("heard", [it, { operators: [OPS] }])).toBe(true);
+      expect(call("heard", [it, { ...ids, listenTo: "anyone" }])).toBe(true);
+    }
+    expect(call("settings", [{ name: "examplebot" }])).toMatchObject({ listenTo: "anyone" });
+    expect(call("settings", [{ name: "examplebot", streams: { slack: { listen_to: "nobody" } } }])).toMatchObject({ listenTo: "anyone" });
+  });
+
+  test("operators: an operator's DM, mention, reply and reaction are kept; anyone's in escalate_dm too", () => {
+    for (const it of items(OPS)) expect(call("heard", [it, ids])).toBe(true);
+    const inEsc = classify([{ ...DM_TOP, channel: OPS_DM }])[0];
+    const reactionInEsc = classify([{ ...REACTION, item: { ...REACTION.item, channel: OPS_DM } }])[0];
+    expect(call("heard", [inEsc, { ...ids, operators: [] }])).toBe(true);
+    expect(call("heard", [reactionInEsc, { ...ids, operators: [] }])).toBe(true);
+  });
+
+  test("operators: a non-operator's DM, mention, kept reply, reaction and a team_join are dropped with one line of ids", () => {
+    const join_ = classify([{ type: "team_join", user: { id: "U0NEW00001", real_name: "New Person" }, event_ts: "1794400400.000600" }])[0];
+    const all = [...items(ANN), join_];
+    for (const it of all) expect(call("heard", [it, ids])).toBe(false);
+    expect(all.map((it) => call("droppedNonOperator", [it]))).toEqual([
+      `dropped non-operator ${DM} ${ANN} dm`,
+      `dropped non-operator ${CHAN} ${ANN} mention`,
+      `dropped non-operator ${CHAN} ${ANN} reply`,
+      `dropped non-operator ${CHAN} ${ANN} reaction`,
+      "dropped non-operator - U0NEW00001 team_join",
+    ]);
+    // No operators and no escalate_dm: nothing is heard.
+    expect(call("heard", [items(OPS)[0], { listenTo: "operators" }])).toBe(false);
+  });
+
+  test("the running listener drops a non-operator's DM silently and still receipts an operator's", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const stranger = { ...DM_TOP, text: "private words", ts: `${now}.000100` };
+    const owner = { ...DM_TOP, channel: OPS_DM, user: OPS, ts: `${now}.000200` };
+    const r = runListener({ listen_to: "operators", operators: [OPS] }, [stranger, owner]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(`dropped non-operator ${DM} ${ANN} dm`);
+    expect(r.out).not.toContain("private words");
+    expect(r.recorded.map((l) => l.key)).toEqual([`slack:${OPS_DM}:${owner.ts}:msg`]);
+    expect(r.axi.filter((l) => l.includes(stranger.ts))).toEqual([]);
+    expect(r.axi).toContain(`react ${OPS_DM} ${owner.ts} :eyes:`);
+    expect(r.nudges).toHaveLength(1);
+  });
+
+  test("operators with no operators and no escalate_dm is said at start", () => {
+    const r = runListener({ listen_to: "operators" }, [], { settleMs: 100 });
+    expect(r.out).toContain("every event will be dropped");
+  });
+});
+
+describe("the intercept", () => {
+  const root = "/srv/examplebot";
+  const rules = (raw: unknown) => call("interceptRules", [raw, root]) as { rules: any[]; problems: string[] };
+
+  test("rules: defaults, a repo path or an absolute one, and a problem line for each unusable rule", () => {
+    const ok = rules([{ prefix: "+ ", command: ["bin/capture", "--x"] }, { prefix: "!", command: ["/usr/local/bin/note"], kinds: ["mention", "reply"], timeout_seconds: 5 }]);
+    expect(ok.problems).toEqual([]);
+    expect(ok.rules).toEqual([
+      { n: 1, prefix: "+ ", argv: [`${root}/bin/capture`, "--x"], kinds: ["dm"], timeoutMs: 30000 },
+      { n: 2, prefix: "!", argv: ["/usr/local/bin/note"], kinds: ["mention", "reply"], timeoutMs: 5000 },
+    ]);
+    const bad = rules([{ command: ["bin/x"] }, { prefix: "+", command: "bin/x --y" }, { prefix: "+", command: ["../outside"] }, { prefix: "+", command: ["bin/x"], kinds: ["reaction"] }, { prefix: "+", command: ["bin/x"], timeout_seconds: 0 }]);
+    expect(bad.rules).toEqual([]);
+    expect(bad.problems).toEqual([
+      "rule 1: prefix must be a non-empty string",
+      "rule 2: command must be a non-empty list of strings",
+      "rule 3: command must be a path inside the repo or absolute: ../outside",
+      "rule 4: kinds must be a list of dm, mention, reply",
+      "rule 5: timeout_seconds must be a positive number",
+    ]);
+    expect(rules({ prefix: "+" }).problems).toEqual(["intercept must be a list of rules"]);
+    expect(rules(undefined)).toEqual({ rules: [], problems: [] });
+  });
+
+  test("matching: leading whitespace trimmed, a leading mention stripped, exact case-sensitive prefix, first rule wins, kinds respected", () => {
+    const { rules: rs } = rules([{ prefix: "+ ", command: ["bin/a"], kinds: ["dm", "mention"] }, { prefix: "+", command: ["bin/b"], kinds: ["dm"] }, { prefix: "todo:", command: ["bin/c"], kinds: ["reply"] }]);
+    const match = (it: unknown) => call("matchIntercept", [it, rs, BOT]) as { rule: { n: number }; text: string } | null;
+    const dm = (text: string) => classify([{ ...DM_TOP, text }])[0];
+    expect(match(dm("  \n+ buy milk"))).toMatchObject({ rule: { n: 1 }, text: "buy milk" });
+    expect(match(dm("+buy milk"))).toMatchObject({ rule: { n: 2 }, text: "buy milk" });
+    expect(match(dm("buy milk +"))).toBeNull();
+    expect(match(classify([{ ...MENTION, text: `<@${BOT}>   + call the vendor` }])[0])).toMatchObject({ rule: { n: 1 }, text: "call the vendor" });
+    const recorded = JSON.stringify(classify([MENTION])[0]) + "\n";
+    expect(match(classify([{ ...THREAD_REPLY, text: "todo: the report" }], BOT, recorded)[0])).toMatchObject({ rule: { n: 3 }, text: " the report" });
+    expect(match(classify([{ ...THREAD_REPLY, text: "TODO: the report" }], BOT, recorded)[0])).toBeNull();
+    expect(match(classify([{ ...THREAD_REPLY, text: "+ x" }], BOT, recorded)[0])).toBeNull(); // no rule takes replies with +
+    expect(match({ ...classify([REACTION])[0], text: "+ " })).toBeNull();
+  });
+
+  test("success: the command gets the message as JSON, nothing is recorded, its own reaction, no receipt, no wake", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const ev = { ...DM_TOP, text: " + buy oat milk", ts: `${now}.000100` };
+    const r = runListener({ intercept: [{ prefix: "+ ", command: ["bin/capture"] }] }, [ev], {
+      setup: (repo, dir) => {
+        mkdirSync(join(repo, "bin"));
+        writeFileSync(join(repo, "bin/capture"), `#!/usr/bin/env bash\ncat >> "${dir}/capture.log"; echo >> "${dir}/capture.log"\necho "printed to stdout, ignored"\n`);
+        chmodSync(join(repo, "bin/capture"), 0o755);
+      },
+    });
+    expect(r.code).toBe(0);
+    expect(r.read("capture.log").map((l) => JSON.parse(l))).toEqual([{ text: "buy oat milk", conv: DM, ts: ev.ts, thread_ts: null, user: ANN, files: [] }]);
+    expect(r.recorded).toEqual([]);
+    expect(r.axi).toEqual([`react ${DM} ${ev.ts} :white_check_mark:`]);
+    expect(r.nudges).toEqual([]);
+    expect(r.out).toContain(`intercepted ${DM} ${ev.ts} ${ANN} rule 1`);
+    expect(r.out).not.toContain("oat milk");
+  });
+
+  test("failure: a non-zero exit and a timeout record the message, marked, with the failure reaction, the receipt and a wake", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const a = { ...DM_TOP, text: "+ this one fails", ts: `${now}.000100` };
+    const b = { ...DM_TOP, text: "! this one hangs", ts: `${now}.000200` };
+    const r = runListener({
+      intercept: [{ prefix: "+ ", command: ["bin/fail"] }, { prefix: "! ", command: ["bin/hang"], timeout_seconds: 1 }],
+      intercept_emoji: "inbox_tray", intercept_failed_emoji: "x",
+    }, [a, b], {
+      settleMs: 2500,
+      setup: (repo) => {
+        mkdirSync(join(repo, "bin"));
+        writeFileSync(join(repo, "bin/fail"), "#!/usr/bin/env bash\ncat >/dev/null; echo 'secret echo' >&2; exit 3\n");
+        writeFileSync(join(repo, "bin/hang"), "#!/usr/bin/env bash\nsleep 10\n");
+        chmodSync(join(repo, "bin/fail"), 0o755);
+        chmodSync(join(repo, "bin/hang"), 0o755);
+      },
+    });
+    expect(r.code).toBe(0);
+    const byTs = Object.fromEntries(r.recorded.map((l) => [l.ts, l]));
+    expect(byTs[a.ts]).toMatchObject({ key: `slack:${DM}:${a.ts}:msg`, text: "+ this one fails", intercept: "failed: exit 3" });
+    expect(byTs[b.ts]).toMatchObject({ intercept: "failed: timed out after 1 s" });
+    for (const ts of [a.ts, b.ts]) {
+      const reacts = r.axi.filter((l) => l.includes(ts));
+      expect(reacts).toEqual([`react ${DM} ${ts} :x:`, `react ${DM} ${ts} :eyes:`]);
+    }
+    expect(r.nudges).toHaveLength(2);
+    expect(r.out).toContain(`intercept failed ${DM} ${a.ts} ${ANN} rule 1: exit 3`);
+    expect(r.out).not.toContain("secret echo");
+  });
+
+  test("a command that cannot start fails like any other; a bad rule is logged at start and never matches", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const ev = { ...DM_TOP, text: "+ x", ts: `${now}.000100` };
+    const r = runListener({ intercept: [{ prefix: "+ ", command: ["../escape"] }, { prefix: "+ ", command: ["bin/missing"] }] }, [ev]);
+    expect(r.out).toContain("intercept rule 1: command must be a path inside the repo or absolute: ../escape");
+    expect(r.recorded).toEqual([expect.objectContaining({ ts: ev.ts, intercept: "failed: ENOENT" })]);
+  });
+});
+
+describe("files", () => {
+  const PNG = { id: "F0PNG00001", name: "../../evil.png", mimetype: "image/png", size: 10 };
+
+  test("file metadata is recorded on a message whatever the settings; a message without files has none", () => {
+    const [withFiles, without] = classify([{ ...DM_TOP, subtype: "file_share", files: [{ ...PNG, url_private_download: "https://files.example.invalid/x", filetype: "png" }, { id: "F0CONN0001", mode: "file_access", file_access: "check_file_info" }] }, DM_TOP]);
+    expect(withFiles!.files).toEqual([PNG, { id: "F0CONN0001", file_access: "check_file_info" }]);
+    expect(without).not.toHaveProperty("files");
+  });
+
+  test("names are made safe, types and sizes decided before any download", () => {
+    expect(["../../evil.png", "a\\b\\c.txt", "..", ".hidden", "ok name.pdf", "x\u0000y\n.png", ""].map((n) => call("safeFileName", [n, "F0ID000001"]))).toEqual(["evil.png", "c.txt", "F0ID000001", "hidden", "ok name.pdf", "xy.png", "F0ID000001"]);
+    const item = { conv: DM, ts: "1794400000.000100" };
+    const skip = (f: unknown, cfg = {}) => call("fileSkip", [f, item, cfg]);
+    expect(skip(PNG)).toBeNull();
+    expect(skip({ ...PNG, mimetype: "application/zip" })).toBe("type application/zip not allowed");
+    expect(skip({ ...PNG, size: 26214401 })).toBe("26214401 bytes, over max_bytes 26214400");
+    expect(skip({ ...PNG, size: 11 }, { maxBytes: 10 })).toBe("11 bytes, over max_bytes 10");
+    expect(skip({ id: "F0CONN0001", file_access: "check_file_info" })).toBe("no type or size in the event");
+    expect(skip({ ...PNG, id: "../x" })).toBe("unsafe file id");
+    expect(call("fileSkip", [PNG, { conv: "../D0", ts: "1" }, {}])).toBe("unsafe conversation or ts");
+    expect(call("allowedType", ["TEXT/plain", ["text/*"]])).toBe(true);
+    expect(call("allowedType", ["application/pdf", ["application/pdf"]])).toBe(true);
+    expect(call("allowedType", ["application/pdfx", ["application/pdf"]])).toBe(false);
+  });
+
+  test("save on: an allowed file is saved under its safe name inside dir; oversize, wrong type, failed and Slack Connect files are skipped", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const ts = `${now}.000100`;
+    const ev = {
+      ...DM_TOP, subtype: "file_share", ts, files: [
+        PNG,
+        { id: "F0BIG00001", name: "huge.png", mimetype: "image/png", size: 30000000 },
+        { id: "F0ZIP00001", name: "a.zip", mimetype: "application/zip", size: 10 },
+        { id: "F0FAIL0001", name: "gone.pdf", mimetype: "application/pdf", size: 10 },
+        { id: "F0CONN0001", file_access: "check_file_info" },
+      ],
+    };
+    const r = runListener({ files: { save: true } }, [ev]);
+    expect(r.code).toBe(0);
+    const [line] = r.recorded;
+    const saved = join(r.repo, ".scratch/slack-files", DM, ts, "evil.png");
+    expect(line.files).toEqual([
+      { ...PNG, path: saved },
+      { id: "F0BIG00001", name: "huge.png", mimetype: "image/png", size: 30000000, skipped: "30000000 bytes, over max_bytes 26214400" },
+      { id: "F0ZIP00001", name: "a.zip", mimetype: "application/zip", size: 10, skipped: "type application/zip not allowed" },
+      { id: "F0FAIL0001", name: "gone.pdf", mimetype: "application/pdf", size: 10, skipped: "download failed: stand-in failure for download" },
+      { id: "F0CONN0001", file_access: "check_file_info", skipped: "no type or size in the event" },
+    ]);
+    expect(readFileSync(saved, "utf8")).toBe("bytes of F0PNG00001");
+    // Only the two allowed files were asked for; nothing else was written next to them.
+    expect(r.axi.filter((l) => l.startsWith("download")).map((l) => l.split(" ")[1])).toEqual(["F0PNG00001", "F0FAIL0001"]);
+    expect(spawnSync("ls", ["-A", join(r.repo, ".scratch/slack-files", DM, ts)], { encoding: "utf8" }).stdout.trim()).toBe("evil.png");
+    expect(existsSync(join(r.dir, "evil.png"))).toBe(false);
+    // The receipt still lands, after the downloads.
+    expect(r.axi[r.axi.length - 1]).toBe(`react ${DM} ${ts} :eyes:`);
+  });
+
+  test("a download larger than max_bytes is deleted and skipped; a taken name gets the id in front", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const ts = `${now}.000100`;
+    const r = runListener({ files: { save: true, dir: "/dev/null/nowhere", max_bytes: 100 } }, [{ ...DM_TOP, ts, files: [PNG] }]);
+    expect(r.recorded[0].files[0].skipped).toMatch(/^save failed: /);
+    const big = runListener({ files: { save: true, max_bytes: 100 } }, [{ ...DM_TOP, ts, files: [PNG] }], { setup: (_repo, dir) => writeFileSync(join(dir, "download-big"), "") });
+    expect(big.recorded[0].files[0]).toMatchObject({ skipped: "4096 bytes, over max_bytes 100" });
+    expect(spawnSync("ls", ["-A", join(big.repo, ".scratch/slack-files", DM, ts)], { encoding: "utf8" }).stdout.trim()).toBe("");
+    const taken = runListener({ files: { save: true } }, [{ ...DM_TOP, ts, files: [PNG] }], {
+      setup: (repo) => { mkdirSync(join(repo, ".scratch/slack-files", DM, ts), { recursive: true }); writeFileSync(join(repo, ".scratch/slack-files", DM, ts, "evil.png"), "older"); },
+    });
+    expect(taken.recorded[0].files[0].path).toBe(join(taken.repo, ".scratch/slack-files", DM, ts, "F0PNG00001-evil.png"));
+  });
+
+  test("a link out of dir is never followed", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const ts = `${now}.000100`;
+    const r = runListener({ files: { save: true } }, [{ ...DM_TOP, ts, files: [PNG] }], {
+      setup: (repo, dir) => { mkdirSync(join(repo, ".scratch/slack-files"), { recursive: true }); mkdirSync(join(dir, "elsewhere")); symlinkSync(join(dir, "elsewhere"), join(repo, ".scratch/slack-files", DM)); },
+    });
+    expect(r.recorded[0].files[0]).toMatchObject({ skipped: "outside the files dir" });
+    expect(r.axi.some((l) => l.startsWith("download"))).toBe(false);
+  });
+
+  test("save off: metadata only, no download", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const r = runListener({}, [{ ...DM_TOP, ts: `${now}.000100`, files: [PNG] }]);
+    expect(r.recorded[0].files).toEqual([PNG]);
+    expect(r.axi.some((l) => l.startsWith("download"))).toBe(false);
+  });
+
+  test("with an intercept, the command gets the saved files", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const ts = `${now}.000100`;
+    const r = runListener({ files: { save: true }, intercept: [{ prefix: "+ ", command: ["bin/capture"] }] }, [{ ...DM_TOP, text: "+ receipt", ts, files: [PNG] }], {
+      setup: (repo, dir) => {
+        mkdirSync(join(repo, "bin"));
+        writeFileSync(join(repo, "bin/capture"), `#!/usr/bin/env bash\ncat > "${dir}/capture.json"\n`);
+        chmodSync(join(repo, "bin/capture"), 0o755);
+      },
+    });
+    const got = JSON.parse(readFileSync(join(r.dir, "capture.json"), "utf8"));
+    expect(got).toMatchObject({ text: "receipt", files: [{ ...PNG, path: join(r.repo, ".scratch/slack-files", DM, ts, "evil.png") }] });
+    expect(r.recorded).toEqual([]);
+  });
+
+  test("the reader passes files and intercept through", () => {
+    const t = readerSetup();
+    const ev = join(t.dir, "slack-events.jsonl");
+    const line = { ...classify([{ ...DM_TOP, ts: "1794400900.000900", files: [PNG] }])[0], intercept: "failed: exit 3", recorded_at: "2026-11-10T14:00:00.000Z" };
+    (line as any).files[0].path = "/srv/examplebot/.scratch/slack-files/x.png";
+    writeFileSync(ev, readFileSync(ev, "utf8") + JSON.stringify(line) + "\n");
+    const it = t.run().items.find((i) => i.ts === "1794400900.000900");
+    expect(it).toMatchObject({ files: [{ ...PNG, path: "/srv/examplebot/.scratch/slack-files/x.png" }], intercept: "failed: exit 3" });
+    expect(t.run().items[0]).not.toHaveProperty("files");
+  });
+});
+
+describe("status: listen_to, intercept and files rows", () => {
+  function repoWith(slack: Record<string, unknown>) {
+    const home = tmp();
+    const root = join(home, "bot");
+    mkdirSync(root);
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    writeFileSync(join(root, "opsbot.json"), JSON.stringify({ name: "examplebot", streams: { slack } }));
+    const bin = standIn(home, { mode: "mode:\n  workspace: Example (T0EXAMPLE1)\n  mode: bot\n" });
+    const r = spawnSync("bash", [CLI, "status"], { cwd: root, encoding: "utf8", env: isolated(bin, { HOME: home }) });
+    return { root, out: r.stdout, code: r.status };
+  }
+
+  test("none set: no rows", () => {
+    const r = repoWith({ escalate_dm: DM });
+    expect(r.out).not.toMatch(/^\S+\s+(listen_to|intercept|files)\s/m);
+  });
+
+  test("listen_to operators with no operators and no escalate_dm, or an unknown value, is differs; with one it is ok", () => {
+    expect(repoWith({ listen_to: "operators" }).out).toMatch(/^differs\s+listen_to\s+operators, but neither operators nor escalate_dm is set/m);
+    expect(repoWith({ listen_to: "owner" }).out).toMatch(/^differs\s+listen_to\s+"owner" is neither/m);
+    const ok = repoWith({ listen_to: "operators", operators: ["U0OPS00001"], escalate_dm: DM });
+    expect(ok.out).toMatch(new RegExp(`^ok\\s+listen_to\\s+operators: U0OPS00001, and anyone in ${DM}`, "m"));
+  });
+
+  test("intercept: usable rules are ok and say who can trigger them; a missing command is differs", () => {
+    const r = repoWith({ intercept: [{ prefix: "+ ", command: ["/bin/true"] }], files: { save: true, types: ["image/*"] } });
+    expect(r.out).toMatch(/^ok\s+intercept\s+1 rule; anyone who can message the bot can trigger them/m);
+    expect(r.out).toMatch(/^ok\s+files\s+saving image\/\* up to 26214400 bytes to \.scratch\/slack-files/m);
+    const bad = repoWith({ listen_to: "operators", operators: ["U0OPS00001"], intercept: [{ prefix: "+ ", command: ["bin/nope"] }], files: { max_bytes: -1 } });
+    expect(bad.out).toMatch(/^differs\s+intercept\s+rule 1: command is not an executable file: .*bin\/nope/m);
+    expect(bad.out).toMatch(/^differs\s+files\s+max_bytes must be a positive number/m);
+    expect(bad.code).toBe(1);
   });
 });
 

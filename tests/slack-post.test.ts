@@ -438,3 +438,77 @@ describe("status: the screen row", () => {
     expect(bot().run(["status"]).out).not.toMatch(/\bscreen\b/);
   });
 });
+
+describe("the posting identity", () => {
+  const someone = { ...FIXTURE, "auth.test": { ok: true, team_id: TEAM, user_id: ANN, user: "ann" } };
+  const authCalls = (b: ReturnType<typeof bot>) => b.api().filter((c) => c.method === "auth.test");
+
+  test("a token that is not bot_user's refuses the post: exit 5, nothing sent, logged", () => {
+    const b = bot({}, { fixture: someone });
+    const r = b.run(["post", CHAN, "--reply", TS, "hello"]);
+    expect(r.code).toBe(5);
+    expect(r.json).toMatchObject({ posted: false, conv: CHAN, identity: { user: ANN, name: "ann" } });
+    expect(r.json.error).toContain(`slack-axi would post as ${ANN} (ann), not as bot_user ${BOT}`);
+    expect(b.axi()).toEqual([]);
+    expect(b.log()).toEqual([expect.objectContaining({ posted: false, error: r.json.error })]);
+    expect(r.out + r.err).not.toContain("xoxb-fake");
+  });
+
+  test("an auth.test that fails refuses too", () => {
+    const b = bot({}, { fixture: { ...FIXTURE, "auth.test": { ok: false, error: "invalid_auth" } } });
+    const r = b.run(["post", ESC, "hello"]);
+    expect(r.code).toBe(5);
+    expect(r.json.error).toBe("could not confirm the posting identity: auth.test: invalid_auth; nothing posted");
+    expect(b.axi()).toEqual([]);
+  });
+
+  test("a match posts, and is cached under the token: a changed token is asked again", () => {
+    const b = bot();
+    expect(b.run(["post", ESC, "one"]).code).toBe(0);
+    const first = authCalls(b).length;
+    expect(b.run(["post", ESC, "two"]).code).toBe(0);
+    expect(authCalls(b).length).toBe(first); // class and identity both cached
+    const cache = JSON.parse(readFileSync(join(b.dir, "cache", "slack-classes.json"), "utf8"));
+    expect(cache.identity).toMatchObject({ user: BOT, team: TEAM });
+    expect(cache.identity.token).toMatch(/^[0-9a-f]{16}$/);
+    expect(JSON.stringify(cache)).not.toContain("xoxb-");
+    expect(b.run(["post", ESC, "three"], { env: { SLACK_AXI_TOKEN: "xoxb-another-fake-token" } }).code).toBe(0);
+    expect(authCalls(b).length).toBe(first + 1);
+    expect(authCalls(b).at(-1)!.auth).toBe("Bearer xoxb-another-fake-token");
+  });
+
+  test("a mismatch is never cached: the next post asks again", () => {
+    const b = bot({}, { fixture: someone });
+    b.run(["post", ESC, "x"]);
+    const n = authCalls(b).length;
+    expect(b.run(["post", ESC, "x"]).code).toBe(5);
+    expect(authCalls(b).length).toBe(n + 1);
+  });
+
+  test("with bot_user unset nothing is checked; --dry-run does not check", () => {
+    const b = bot({ bot_user: undefined }, { fixture: someone });
+    expect(b.run(["post", ESC, "x"]).code).toBe(0);
+    const d = bot({}, { fixture: someone });
+    expect(d.run(["post", ESC, "--dry-run", "x"]).json).toMatchObject({ dry_run: true, would_post: true });
+  });
+
+  test("the token is resolved in slack-axi's order: team, then default, then the only one", () => {
+    const b = bot({ team: "T0SECOND01" });
+    const store = join(b.dir, "config", "slack-axi");
+    for (const [team, tok] of [[TEAM, "xoxb-default-fake"], ["T0SECOND01", "xoxb-second-fake"]]) {
+      mkdirSync(join(store, "workspaces", team!), { recursive: true });
+      writeFileSync(join(store, "workspaces", team!, "token.json"), JSON.stringify({ token: tok, team_id: team }));
+    }
+    writeFileSync(join(store, "config.json"), JSON.stringify({ default_team: TEAM }));
+    b.run(["post", ESC, "x"], { env: { SLACK_AXI_TOKEN: "", SLACK_AXI_TEAM: TEAM } });
+    expect(new Set(authCalls(b).map((c) => c.auth))).toEqual(new Set(["Bearer xoxb-second-fake"]));
+  });
+
+  test("status: the identity row is ok on a match, differs on a mismatch, missing without a token", () => {
+    expect(bot().run(["status"]).out).toMatch(new RegExp(`^ok\\s+identity\\s+posts as ${BOT}, bot_user`, "m"));
+    expect(bot({}, { fixture: someone }).run(["status"]).out).toMatch(new RegExp(`^differs\\s+identity\\s+posts as ${ANN} \\(ann\\), not bot_user ${BOT}`, "m"));
+    const none = bot().run(["status"], { env: { SLACK_AXI_TOKEN: "" } });
+    expect(none.out).toMatch(/^missing\s+identity\s+no posting identity: no slack-axi workspace to read the bot token from/m);
+    expect(none.out + none.err).not.toContain("xoxb-fake");
+  });
+});
