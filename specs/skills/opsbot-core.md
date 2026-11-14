@@ -21,7 +21,7 @@ The bot's own files the skill reads and writes:
 | --- | --- |
 | `opsbot.json` | the settings file; committed; the only place any loop *value* is set |
 | `opsbot.d/` | the lifecycle directories; every executable in them is picked up (see below) |
-| `logs/cycle.jsonl` | one line per cycle outcome; committed. With `sleep` set it also holds `{at, outcome: "sleep", by, quiet_since, due}` and `{at, outcome: "wake", reason, latency_s, slept_from, woken_at}` |
+| `logs/cycle.jsonl` | one line per cycle outcome; committed. With `sleep` set it also holds `{at, outcome: "sleep", by, quiet_since, due}` and `{at, outcome: "wake", reason, latency_s, slept_from, woken_at}`. `memory review --done` adds `{at, outcome: "memory-review", files, kept, updated, removed, added, note}` |
 | `logs/intake/seen` | typed seen keys; committed |
 | `logs/intake/watermark` | one UTC ISO line; committed |
 | `logs/outages.jsonl` | outage events `{at, outcome: "outage"\|"outage-end", kind, started, ended, note}`; committed with the next cycle; readers also accept outage lines found in `logs/cycle.jsonl`, where an earlier bot wrote them |
@@ -30,6 +30,8 @@ The bot's own files the skill reads and writes:
 | `.git/opsbot-sleep` | present while the bot is going down, asleep, or woken and not yet answered: when it was decided and by which command, quiet since when, the earliest due time and what it is, each wake file's line count at the decision, when the sleep began and whether it compacted, the sleep timer's last look, the wake (when, why, when the event was, whether the prompt landed) and whether an unanswered wake was escalated; removed by `cycle begin`; never committed; ignored while `sleep` is absent from `opsbot.json` |
 | `.scratch/` | the bot's scratch directory for files written to look at and throw away; `cold-start --write` creates it and adds a `.scratch/` line to the repository's `info/exclude` (`git rev-parse --git-path info/exclude`, so a worktree checkout works), never to `.gitignore`; never committed |
 | `.scratch/opsbot-core/reground.md` + `reground.pending` | the cold-start pack and its flag; inside the working directory, so reading the pack needs no permission beyond the checkout |
+| `memory/` (`memory.dir`) | the session's Claude Code auto memory: `MEMORY.md`, the index Claude Code loads at every session start, and one small file per memory, which the model writes on its own; committed with the cycles; see *Auto memory* below |
+| `.git/opsbot-memory-review.json` | the snapshot `memory review --begin` takes (each memory file's name and content hash) for `--done` to diff against; removed by `--done`; never committed |
 
 ## Settings (`opsbot.json`)
 
@@ -54,6 +56,7 @@ The bot's own files the skill reads and writes:
 | `repo_sync` | `pull-on-clean` or `never-pull` |
 | `host` | optional; belongs to the `opsbot-host` skill (display, VNC and bridge ports); `settings validate` accepts it as an object and does not look inside |
 | `commit_paths` | optional; repo-relative files the check's commit and the `cycle end` commit also take when they exist and have changes (a baseline an adapter updates, an append-only log a helper script writes between cycles); a listed file that does not exist is skipped |
+| `memory` | optional; `{dir, review_days}`, defaults `memory` and `7`, or `false`. `dir` is the repo-relative directory the session's auto memory lives in; `start` passes it to Claude Code as an absolute path. `review_days` is how long after the last review the next one is due. `false` turns auto memory off for the bot. There is no value that leaves memory at Claude Code's default location outside the repo; see *Auto memory* below |
 | `wake.files` | optional; the files a `monitor.d/` listener appends one line per event to. The core prints, in the cold-start pack and at every `cycle begin` and `cycle end`, the state of each (armed until when, or not armed) and the exact bounded `Monitor` call that arms it; see *The live wake* below. With `loop.schedule: "monitor"` all of them share the one schedule monitor |
 
 `settings validate` refuses a file with an unknown key, a missing required key, or a
@@ -62,7 +65,11 @@ cadence value over the cap, or a `loop.prompt` that starts with `/` when `loop.s
 key named `//` is a comment and is allowed at any level, since JSON has no comments.
 `streams.<name>` objects are the heartbeat scripts' own and are not checked inside.
 When `.claude/settings.json` sets `autoCompactWindow`, `settings validate` refuses it
-unless it equals `loop.autocompact` (one value, one place).
+unless it equals `loop.autocompact` (one value, one place). It also refuses
+`.claude/settings.json` setting `autoMemoryEnabled` or `autoMemoryDirectory`: `memory` is
+where that is set. `memory` must be `false` or an object; `memory.dir` must be a non-empty
+repo-relative path with no `..` segment, not absolute, not the repo itself, and not under
+`.git/`, `.claude/` or `.scratch/`; `memory.review_days` a positive whole number.
 
 ## Session drift
 
@@ -79,15 +86,15 @@ it tells its operator once. Outside a session (`CLAUDECODE` unset) nothing is ch
 
 | Command | Does | Exit |
 | --- | --- | --- |
-| *(none)* | home: bot name, bin path, last cycle outcome and age, lock state, next wake, counts of failed inputs and open outages, and with `sleep` set the sleep state (`awake`, going down, `asleep since HH:MMZ, next look HH:MMZ, wake by HH:MMZ`, or woken and waiting); three help lines | 0 |
+| *(none)* | home: bot name, bin path, last cycle outcome and age, lock state, next wake, counts of failed inputs and open outages, one `memory` line (as `memory status` prints it, or `off`), and with `sleep` set the sleep state (`awake`, going down, `asleep since HH:MMZ, next look HH:MMZ, wake by HH:MMZ`, or woken and waiting); three help lines | 0 |
 | `check` | runs every script in `heartbeat.d/`, aggregates, records seen keys, logs, commits; prints the digest or one line | 0 nothing new · 10 new · 20 degraded · 2 cannot run |
 | `cycle begin` | refuses while another writer holds the checkout; takes the lock; records a `stopped` outage if overdue; runs `cycle.d/begin/`; runs `check`; on 0 releases and prints the closing line. With `loop.schedule: "monitor"`, on 0 and on 30 it also prints a `wake` field: the schedule monitor's state and the one `Monitor` call to make now | as `check`; 30 wait |
-| `cycle end --records N [--degraded] [--summary TEXT]` | runs `cycle.d/end/`; pins the watermark to this cycle's check time; appends `finished`; commits with `--only`; pushes; releases; prints whatever `cycle.d/end/` scripts printed (due promises, owed fixes), then `next <s> <reason>`; with `loop.schedule: "monitor"`, then a `wake` field with the schedule monitor's state and the one `Monitor` call to make now, and no self-paced guidance | 0 · 1 refused (nothing written; the lock released) or could not commit (the lock kept) |
+| `cycle end --records N [--degraded] [--summary TEXT]` | runs `cycle.d/end/`; pins the watermark to this cycle's check time; appends `finished`; commits with `--only`; pushes; releases; prints whatever `cycle.d/end/` scripts printed (due promises, owed fixes), then `next <s> <reason>`; a `memory` line when a memory review is due (not alongside a `sleep` field); with `loop.schedule: "monitor"`, then a `wake` field with the schedule monitor's state and the one `Monitor` call to make now, and no self-paced guidance | 0 · 1 refused (nothing written; the lock released) or could not commit (the lock kept) |
 | `check --peek` | runs every script in `heartbeat.d/` and prints the count of new items per input; records nothing, logs nothing, commits nothing, and leaves the watermark and the seen keys alone, so the cycle that follows sees the same items. Each script also gets `OPSBOT_PEEK=1`: an adapter that keeps state of its own (a baseline it updates) must leave that state alone when it is set, or the check that follows misses what the peek saw | 0 nothing new · 10 new · 20 degraded · 2 cannot run |
 | `sleep tick [--dry-run]` | the sleep timer's one command, a no-op unless `.git/opsbot-sleep` exists and `sleep` is set. Going down: once the session is idle by the nudge's test (the runtime's `idle` or `done`, or `working` with the session log showing the turn ended), types `/compact` through the adapter when `sleep.compact` is set, and marks the sleep begun. Asleep: wakes the session, typing `<loop.prompt> (woken: <reason>)` through the adapter, when the operator wrote to the session since the decision, when a wake file has a line past the count taken at the decision, when the recorded due time has passed, when `max_minutes` since the decision is up, or when `check --peek` exits 10 or 20 (tested in that order, the peek last and only once the sleep has begun); otherwise records its look and does nothing. Any of these while going down is a wake, not a compaction. A busy session is woken at a later tick; one that cannot be reached, or sits at a dialog, is recorded as woken unsent and tried again. A wake not followed by a `cycle begin` within `watchdog_minutes` is told to the operator once through `escalate.d/` and recorded as a `stopped` outage from the wake. `--dry-run` types and writes nothing | 0 · 1 could not reach the runtime, or could not tell the operator |
 | `next-delay` | reads the log and the cadence table; prints `<seconds> <reason>`. With `loop.schedule: "monitor"` no delay passes 1 740 seconds (29 minutes: the delay plus the monitor's one-minute margin stays inside the harness's 30-minute limit), and a capped reason says so: `night (capped at 29 min: a monitor's limit)` | 0 |
-| `start [--continue] [--dry-run] [-- <extra>]` | launches `claude` with the flags `opsbot.json` implies: permission mode, model, autocompact window, `autoCompactEnabled: true` via `--settings`, and `loop.prompt` as the first message; `--continue` resumes the session that last ran a cycle here, by id (`--resume <id>`, recorded at every `cycle begin` in `.git/opsbot-loop-session`), and by `loop.session_name` when none is recorded; it never takes the directory's most recent session (a person's session opened in the bot's checkout would be that, and get the loop). Every start passes `--name <loop.session_name>`; the bot's `bin/start` shim is two lines calling this | exit code of `claude` |
-| `cold-start [--write] [--transcript <jsonl>]` | prints the pack: the rule card; the kit's own sections (`references/pack/*.md` shipped with the skill, in order, whole: house writing style, delegation rubric); then, when the SessionStart hook payload on stdin names a `transcript_path` (or `--transcript` does), a "Before this start" section read from the bot's own session log since its last compaction through `agent-recall-axi` (bundled; the kit's own text reader is the fallback when the library cannot read the log): the operator's messages verbatim (the highest-authority record of intent; the loop prompt excluded, since the nudge and the bot's wakeups type it), newest kept whole within their share and the rest counted with the exact command that prints them; the last tool calls with their status as data; and the bot's last statements flagged as its own claims, each layer with its own share so one long message cannot crowd out the others, capped at 4 000 bytes; then every script in `wake.d/` in order (each prints one section); then the 48 h log summary and the untrusted-memory line; `--write` first makes sure `.scratch/` exists and is excluded, then writes the pack file and sets pending there | 0 |
+| `start [--continue] [--dry-run] [-- <extra>]` | launches `claude` with the flags `opsbot.json` implies: permission mode, model, autocompact window, and one `--settings` object holding `autoCompactEnabled: true` and the auto memory keys (`autoMemoryEnabled: true` and `autoMemoryDirectory: <absolute root>/<memory.dir>`, the directory created first when missing; or, with `memory: false`, `autoMemoryEnabled: false` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` in its `env` and the process environment), and `loop.prompt` as the first message; `--continue` resumes the session that last ran a cycle here, by id (`--resume <id>`, recorded at every `cycle begin` in `.git/opsbot-loop-session`), and by `loop.session_name` when none is recorded; it never takes the directory's most recent session (a person's session opened in the bot's checkout would be that, and get the loop). Every start passes `--name <loop.session_name>`; the bot's `bin/start` shim is two lines calling this | exit code of `claude` |
+| `cold-start [--write] [--transcript <jsonl>]` | prints the pack: the rule card; the kit's own sections (`references/pack/*.md` shipped with the skill, in order, whole: house writing style, delegation rubric); then, when the SessionStart hook payload on stdin names a `transcript_path` (or `--transcript` does), a "Before this start" section read from the bot's own session log since its last compaction through `agent-recall-axi` (bundled; the kit's own text reader is the fallback when the library cannot read the log): the operator's messages verbatim (the highest-authority record of intent; the loop prompt excluded, since the nudge and the bot's wakeups type it), newest kept whole within their share and the rest counted with the exact command that prints them; the last tool calls with their status as data; and the bot's last statements flagged as its own claims, each layer with its own share so one long message cannot crowd out the others, capped at 4 000 bytes; then every script in `wake.d/` in order (each prints one section); then the 48 h log summary (with one more line when a memory review is due) and the untrusted-memory line, which names the memory files too; `--write` first makes sure `.scratch/` exists and is excluded, then writes the pack file and sets pending there | 0 |
 | `gate check` | the PreToolUse body: exit 0 when nothing is pending or the pending pack was read whole; otherwise prints the deny reason and exits 2 | 0 · 2 |
 | `lock status|release` | shows or releases the lock (release refuses another live process's lock without `--abandon`) | 0 · 1 |
 | `outage record <kind> [--note] [--started] [--ended]` / `outage end [--ended]` / `outage list` | `failed-turn · refused · plan-limit · session-ended · stopped`; times default to now; end closes the open one | 0 |
@@ -98,6 +105,10 @@ it tells its operator once. Outside a session (`CLAUDECODE` unset) nothing is ch
 | `hooks list [--point P]` | every script that will run at each lifecycle point, in order, with its source | 0 |
 | `log tail [--n N]` | the last N cycle lines, one per row | 0 |
 | `settings validate [--head]` | validates the working-tree `opsbot.json` (or the committed one) | 0 · 1 |
+| `memory status` | the memory directory: number of memory files (`MEMORY.md` aside), their total bytes, the index's bytes and lines, the oldest unreviewed file's age, when the last review was, and whether one is due | 0 · 1 memory is off |
+| `memory review --begin` | snapshots the directory into `.git/opsbot-memory-review.json` and prints the worksheet: one row per memory file (name, `type` from its frontmatter when present, bytes, age since its last change, whether it changed since the last review), the protocol, and the path of `references/memory-review.md`. A second `--begin` replaces the snapshot | 0 · 1 memory is off |
+| `memory review --done [--note TEXT]` | diffs the directory against the snapshot and appends `{at, outcome: "memory-review", files, kept, updated, removed, added, note}` to the cycle log, committed with the next cycle; removes the snapshot | 0 · 1 no snapshot, or memory is off |
+| `memory import <path> [--dry-run]` | copies memory files from another directory (the old default location) into the memory directory: never overwrites (a different file of the same name is reported as a clash and left out, with its index line), merges `MEMORY.md` index lines without duplicates; reads nothing but `<path>`; `--dry-run` writes nothing | 0 · 1 |
 | `--version` | the bare version, answered before the command graph loads | 0 |
 
 Every command prints TOON on stdout, errors on stdout with a `help` line, nothing on
@@ -179,7 +190,7 @@ its cache warm; both are the operator's call. A peer that cannot be read fails t
 - `commit_paths` are added to the explicit `--only` list of the check's commit and the `cycle end` commit, never anything else. `settings validate` refuses a non-array, an empty or non-string entry, an absolute path, a `..` segment, and a path under `.git/` or `.claude/`.
 - `cycle end` refuses a future time, a backwards move, or no check since the lock.
 - The cold-start pack's `wake.d/` sections share a budget of their own (6 000 bytes) and are truncated with "… N more lines". The rule card, the kit's sections and the session-log section are whole and outside it: a long rule card never takes room from what the bot owes. Keeping the rule card short is the bot's job; the kit does not cut it.
-- House rules that must be in front of every session (how to write, when to delegate, how to read the digest, where scratch files go) ship inside the skill as `references/pack/*.md` and ride the pack, so they are updated by `npx skills update` and never copied into a bot's CLAUDE.md. `OPSBOT_PACK_DIR` overrides the directory.
+- House rules that must be in front of every session (how to write, when to delegate, how to read the digest, where scratch files go, what memory is for) ship inside the skill as `references/pack/*.md` and ride the pack, so they are updated by `npx skills update` and never copied into a bot's CLAUDE.md. `OPSBOT_PACK_DIR` overrides the directory. A section named `NN-memory.md` rides only while auto memory is on.
 - The digest is read whole, never filtered, and a stream item's `reply` field (the channel skill computes it: the thread when the message is threaded, else the message itself) is where the answer goes. Why: a bot that trimmed its digest to the text answered two questions in a third thread; the columns are the addresses.
 - The gate denies every tool while the pending flag is set and the pack has not been
   read whole; a read with an offset or limit does not clear it.
@@ -192,6 +203,9 @@ its cache warm; both are the operator's call. A peer that cannot be read fails t
   while its pending flag is set and the new one is not, the gate holds for a whole read of
   the old pack, which clears it. `cold-start --write` removes the old flag. The old pack file
   is left where it is.
+- Changed files under `memory.dir` (new, modified and deleted, each named in the list) are
+  added to the explicit `--only` list of the check's commit and the `cycle end` commit, the
+  same way `commit_paths` are; nothing else under the repo rides along.
 - `nudge` never creates a second loop; it prompts the one named agent.
 - `nudge` trusts the runtime's `idle` and `blocked`, but not its `working` alone: the herdr
   adapter reads the terminal title, and Claude Code keeps the title's spinner while
@@ -312,6 +326,49 @@ further call, and is woken from outside the model only when there is something t
 - **Only with the schedule monitor.** `settings validate` refuses `sleep` unless
   `loop.schedule` is `monitor`: the prompt is then a plain message the timer can type, and
   there is no self-paced loop to end.
+
+## Auto memory
+
+Claude Code's auto memory is a folder of small notes the model writes on its own: an index,
+`MEMORY.md`, loaded at every session start, and one file per memory. By default it lives
+under `~/.claude/projects/<path>/memory/`, outside the repo: unversioned, unreviewable, and
+lost when a bot moves hosts. Bots keep the habit, but the folder lives in the bot's repo.
+
+- **Where.** `start` passes `autoMemoryEnabled: true` and `autoMemoryDirectory` (the absolute
+  path of `memory.dir`, `memory/` by default) in its one `--settings` object, and creates the
+  directory when it is missing so the first write lands. The setting takes an absolute or
+  `~/` path. A session started any other way writes to Claude Code's default location;
+  `start` is how a bot is launched.
+- **Off.** `memory: false` turns it off for a bot: `start` passes `autoMemoryEnabled: false`
+  and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`. No value leaves memory on at Claude Code's
+  default location.
+- **Committed with the cycle.** The check's commit and the `cycle end` commit take every
+  changed file under the directory: new, modified and deleted. A session that writes memory
+  between cycles has it committed at the next one. The files are listed one by one from
+  `git status --porcelain -z --untracked-files=all --no-renames -- <dir>`, so a deletion is
+  committed as a deletion and an ignored file is never taken.
+- **Reviewed on a routine.** Memory is a staging area, not the record. Every `review_days`
+  (7) the bot reviews it: each file is folded into the record or a governed document,
+  updated, kept, or pruned. The protocol ships as a kit pack section
+  (`references/pack/50-memory.md`) and as `references/memory-review.md`, which the worksheet
+  points to.
+- **When a review is due.** There is at least one memory file, and the last
+  `memory-review` line in the cycle log is `review_days` or more old; with no review yet, the
+  oldest memory file is that old. A file's last change is the earlier of its last commit
+  and its file time: a fresh checkout's file times are all new, and a review's edits are
+  committed after the review.
+- **A due review surfaces by itself, once per surface.** `cycle end` prints one `memory`
+  line saying a review is due with the command to run (not when it prints a `sleep` field);
+  the cold-start pack's cycle-log section carries one line. Neither blocks a cycle.
+- **Counting a review.** `--done` compares each file with the snapshot: same content is
+  `kept`, changed content `updated`, gone `removed`, and a file not in the snapshot `added`.
+  Folded and pruned are both a deleted file, so the count cannot tell them apart; they are
+  counted together as `removed`, and the review's note says what was folded where.
+- **Untrusted on a cold start.** Memory files are from before this point, like anything
+  else the session recalls: the pack's closing line says so, and the record wins over a
+  memory that disagrees with it.
+- **Bringing old notes in.** `memory import <path>` copies a bot's existing notes from the
+  default location into the repo, never overwriting, so they can be reviewed like the rest.
 
 ## Principles
 

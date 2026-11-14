@@ -34,7 +34,7 @@ export const COMMAND_GROUPS: CommandGroup[] = [
       {
         usage: "cycle end --records N [--degraded] [--summary TEXT]",
         summary:
-          "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle. With `sleep` set, a `sleep` field may replace `wake`, as at `cycle begin`.",
+          "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle. With `sleep` set, a `sleep` field may replace `wake`, as at `cycle begin`. When a memory review is due, one `memory` line says so with the command to run; it never blocks the cycle.",
       },
       {
         usage: "check --peek",
@@ -50,12 +50,12 @@ export const COMMAND_GROUPS: CommandGroup[] = [
       {
         usage: "start [--continue] [--dry-run] [-- <extra claude args>]",
         summary:
-          "Launch the bot's Claude Code session with the flags opsbot.json implies: permission mode (default auto), model, autocompact window, autocompact forced on, and `loop.prompt` as the first message. `--continue` resumes the last session in this checkout. A bot's `bin/start` shim calls this.",
+          "Launch the bot's Claude Code session with the flags opsbot.json implies: permission mode (default auto), model, autocompact window, autocompact forced on, auto memory in the repo (`autoMemoryDirectory` set to `memory.dir` as an absolute path, created when missing; off with `memory: false`), and `loop.prompt` as the first message. `--continue` resumes the last session in this checkout. A bot's `bin/start` shim calls this.",
       },
       {
         usage: "cold-start [--write]",
         summary:
-          "Print the reground pack: the rule card, the kit's sections (house style, delegation, what the session log says, the live wake to arm), each `wake.d/` section, the last 48 hours of the cycle log, the untrusted-memory line. `--write` also makes sure `.scratch/` exists and is git-excluded, writes the pack to `.scratch/opsbot-core/reground.md`, sets the pending flag and records the session log's path for `cycle` and `nudge`.",
+          "Print the reground pack: the rule card, the kit's sections (house style, delegation, what the session log says, the live wake to arm), each `wake.d/` section, the last 48 hours of the cycle log (with one line when a memory review is due), the untrusted-memory line. `--write` also makes sure `.scratch/` exists and is git-excluded, writes the pack to `.scratch/opsbot-core/reground.md`, sets the pending flag and records the session log's path for `cycle` and `nudge`.",
       },
       {
         usage: "gate check",
@@ -72,6 +72,26 @@ export const COMMAND_GROUPS: CommandGroup[] = [
         summary: "Record, close or list outages: failed-turn, refused, plan-limit, session-ended, stopped.",
       },
       { usage: "log tail [--n N]", summary: "The last N cycle-log lines (default 10)." },
+    ],
+  },
+  {
+    group: "Memory",
+    commands: [
+      {
+        usage: "memory status",
+        summary:
+          "The repo's auto-memory directory (`memory.dir`): memory files, their bytes, the `MEMORY.md` index's size, the oldest unreviewed file's age, the last review, and whether one is due (`review_days` after the last, or, never reviewed, after the oldest file).",
+      },
+      {
+        usage: "memory review --begin | memory review --done [--note TEXT]",
+        summary:
+          "`--begin` snapshots the directory under `.git/` and prints the worksheet: one row per file (name, frontmatter `type`, bytes, age, changed since the last review), the protocol, and the path of `references/memory-review.md`. `--done` diffs against the snapshot and logs `memory-review` with `kept`, `updated`, `removed` (folded or pruned) and `added`; say in `--note` what was folded where.",
+      },
+      {
+        usage: "memory import <path> [--dry-run]",
+        summary:
+          "Copy memory files from another directory (Claude Code's default location) into `memory.dir`: never overwrites (a different file of the same name is a reported clash), merges `MEMORY.md` index lines without duplicates, reads nothing but `<path>`. The next cycle commits them.",
+      },
     ],
   },
   {
@@ -101,7 +121,7 @@ export const COMMAND_GROUPS: CommandGroup[] = [
         summary: "Register the SessionStart (`cold-start --write`) and PreToolUse (`gate check`) hooks; project scope by default.",
       },
       { usage: "hooks list [--point P]", summary: "Every script that will run at each lifecycle point, in order, with its source." },
-      { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, or a cadence over the cap." },
+      { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` outside the repo; and a `.claude/settings.json` that sets auto memory itself." },
     ],
   },
 ];

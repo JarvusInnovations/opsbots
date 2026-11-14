@@ -11,8 +11,10 @@
  *      claims; read from the SessionStart hook's transcript_path (stdin JSON) or --transcript
  *   2. one section per opsbot.d/wake.d/ script, in order, each capped to its
  *      share of the wake budget (WAKE_BUDGET bytes across them all) ("… N more lines")
- *   3. the cycle log's last 48 hours: counts, longest gap, last degraded, outages
- *   4. memory before this point is untrusted; open the source before saying
+ *   3. the cycle log's last 48 hours: counts, longest gap, last degraded, outages, and one
+ *      line when a memory review is due
+ *   4. memory before this point, the auto-memory files included, is untrusted; open the
+ *      source before saying
  *
  * --write first makes sure the checkout has .scratch/, excluded through the
  * repository's info/exclude, then writes the pack to
@@ -30,7 +32,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSyn
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs, setExit, usageError } from "../args.js";
-import { skillDir } from "../invocation.js";
+import { cliInvocation, skillDir } from "../invocation.js";
 import { readEvents, sessionLogSection, sessionLogSectionLib } from "../transcript.js";
 import { SCHEDULE_RULES, SLEEP_RULES, WAKE_RULES, schedulePackLines, wakeFiles, wakeLines } from "../wake.js";
 import { gitPath } from "../repo.js";
@@ -39,6 +41,7 @@ import { findRoot, firstLine, iso, nowIso, nowMs, parseIso, showHead } from "../
 import { SETTINGS_FILE, parseSettingsText, trySettings, withDefaults, type Settings } from "../settings.js";
 import { CHECK_OUTCOMES, CYCLE_OUTCOMES, outages, readCycleLog } from "../state.js";
 import { activeSleep, sleepSpans, sleepStatusLine } from "../sleep.js";
+import { memoryDueLine } from "../memory.js";
 
 /** What the wake.d sections share, in bytes. The rule card, the kit's own sections and the
  * session log are whole and outside it: they are what the bot must read, and a long rule card
@@ -193,13 +196,15 @@ function logSummary(root: string, now: number): string[] {
 /** The kit's own pack sections: references/pack/*.md next to the running skill, lexical
  * order, each whole, titled by its first H1 (else its file name), leading HTML comment
  * dropped. `OPSBOT_PACK_DIR` overrides the directory (tests, a bot that ships its own). */
-export function kitSections(mode?: string): { title: string; body: string }[] {
+export function kitSections(mode?: string, opts: { memory?: boolean } = {}): { title: string; body: string }[] {
   const dir = process.env.OPSBOT_PACK_DIR || join(skillDir(), "references", "pack");
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
     .filter((f) => f.endsWith(".md"))
     // NN-mode-<mode>.md belongs to one loop mode; every other section rides every pack
     .filter((f) => { const m = f.match(/^\d+[-_]mode-([a-z]+)\.md$/); return !m || m[1] === (mode ?? "strategist"); })
+    // NN-memory.md rides only while auto memory is on
+    .filter((f) => opts.memory !== false || !/^\d+[-_]memory\.md$/.test(f))
     .sort()
     .map((f) => {
       let text = readFileSync(join(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
@@ -224,7 +229,7 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
         : `═══ 1. The rule card (${s.rule_card})\n${text.replace(/\n+$/, "")}`;
   }
 
-  const kit = kitSections(s.loop.mode).map((k, i) => `═══ 1.${i + 1} ${k.title} (the kit's; updates with the skill)\n${k.body}`);
+  const kit = kitSections(s.loop.mode, { memory: s.memory !== null }).map((k, i) => `═══ 1.${i + 1} ${k.title} (the kit's; updates with the skill)\n${k.body}`);
   if (transcript) {
     const body = sessionLog ?? sessionLogSection(transcript);
     if (body) kit.push(`═══ 1.${kit.length + 1} Before this start\n${capSection(body, SESSION_LOG_CAP)}`);
@@ -246,8 +251,9 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
 
   const scripts = discover(root, "wake").scripts;
   const summaryNo = 2 + scripts.length;
-  const summary = `═══ ${summaryNo}. The cycle log, last 48 hours\n${logSummary(root, now).join("\n")}`;
-  const foot = "═══ What you remember is untrusted; the record and your session log are sources, and the operator's own words in them outrank everything else. Open the source before saying what a record holds, what was decided, or what was sent.";
+  const memoryDue = memoryDueLine(root, s, now, cliInvocation());
+  const summary = `═══ ${summaryNo}. The cycle log, last 48 hours\n${[...logSummary(root, now), ...(memoryDue ? [memoryDue] : [])].join("\n")}`;
+  const foot = "═══ What you remember is untrusted, your memory files included; the record and your session log are sources, and the operator's own words in them outrank everything else. Open the source before saying what a record holds, what was decided, or what was sent.";
 
   const room = WAKE_BUDGET;
   const sections: string[] = [];

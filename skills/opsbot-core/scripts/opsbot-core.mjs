@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "c2acd63" : "dev";
+    VERSION = true ? "fa36dd2" : "dev";
   }
 });
 
@@ -621,8 +621,8 @@ function homebrewFormulaFromPath(path, env) {
     if (!isPathInsideRoot(path, root)) {
       continue;
     }
-    const relative3 = path.slice(root.length).replace(/^\/+/, "");
-    const formula = relative3.split("/")[0];
+    const relative4 = path.slice(root.length).replace(/^\/+/, "");
+    const formula = relative4.split("/")[0];
     if (formula) {
       return formula;
     }
@@ -654,8 +654,8 @@ function isKnownPnpmGlobalStore(path, env) {
     if (!isPathInsideRoot(path, root)) {
       return false;
     }
-    const relative3 = path.slice(root.length).replace(/^\/+/, "");
-    return /^\d+\/\.pnpm\//.test(relative3);
+    const relative4 = path.slice(root.length).replace(/^\/+/, "");
+    return /^\d+\/\.pnpm\//.test(relative4);
   });
 }
 function pnpmGlobalStoreRoots(env) {
@@ -861,7 +861,7 @@ async function defaultRunInstall(plan, stdout, context) {
   }
   stdout.write(`running: ${plan.command}
 `);
-  return new Promise((resolve7) => {
+  return new Promise((resolve9) => {
     const [command, ...args] = argv;
     const child = spawn(packageManagerExecutable(command, context.platform), args, {
       stdio: ["ignore", "pipe", "pipe"],
@@ -874,10 +874,10 @@ async function defaultRunInstall(plan, stdout, context) {
       process.stderr.write(chunk);
     });
     child.on("error", (error) => {
-      resolve7({ ok: false, message: error.message });
+      resolve9({ ok: false, message: error.message });
     });
     child.on("close", (code) => {
-      resolve7(code === 0 ? { ok: true } : { ok: false, message: `${plan.command} exited with code ${code}` });
+      resolve9(code === 0 ? { ok: true } : { ok: false, message: `${plan.command} exited with code ${code}` });
     });
   });
 }
@@ -1903,7 +1903,7 @@ var init_reference = __esm({
           },
           {
             usage: "cycle end --records N [--degraded] [--summary TEXT]",
-            summary: "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle. With `sleep` set, a `sleep` field may replace `wake`, as at `cycle begin`."
+            summary: "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle. With `sleep` set, a `sleep` field may replace `wake`, as at `cycle begin`. When a memory review is due, one `memory` line says so with the command to run; it never blocks the cycle."
           },
           {
             usage: "check --peek",
@@ -1917,11 +1917,11 @@ var init_reference = __esm({
         commands: [
           {
             usage: "start [--continue] [--dry-run] [-- <extra claude args>]",
-            summary: "Launch the bot's Claude Code session with the flags opsbot.json implies: permission mode (default auto), model, autocompact window, autocompact forced on, and `loop.prompt` as the first message. `--continue` resumes the last session in this checkout. A bot's `bin/start` shim calls this."
+            summary: "Launch the bot's Claude Code session with the flags opsbot.json implies: permission mode (default auto), model, autocompact window, autocompact forced on, auto memory in the repo (`autoMemoryDirectory` set to `memory.dir` as an absolute path, created when missing; off with `memory: false`), and `loop.prompt` as the first message. `--continue` resumes the last session in this checkout. A bot's `bin/start` shim calls this."
           },
           {
             usage: "cold-start [--write]",
-            summary: "Print the reground pack: the rule card, the kit's sections (house style, delegation, what the session log says, the live wake to arm), each `wake.d/` section, the last 48 hours of the cycle log, the untrusted-memory line. `--write` also makes sure `.scratch/` exists and is git-excluded, writes the pack to `.scratch/opsbot-core/reground.md`, sets the pending flag and records the session log's path for `cycle` and `nudge`."
+            summary: "Print the reground pack: the rule card, the kit's sections (house style, delegation, what the session log says, the live wake to arm), each `wake.d/` section, the last 48 hours of the cycle log (with one line when a memory review is due), the untrusted-memory line. `--write` also makes sure `.scratch/` exists and is git-excluded, writes the pack to `.scratch/opsbot-core/reground.md`, sets the pending flag and records the session log's path for `cycle` and `nudge`."
           },
           {
             usage: "gate check",
@@ -1938,6 +1938,23 @@ var init_reference = __esm({
             summary: "Record, close or list outages: failed-turn, refused, plan-limit, session-ended, stopped."
           },
           { usage: "log tail [--n N]", summary: "The last N cycle-log lines (default 10)." }
+        ]
+      },
+      {
+        group: "Memory",
+        commands: [
+          {
+            usage: "memory status",
+            summary: "The repo's auto-memory directory (`memory.dir`): memory files, their bytes, the `MEMORY.md` index's size, the oldest unreviewed file's age, the last review, and whether one is due (`review_days` after the last, or, never reviewed, after the oldest file)."
+          },
+          {
+            usage: "memory review --begin | memory review --done [--note TEXT]",
+            summary: "`--begin` snapshots the directory under `.git/` and prints the worksheet: one row per file (name, frontmatter `type`, bytes, age, changed since the last review), the protocol, and the path of `references/memory-review.md`. `--done` diffs against the snapshot and logs `memory-review` with `kept`, `updated`, `removed` (folded or pruned) and `added`; say in `--note` what was folded where."
+          },
+          {
+            usage: "memory import <path> [--dry-run]",
+            summary: "Copy memory files from another directory (Claude Code's default location) into `memory.dir`: never overwrites (a different file of the same name is a reported clash), merges `MEMORY.md` index lines without duplicates, reads nothing but `<path>`. The next cycle commits them."
+          }
         ]
       },
       {
@@ -1966,7 +1983,7 @@ var init_reference = __esm({
             summary: "Register the SessionStart (`cold-start --write`) and PreToolUse (`gate check`) hooks; project scope by default."
           },
           { usage: "hooks list [--point P]", summary: "Every script that will run at each lifecycle point, in order, with its source." },
-          { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, or a cadence over the cap." }
+          { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` outside the repo; and a `.claude/settings.json` that sets auto memory itself." }
         ]
       }
     ];
@@ -2266,7 +2283,8 @@ function validateSettings(raw) {
     "wake",
     "host",
     "commit_paths",
-    "sleep"
+    "sleep",
+    "memory"
   ]);
   str2(raw, "name", "", true, NAME_RE, "must be lowercase letters, digits and dashes, starting with a letter");
   str2(raw, "mark", "", true);
@@ -2361,6 +2379,14 @@ function validateSettings(raw) {
     }
   }
   if (raw.commit_paths !== void 0) problems.push(...commitPathProblems(raw.commit_paths));
+  if (raw.memory !== void 0 && raw.memory !== false) {
+    if (!isObj(raw.memory)) problems.push("memory must be an object ({dir, review_days}) or false");
+    else {
+      allow(raw.memory, "memory.", ["dir", "review_days"]);
+      posInt(raw.memory, "review_days", "memory.");
+      if (raw.memory.dir !== void 0) problems.push(...memoryDirProblems(raw.memory.dir));
+    }
+  }
   const sleep = obj(raw, "sleep", "", false);
   if (sleep) {
     allow(sleep, "sleep.", ["after_minutes", "probe_minutes", "max_minutes", "compact"]);
@@ -2389,6 +2415,16 @@ function commitPathProblems(v) {
     else if (segs.length === 0) problems.push(`commit_paths ${JSON.stringify(f)} names the repo itself, not a file`);
   }
   return problems;
+}
+function memoryDirProblems(v) {
+  if (typeof v !== "string" || !v.trim()) return ["memory.dir must be a non-empty repo-relative path"];
+  const segs = v.split(/[\\/]+/).filter((x) => x !== "" && x !== ".");
+  const q = JSON.stringify(v);
+  if (v.startsWith("/") || v.startsWith("~") || /^[A-Za-z]:/.test(v)) return [`memory.dir ${q} must be relative to the repo, not absolute`];
+  if (segs.includes("..")) return [`memory.dir ${q} must not contain a .. segment: it stays inside the repo`];
+  if (segs.length === 0) return [`memory.dir ${q} names the repo itself, not a directory in it`];
+  if ([".git", ".claude", ".scratch"].includes(segs[0])) return [`memory.dir ${q} is under ${segs[0]}/, which is never committed`];
+  return [];
 }
 function withDefaults(raw) {
   const loop = raw.loop ?? {};
@@ -2461,7 +2497,11 @@ function withDefaults(raw) {
       probe_minutes: pick(raw.sleep.probe_minutes, DEFAULT_SLEEP.probe_minutes),
       max_minutes: pick(raw.sleep.max_minutes, DEFAULT_SLEEP.max_minutes),
       compact: pick(raw.sleep.compact, DEFAULT_SLEEP.compact)
-    } : null
+    } : null,
+    memory: raw.memory === false ? null : {
+      dir: isObj(raw.memory) && typeof raw.memory.dir === "string" ? raw.memory.dir.split(/[\\/]+/).filter((x) => x !== "" && x !== ".").join("/") : DEFAULT_MEMORY.dir,
+      review_days: isObj(raw.memory) && typeof raw.memory.review_days === "number" ? raw.memory.review_days : DEFAULT_MEMORY.review_days
+    }
   };
 }
 function parseSettingsText(text, where) {
@@ -2500,7 +2540,7 @@ function trySettings(root) {
   const p = join3(root, SETTINGS_FILE);
   return existsSync4(p) ? tryText(readFileSync2(p, "utf8")) : null;
 }
-var SETTINGS_FILE, LOOP_MODES, MODE_AUTOCOMPACT, LOOP_SCHEDULES, MODE_MODEL, DEFAULT_SLEEP, DEFAULT_CADENCE, DEFAULT_LIVENESS, MONITOR_NUDGE_MINUTES, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR;
+var SETTINGS_FILE, LOOP_MODES, MODE_AUTOCOMPACT, LOOP_SCHEDULES, MODE_MODEL, DEFAULT_MEMORY, DEFAULT_SLEEP, DEFAULT_CADENCE, DEFAULT_LIVENESS, MONITOR_NUDGE_MINUTES, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR;
 var init_settings = __esm({
   "src/opsbot-core/settings.ts"() {
     "use strict";
@@ -2511,6 +2551,7 @@ var init_settings = __esm({
     MODE_AUTOCOMPACT = { strategist: "750k", dispatcher: "300k" };
     LOOP_SCHEDULES = ["self", "monitor"];
     MODE_MODEL = { strategist: "fable", dispatcher: "opus" };
+    DEFAULT_MEMORY = { dir: "memory", review_days: 7 };
     DEFAULT_SLEEP = { after_minutes: 60, probe_minutes: 10, max_minutes: 480, compact: true };
     DEFAULT_CADENCE = {
       hot: 180,
@@ -3058,7 +3099,7 @@ async function* readLinesBackward(path, blockSize = BLOCK_SIZE) {
       return;
     let end = size;
     let carry = [];
-    const join21 = (head2) => carry.length === 0 ? head2 : Buffer.concat([head2, ...carry.reverse()]);
+    const join23 = (head2) => carry.length === 0 ? head2 : Buffer.concat([head2, ...carry.reverse()]);
     let first = true;
     const emit = (offset, bytes2) => {
       if (first) {
@@ -3076,7 +3117,7 @@ async function* readLinesBackward(path, blockSize = BLOCK_SIZE) {
         const nl = buf.lastIndexOf(NL, stop - 1);
         if (nl === -1)
           break;
-        const line2 = emit(start + nl + 1, join21(buf.subarray(nl + 1, stop)));
+        const line2 = emit(start + nl + 1, join23(buf.subarray(nl + 1, stop)));
         carry = [];
         if (line2)
           yield line2;
@@ -3086,7 +3127,7 @@ async function* readLinesBackward(path, blockSize = BLOCK_SIZE) {
         carry.push(buf.subarray(0, stop));
       end = start;
     }
-    const line = emit(0, join21(Buffer.alloc(0)));
+    const line = emit(0, join23(Buffer.alloc(0)));
     if (line)
       yield line;
   } finally {
@@ -3307,11 +3348,11 @@ function tag(text, name) {
 }
 function taskNotice(text) {
   const summary = tag(text, "summary")?.trim();
-  const status = tag(text, "status")?.trim();
+  const status2 = tag(text, "status")?.trim();
   const agent = tag(text, "task-id")?.trim();
   const meta = {};
-  if (status)
-    meta.status = status;
+  if (status2)
+    meta.status = status2;
   const extra = { meta };
   if (agent)
     extra.agent = agent;
@@ -4686,11 +4727,11 @@ async function cacheStatus(opts = {}) {
   } catch {
     exists = false;
   }
-  const status = { dir, exists, size: 0, tracked: 0, indexed: [] };
+  const status2 = { dir, exists, size: 0, tracked: 0, indexed: [] };
   if (!exists)
-    return status;
-  status.size = await treeSize(dir);
-  status.tracked = (await dirFiles(join12(dir, "files"))).length;
+    return status2;
+  status2.size = await treeSize(dir);
+  status2.tracked = (await dirFiles(join12(dir, "files"))).length;
   for (const name of await dirFiles(join12(dir, "index"))) {
     const p = join12(dir, "index", name);
     try {
@@ -4700,12 +4741,12 @@ async function cacheStatus(opts = {}) {
       const t = JSON.parse(text);
       if (typeof t?.path !== "string" || !isTable(t, t.path) || recordName(t.path) !== name)
         continue;
-      status.indexed.push({ path: t.path, lines: t.seq, checkpoints: t.checkpoints.length, size: st.size, state: await stateOf(t) });
+      status2.indexed.push({ path: t.path, lines: t.seq, checkpoints: t.checkpoints.length, size: st.size, state: await stateOf(t) });
     } catch {
     }
   }
-  status.indexed.sort((a, b) => a.path.localeCompare(b.path));
-  return status;
+  status2.indexed.sort((a, b) => a.path.localeCompare(b.path));
+  return status2;
 }
 async function clearCache(opts = {}) {
   const dir = cacheDir(opts);
@@ -7930,7 +7971,7 @@ async function sessionLogSectionLib(path, opts = {}) {
     const said = await lib.tail(session, opts.statements ?? 3, { kinds: ["assistant"] });
     const id = (e) => lib.formatId(e.id);
     const one = (s) => s.replace(/\s*\n+\s*/g, " \u23CE ");
-    const status = (e) => {
+    const status2 = (e) => {
       const st = e.status;
       return st?.state ? `${st.state}${typeof st.size === "number" ? ` ${st.size}` : ""}` : "?";
     };
@@ -7946,7 +7987,7 @@ async function sessionLogSectionLib(path, opts = {}) {
     for (const c of calls) {
       const r = c;
       const target = one(String(r.target ?? r.text ?? "")).slice(0, 110);
-      lines.push(`  ${String(c.t).slice(11, 16)}Z ${id(c)} ${String(r.tool ?? "?")} ${target} \u2192 ${status(r)}`);
+      lines.push(`  ${String(c.t).slice(11, 16)}Z ${id(c)} ${String(r.tool ?? "?")} ${target} \u2192 ${status2(r)}`);
     }
     lines.push("\u2022 Your last statements, as your own claims (check them against the record and the results above):");
     for (const a of said) lines.push(`  ${String(a.t).slice(11, 16)}Z \u201C${one(String(a.text ?? "")).slice(0, 240)}\u201D`);
@@ -8288,6 +8329,200 @@ var init_sleep = __esm({
   }
 });
 
+// src/opsbot-core/memory.ts
+import { createHash as createHash3 } from "node:crypto";
+import { existsSync as existsSync10, readdirSync as readdirSync2, readFileSync as readFileSync7, rmSync as rmSync3, statSync as statSync5, writeFileSync as writeFileSync4 } from "node:fs";
+import { join as join16, relative as relative2, resolve as resolve6, sep as sep3 } from "node:path";
+function memoryDir(root, s) {
+  return s.memory ? resolve6(root, s.memory.dir) : null;
+}
+function changedMemoryFiles(root, s, already = []) {
+  const dir = memoryDir(root, s);
+  if (!dir) return [];
+  const r = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames", "--", dir]);
+  if (r.code !== 0) return [];
+  const have = new Set(already.map((f) => resolve6(root, f)));
+  const out = [];
+  for (const rec of r.stdout.split("\0")) {
+    if (rec.length < 4) continue;
+    const xy = rec.slice(0, 2);
+    if (xy === "AD") continue;
+    const abs = resolve6(root, rec.slice(3));
+    if (have.has(abs)) continue;
+    have.add(abs);
+    out.push(abs);
+  }
+  return out;
+}
+function walk(dir, base = dir) {
+  if (!existsSync10(dir)) return [];
+  const out = [];
+  for (const e of readdirSync2(dir, { withFileTypes: true })) {
+    if (e.name.startsWith(".")) continue;
+    const p = join16(dir, e.name);
+    if (e.isDirectory()) out.push(...walk(p, base));
+    else if (e.isFile()) out.push(relative2(base, p).split(sep3).join("/"));
+  }
+  return out.sort();
+}
+function frontmatterType(text) {
+  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!m) return null;
+  const t = m[1].match(/^type:\s*["']?([^"'\n]+?)["']?\s*$/m);
+  return t ? t[1].trim() : null;
+}
+function commitTimes(root, dir) {
+  const r = git(root, ["log", "--format=@%ct", "--name-only", "--no-renames", "--", dir]);
+  const out = /* @__PURE__ */ new Map();
+  if (r.code !== 0) return out;
+  let t = 0;
+  for (const line of r.stdout.split("\n")) {
+    if (line.startsWith("@")) t = Number(line.slice(1)) * 1e3;
+    else if (line.trim() && !out.has(line.trim())) out.set(line.trim(), t);
+  }
+  return out;
+}
+function listMemory(root, dir) {
+  const commits = commitTimes(root, dir);
+  const dirty = new Set(
+    changedPaths(root, dir).map((p) => relative2(dir, p).split(sep3).join("/"))
+  );
+  return walk(dir).filter((n) => n !== MEMORY_INDEX).map((name) => {
+    const abs = join16(dir, name);
+    const buf = readFileSync7(abs);
+    const mtime2 = statSync5(abs).mtimeMs;
+    const committed = commits.get(relative2(root, abs).split(sep3).join("/"));
+    const changed = dirty.has(name) || committed === void 0 ? mtime2 : Math.min(committed, mtime2);
+    return {
+      name,
+      bytes: buf.length,
+      type: frontmatterType(buf.toString("utf8")),
+      changed: Number.isFinite(changed) ? changed : null,
+      sha: createHash3("sha1").update(buf).digest("hex")
+    };
+  });
+}
+function changedPaths(root, dir) {
+  const r = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames", "--", dir]);
+  if (r.code !== 0) return [];
+  return r.stdout.split("\0").filter((rec) => rec.length >= 4).map((rec) => resolve6(root, rec.slice(3)));
+}
+function lastReview(lines) {
+  for (let i = lines.length - 1; i >= 0; i--) if (lines[i].outcome === REVIEW_OUTCOME) return lines[i];
+  return null;
+}
+function ageText(ms) {
+  const m = Math.max(0, Math.floor(ms / 6e4));
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h} h`;
+  return `${Math.floor(h / 24)} days`;
+}
+function memoryStatus(root, s, now) {
+  const dir = memoryDir(root, s);
+  if (!dir || !s.memory) return null;
+  const files = listMemory(root, dir);
+  const idxPath = join16(dir, MEMORY_INDEX);
+  let index = null;
+  if (existsSync10(idxPath)) {
+    const t = readFileSync7(idxPath, "utf8");
+    index = { bytes: Buffer.byteLength(t), lines: t.split("\n").filter((l) => l.trim()).length };
+  }
+  const rev = lastReview(readCycleLog(root));
+  const revAt = rev ? Date.parse(rev.at) : null;
+  const unreviewed = files.filter((f) => revAt === null || f.changed === null || f.changed > revAt);
+  const times = unreviewed.map((f) => f.changed).filter((t) => t !== null);
+  const oldest = times.length ? now - Math.min(...times) : null;
+  const limit = s.memory.review_days * DAY;
+  let due = false;
+  let why;
+  if (files.length === 0) why = "no memory files";
+  else if (revAt !== null) {
+    due = now - revAt >= limit;
+    why = due ? `last review ${ageText(now - revAt)} ago` : `next review in ${ageText(revAt + limit - now)}`;
+  } else {
+    const all = files.map((f) => f.changed).filter((t) => t !== null);
+    const first = all.length ? Math.min(...all) : now;
+    due = now - first >= limit;
+    why = due ? `never reviewed, oldest file ${ageText(now - first)} old` : `never reviewed; first review in ${ageText(first + limit - now)}`;
+  }
+  return {
+    dir,
+    files,
+    bytes: files.reduce((a, f) => a + f.bytes, 0),
+    index,
+    last_review: rev ? rev.at : null,
+    unreviewed,
+    oldest_unreviewed_ms: oldest,
+    due,
+    why
+  };
+}
+function memoryStatusLine(st) {
+  if (!st) return "off";
+  const parts2 = [
+    `${st.files.length} file${st.files.length === 1 ? "" : "s"}`,
+    `${st.bytes} bytes`,
+    st.index ? `index ${st.index.lines} lines` : "no index"
+  ];
+  if (st.files.length === 0) return parts2.join(" \xB7 ");
+  if (st.unreviewed.length && st.last_review) parts2.push(`${st.unreviewed.length} changed since review`);
+  parts2.push(st.due ? `review due (${st.why})` : st.why);
+  return parts2.join(" \xB7 ");
+}
+function memoryDueLine(root, s, now, cli) {
+  let st;
+  try {
+    st = memoryStatus(root, s, now);
+  } catch {
+    return null;
+  }
+  if (!st || !st.due) return null;
+  return `memory review due: ${st.files.length} file${st.files.length === 1 ? "" : "s"}, ${st.why}; when the cycle allows, run \`${cli} memory review --begin\``;
+}
+function snapshotPath(root) {
+  return gitPath(root, REVIEW_SNAPSHOT);
+}
+function writeSnapshot(root, snap) {
+  writeFileSync4(snapshotPath(root), `${JSON.stringify(snap)}
+`);
+}
+function readSnapshot(root) {
+  try {
+    const v = JSON.parse(readFileSync7(snapshotPath(root), "utf8"));
+    return v && typeof v.files === "object" && v.files !== null ? v : null;
+  } catch {
+    return null;
+  }
+}
+function clearSnapshot(root) {
+  rmSync3(snapshotPath(root), { force: true });
+}
+function reviewCounts(snap, now) {
+  const cur = new Map(now.map((f) => [f.name, f.sha]));
+  const c = { files: Object.keys(snap.files).length, kept: 0, updated: 0, removed: 0, added: 0 };
+  for (const [name, sha2] of Object.entries(snap.files)) {
+    const n = cur.get(name);
+    if (n === void 0) c.removed++;
+    else if (n === sha2) c.kept++;
+    else c.updated++;
+  }
+  for (const f of now) if (!(f.name in snap.files)) c.added++;
+  return c;
+}
+var MEMORY_INDEX, REVIEW_SNAPSHOT, REVIEW_OUTCOME, DAY;
+var init_memory = __esm({
+  "src/opsbot-core/memory.ts"() {
+    "use strict";
+    init_repo();
+    init_state();
+    MEMORY_INDEX = "MEMORY.md";
+    REVIEW_SNAPSHOT = "opsbot-memory-review.json";
+    REVIEW_OUTCOME = "memory-review";
+    DAY = 864e5;
+  }
+});
+
 // src/opsbot-core/commands/home.ts
 function age(ms) {
   const m = Math.floor(ms / 6e4);
@@ -8330,6 +8565,13 @@ function homeCommand() {
     next_wake: delayLine(nextDelay(s, lines, now)),
     failed_inputs: failed,
     open_outages: open5,
+    memory: (() => {
+      try {
+        return memoryStatusLine(memoryStatus(root, s, now));
+      } catch {
+        return "cannot be read";
+      }
+    })(),
     ...s.sleep ? { sleep: ((st) => st ? sleepStatusLine(s, st) : "awake")(readSleep(root)) } : {},
     help: [
       `Run \`${cli} cycle begin\` to start a cycle`,
@@ -8346,6 +8588,7 @@ var init_home2 = __esm({
     init_repo();
     init_settings();
     init_sleep();
+    init_memory();
     init_state();
   }
 });
@@ -8407,7 +8650,7 @@ var init_args = __esm({
 });
 
 // src/opsbot-core/commands/check.ts
-import { existsSync as existsSync10, rmSync as rmSync3 } from "node:fs";
+import { existsSync as existsSync11, rmSync as rmSync4 } from "node:fs";
 function gateWordIn(text, word) {
   if (!/^[A-Z]{3,}$/.test(word)) return false;
   return new RegExp(`(?<![\\p{L}\\p{N}])${word}(?![\\p{L}\\p{N}])`, "u").test(text ?? "");
@@ -8556,15 +8799,16 @@ function sweep(root, opts) {
   if (opts.commit && !blocked) {
     const subject = outcome === "nothing-new" ? "nothing new" : outcome === "new" ? `${NEW} new` : `degraded, ${NEW} new`;
     const files = [p.seen, p.log];
-    if (existsSync10(p.watermark)) files.push(p.watermark);
-    if (existsSync10(p.outages)) files.push(p.outages);
+    if (existsSync11(p.watermark)) files.push(p.watermark);
+    if (existsSync11(p.outages)) files.push(p.outages);
     files.push(...changedCommitPaths(root, settings.commit_paths, files));
+    files.push(...changedMemoryFiles(root, settings, files));
     const why = commitOnly(root, files, `chore(cycle): ${subject}`);
     if (why) {
       truncateTo(p.log, logSize);
       truncateTo(p.seen, seenSize);
       if (oldWm !== null) writeWatermark(root, oldWm);
-      else rmSync3(p.watermark, { force: true });
+      else rmSync4(p.watermark, { force: true });
       failed("commit", `cannot commit: ${why}`);
       outcome = "degraded";
       writeState();
@@ -8616,6 +8860,7 @@ var init_check = __esm({
     init_lifecycle();
     init_repo();
     init_settings();
+    init_memory();
     init_state();
     MARGIN_MINUTES = 30;
     FIRST_RUN_HOURS = 24;
@@ -8625,21 +8870,21 @@ var init_check = __esm({
 });
 
 // src/opsbot-core/commands/coldstart.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync11, mkdirSync as mkdirSync3, readdirSync as readdirSync2, readFileSync as readFileSync7, rmSync as rmSync4, statSync as statSync5, writeFileSync as writeFileSync4 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync12, mkdirSync as mkdirSync3, readdirSync as readdirSync3, readFileSync as readFileSync8, rmSync as rmSync5, statSync as statSync6, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
-import { dirname as dirname9, join as join16, resolve as resolve6 } from "node:path";
+import { dirname as dirname9, join as join17, resolve as resolve7 } from "node:path";
 function legacyCacheDir(name) {
-  const base = process.env.XDG_CACHE_HOME || join16(homedir9(), ".cache");
-  return join16(base, name);
+  const base = process.env.XDG_CACHE_HOME || join17(homedir9(), ".cache");
+  return join17(base, name);
 }
 function ensureScratch(root) {
-  const dir = join16(root, SCRATCH_DIR);
-  const created = !existsSync11(dir);
+  const dir = join17(root, SCRATCH_DIR);
+  const created = !existsSync12(dir);
   mkdirSync3(dir, { recursive: true });
   const exclude = gitPath(root, "info/exclude");
   let text = "";
   try {
-    text = readFileSync7(exclude, "utf8");
+    text = readFileSync8(exclude, "utf8");
   } catch {
   }
   const present = text.split("\n").some((l) => ["/.scratch", "/.scratch/", ".scratch", ".scratch/"].includes(l.trim()));
@@ -8652,26 +8897,26 @@ function ensureScratch(root) {
 }
 function writeSessionPointer(root, p) {
   try {
-    writeFileSync4(gitPath(root, "opsbot-session"), `${JSON.stringify(p)}
+    writeFileSync5(gitPath(root, "opsbot-session"), `${JSON.stringify(p)}
 `);
   } catch {
   }
 }
 function sessionPointer(root) {
   try {
-    const v = JSON.parse(readFileSync7(gitPath(root, "opsbot-session"), "utf8"));
+    const v = JSON.parse(readFileSync8(gitPath(root, "opsbot-session"), "utf8"));
     return v && typeof v.transcript_path === "string" ? v : null;
   } catch {
     return null;
   }
 }
 function packPaths(root) {
-  const dir = join16(root, SCRATCH_DIR, "opsbot-core");
-  return { dir, pack: join16(dir, "reground.md"), pending: join16(dir, "reground.pending") };
+  const dir = join17(root, SCRATCH_DIR, "opsbot-core");
+  return { dir, pack: join17(dir, "reground.md"), pending: join17(dir, "reground.pending") };
 }
 function legacyPackPaths(name) {
   const dir = legacyCacheDir(name);
-  return { pack: join16(dir, "reground.md"), pending: join16(dir, "reground.pending") };
+  return { pack: join17(dir, "reground.md"), pending: join17(dir, "reground.pending") };
 }
 function bytes(s) {
   return Buffer.byteLength(s, "utf8");
@@ -8751,14 +8996,14 @@ function logSummary(root, now) {
   }
   return out;
 }
-function kitSections(mode) {
-  const dir = process.env.OPSBOT_PACK_DIR || join16(skillDir(), "references", "pack");
-  if (!existsSync11(dir)) return [];
-  return readdirSync2(dir).filter((f) => f.endsWith(".md")).filter((f) => {
+function kitSections(mode, opts = {}) {
+  const dir = process.env.OPSBOT_PACK_DIR || join17(skillDir(), "references", "pack");
+  if (!existsSync12(dir)) return [];
+  return readdirSync3(dir).filter((f) => f.endsWith(".md")).filter((f) => {
     const m = f.match(/^\d+[-_]mode-([a-z]+)\.md$/);
     return !m || m[1] === (mode ?? "strategist");
-  }).sort().map((f) => {
-    let text = readFileSync7(join16(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
+  }).filter((f) => opts.memory !== false || !/^\d+[-_]memory\.md$/.test(f)).sort().map((f) => {
+    let text = readFileSync8(join17(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
     const m = text.match(/^#\s+(.+)$/m);
     const title = m ? m[1].trim() : f.replace(/^\d+[-_]/, "").replace(/\.md$/, "");
     if (m) text = text.replace(m[0], "").replace(/^\n+/, "");
@@ -8777,7 +9022,7 @@ function buildPack(root, s, settingsText, transcript, sessionLog) {
 (the rule card is not committed at HEAD: say so to the operator)` : `\u2550\u2550\u2550 1. The rule card (${s.rule_card})
 ${text.replace(/\n+$/, "")}`;
   }
-  const kit = kitSections(s.loop.mode).map((k, i) => `\u2550\u2550\u2550 1.${i + 1} ${k.title} (the kit's; updates with the skill)
+  const kit = kitSections(s.loop.mode, { memory: s.memory !== null }).map((k, i) => `\u2550\u2550\u2550 1.${i + 1} ${k.title} (the kit's; updates with the skill)
 ${k.body}`);
   if (transcript) {
     const body = sessionLog ?? sessionLogSection(transcript);
@@ -8799,13 +9044,14 @@ ${lines.join("\n")}`);
   }
   const scripts = discover(root, "wake").scripts;
   const summaryNo = 2 + scripts.length;
+  const memoryDue = memoryDueLine(root, s, now, cliInvocation());
   const summary = `\u2550\u2550\u2550 ${summaryNo}. The cycle log, last 48 hours
-${logSummary(root, now).join("\n")}`;
-  const foot = "\u2550\u2550\u2550 What you remember is untrusted; the record and your session log are sources, and the operator's own words in them outrank everything else. Open the source before saying what a record holds, what was decided, or what was sent.";
+${[...logSummary(root, now), ...memoryDue ? [memoryDue] : []].join("\n")}`;
+  const foot = "\u2550\u2550\u2550 What you remember is untrusted, your memory files included; the record and your session log are sources, and the operator's own words in them outrank everything else. Open the source before saying what a record holds, what was decided, or what was sent.";
   const room = WAKE_BUDGET;
   const sections = [];
   if (scripts.length) {
-    const configPath = settingsText !== null ? configSnapshot(root, settingsText) : join16(root, SETTINGS_FILE);
+    const configPath = settingsText !== null ? configSnapshot(root, settingsText) : join17(root, SETTINGS_FILE);
     let remaining = room;
     scripts.forEach((sc, i) => {
       const title = `\u2550\u2550\u2550 ${i + 2}. ${sc.name.replace(/^\d+[-_]/, "")}`;
@@ -8861,11 +9107,11 @@ async function coldStartCommand(args) {
   ensureScratch(root);
   const { dir, pack: packFile, pending } = packPaths(root);
   mkdirSync3(dir, { recursive: true });
-  writeFileSync4(packFile, pack);
-  writeFileSync4(pending, `${nowIso()}
+  writeFileSync5(packFile, pack);
+  writeFileSync5(pending, `${nowIso()}
 `);
   try {
-    rmSync4(legacyPackPaths(s.name).pending, { force: true });
+    rmSync5(legacyPackPaths(s.name).pending, { force: true });
   } catch {
   }
   return [
@@ -8894,16 +9140,16 @@ async function gateCommand(args) {
   if (!s) return { gate: "open (no settings)" };
   const current = packPaths(root);
   const legacy = legacyPackPaths(s.name);
-  const { pack, pending } = existsSync11(current.pending) ? current : existsSync11(legacy.pending) ? legacy : current;
-  if (!existsSync11(pending)) return { gate: "open" };
+  const { pack, pending } = existsSync12(current.pending) ? current : existsSync12(legacy.pending) ? legacy : current;
+  if (!existsSync12(pending)) return { gate: "open" };
   let packSize = 0;
   try {
-    packSize = statSync5(pack).size;
+    packSize = statSync6(pack).size;
   } catch {
     packSize = 0;
   }
   if (packSize === 0) {
-    rmSync4(pending, { force: true });
+    rmSync5(pending, { force: true });
     return { gate: "open (no pack to read; flag cleared)" };
   }
   let input = {};
@@ -8916,8 +9162,8 @@ async function gateCommand(args) {
   const ti = input.tool_input ?? {};
   const path = typeof ti.file_path === "string" ? ti.file_path : "";
   const partial = ti.offset !== void 0 || ti.limit !== void 0 || ti.pages !== void 0;
-  if (tool === "Read" && path && resolve6(path) === resolve6(pack) && !partial) {
-    rmSync4(pending, { force: true });
+  if (tool === "Read" && path && resolve7(path) === resolve7(pack) && !partial) {
+    rmSync5(pending, { force: true });
     return { gate: "open (pack read whole; flag cleared)" };
   }
   const reason = `Reground first: Read ${pack} whole (no offset or limit) before any other tool. The hook output you saw may have been cut short; the file holds the rule card, what is owed and the live state.`;
@@ -8940,6 +9186,7 @@ var init_coldstart = __esm({
     init_settings();
     init_state();
     init_sleep();
+    init_memory();
     WAKE_BUDGET = 6e3;
     SESSION_LOG_CAP = 4e3;
     MIN_SECTION = 300;
@@ -8952,6 +9199,7 @@ var init_coldstart = __esm({
 
 // src/opsbot-core/commands/start.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
+import { mkdirSync as mkdirSync4 } from "node:fs";
 function autocompactTokens(v) {
   if (!v) return null;
   const m = String(v).trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*([km]?)$/);
@@ -8959,12 +9207,19 @@ function autocompactTokens(v) {
   const n = Number(m[1]) * (m[2] === "m" ? 1e6 : m[2] === "k" ? 1e3 : 1);
   return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
 }
+function memorySettings(memory) {
+  if (memory === void 0) return { settings: {}, env: {} };
+  if (memory === false) return { settings: { autoMemoryEnabled: false }, env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" } };
+  return { settings: { autoMemoryEnabled: true, autoMemoryDirectory: memory }, env: {} };
+}
 function startArgv(s, opts) {
   const argv = ["claude", "--permission-mode", s.loop.permission_mode];
   const model = s.loop.model ?? (s.loop.mode ? MODE_MODEL[s.loop.mode] : null);
   if (model) argv.push("--model", model);
   const window = autocompactTokens(s.loop.autocompact);
-  argv.push("--settings", JSON.stringify(window ? { autoCompactEnabled: true, env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) } } : { autoCompactEnabled: true }));
+  const mem = memorySettings(opts.memory);
+  const env = { ...window ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) } : {}, ...mem.env };
+  argv.push("--settings", JSON.stringify({ autoCompactEnabled: true, ...mem.settings, ...Object.keys(env).length ? { env } : {} }));
   const name = s.loop.session_name;
   if (opts.cont) argv.push(...opts.loopSession ? ["--resume", opts.loopSession] : name ? ["--resume", name] : ["--continue"]);
   if (name) argv.push("--name", name);
@@ -8973,9 +9228,9 @@ function startArgv(s, opts) {
   return argv;
 }
 function startCommand(args) {
-  const sep3 = args.indexOf("--");
-  const own = sep3 >= 0 ? args.slice(0, sep3) : args;
-  const extra = sep3 >= 0 ? args.slice(sep3 + 1) : [];
+  const sep4 = args.indexOf("--");
+  const own = sep4 >= 0 ? args.slice(0, sep4) : args;
+  const extra = sep4 >= 0 ? args.slice(sep4 + 1) : [];
   const { flags } = parseArgs(own, { bool: ["continue", "dry-run"] }, USAGE);
   setExit(0);
   const root = findRoot();
@@ -8988,10 +9243,13 @@ function startCommand(args) {
     setExit(1);
     return { error: "opsbot.json is missing or invalid", help: ["Run `settings validate`"] };
   }
-  const argv = startArgv(s, { cont: flags["continue"] === true, extra, loopSession: readLoopSession(root) });
+  const memory = memoryDir(root, s) ?? false;
+  const argv = startArgv(s, { cont: flags["continue"] === true, extra, loopSession: readLoopSession(root), memory });
   if (flags["dry-run"]) return { start: "would run", cwd: root, argv };
+  if (memory) mkdirSync4(memory, { recursive: true });
   const window = autocompactTokens(s.loop.autocompact);
-  const env = window ? { ...process.env, CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) } : process.env;
+  const env = { ...process.env, ...window ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) } : {}, ...memorySettings(memory).env };
+  if (memory) delete env.CLAUDE_CODE_DISABLE_AUTO_MEMORY;
   const r = spawnSync2(argv[0], argv.slice(1), { cwd: root, stdio: "inherit", env });
   setExit(r.status ?? 1);
   return r.error ? encode2({ error: `could not start claude: ${r.error.message}`, help: ["Is `claude` on PATH for this user?"] }) : "";
@@ -9001,6 +9259,7 @@ var init_start = __esm({
   "src/opsbot-core/commands/start.ts"() {
     "use strict";
     init_settings();
+    init_memory();
     init_dist3();
     init_args();
     init_repo();
@@ -9011,7 +9270,7 @@ var init_start = __esm({
 });
 
 // src/opsbot-core/drift.ts
-import { readFileSync as readFileSync8, writeFileSync as writeFileSync5 } from "node:fs";
+import { readFileSync as readFileSync9, writeFileSync as writeFileSync6 } from "node:fs";
 function modelMatches(want, have) {
   const w = cls(want);
   const h = cls(have);
@@ -9038,19 +9297,19 @@ ${lines.join("\n")}
 `;
   let prev2 = "";
   try {
-    prev2 = readFileSync8(marker, "utf8");
+    prev2 = readFileSync9(marker, "utf8");
   } catch {
   }
   if (lines.length === 0) {
     if (prev2) try {
-      writeFileSync5(marker, "");
+      writeFileSync6(marker, "");
     } catch {
     }
     return [];
   }
   if (prev2 === sig) return [];
   try {
-    writeFileSync5(marker, sig);
+    writeFileSync6(marker, sig);
   } catch {
   }
   return [
@@ -9071,7 +9330,7 @@ var init_drift = __esm({
 });
 
 // src/opsbot-core/commands/cycle.ts
-import { existsSync as existsSync12, rmSync as rmSync5 } from "node:fs";
+import { existsSync as existsSync13, rmSync as rmSync6 } from "node:fs";
 function next2(root, s) {
   return delayLine(nextDelay(s, readCycleLog(root), nowMs()));
 }
@@ -9299,14 +9558,15 @@ function cycleEnd(args) {
   const sleep = sleepDecision(root, settings, text, "cycle end");
   if (sleep) appendJsonl(p.log, sleepLogLine(sleep));
   const files = [p.log];
-  if (existsSync12(p.watermark)) files.push(p.watermark);
-  if (existsSync12(p.outages)) files.push(p.outages);
+  if (existsSync13(p.watermark)) files.push(p.watermark);
+  if (existsSync13(p.outages)) files.push(p.outages);
   files.push(...changedCommitPaths(root, settings.commit_paths, files));
+  files.push(...changedMemoryFiles(root, settings, files));
   const why = commitOnly(root, files, `chore(cycle): finished, ${records} records`);
   if (why) {
     truncateTo(p.log, logSize);
     if (oldWm) writeWatermark(root, oldWm);
-    else if (!degraded) rmSync5(p.watermark, { force: true });
+    else if (!degraded) rmSync6(p.watermark, { force: true });
     throw new AxiError(`cannot commit the cycle log (${why}); nothing written, the checkout still held`, "CANNOT_COMMIT", [
       "Fix the repo, then run cycle end again"
     ]);
@@ -9323,6 +9583,8 @@ function cycleEnd(args) {
     out.sleep = sleepFieldLines(settings, sleep);
     return out;
   }
+  const memory = memoryDueLine(root, settings, nowMs(), cliInvocation());
+  if (memory) out.memory = memory;
   const wake2 = wakeReport(root, settings, true);
   if (wake2.length) out.wake = wake2;
   return out;
@@ -9339,6 +9601,7 @@ var init_cycle = __esm({
     init_settings();
     init_state();
     init_check();
+    init_memory();
     init_coldstart();
     init_transcript();
     init_drift();
@@ -9405,9 +9668,9 @@ var init_outage = __esm({
 });
 
 // src/opsbot-core/runtime.ts
-import { appendFileSync as appendFileSync3, readFileSync as readFileSync9 } from "node:fs";
+import { appendFileSync as appendFileSync3, readFileSync as readFileSync10 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 function normStatus(s) {
   return s === "idle" || s === "done" || s === "working" || s === "blocked" ? s : "unknown";
 }
@@ -9447,7 +9710,7 @@ function sessionLogPath(row) {
   const id = sess && sess.kind === "id" && typeof sess.value === "string" ? sess.value : null;
   const cwd = typeof row.cwd === "string" ? row.cwd : null;
   if (!id || !cwd || !/^[A-Za-z0-9-]+$/.test(id)) return null;
-  return join17(homedir10(), ".claude", "projects", projectSlug(cwd), `${id}.jsonl`);
+  return join18(homedir10(), ".claude", "projects", projectSlug(cwd), `${id}.jsonl`);
 }
 function herdrResolve(agent) {
   const r = run("herdr", ["agent", "list"]);
@@ -9468,7 +9731,7 @@ ${r.stdout}`) };
 function fakeAdapter(file) {
   const state = () => {
     try {
-      return JSON.parse(readFileSync9(file, "utf8"));
+      return JSON.parse(readFileSync10(file, "utf8"));
     } catch {
       return {};
     }
@@ -9527,7 +9790,7 @@ ${r.stdout}`) };
 });
 
 // src/opsbot-core/commands/liveness.ts
-import { existsSync as existsSync13, readFileSync as readFileSync10, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync14, readFileSync as readFileSync11, writeFileSync as writeFileSync7 } from "node:fs";
 function watchdogCommand(args) {
   const { flags } = parseArgs(args, { bool: ["dry-run"] }, "watchdog [--dry-run]");
   const dry = flags["dry-run"] === true;
@@ -9562,7 +9825,7 @@ function watchdogCommand(args) {
     return { watchdog: `alive \xB7 last cycle ${last}, ${Math.floor(gap / 6e4)} min ago` };
   }
   const started = last ?? "never";
-  if (existsSync13(told) && readFileSync10(told, "utf8").split("\n")[0] === started) {
+  if (existsSync14(told) && readFileSync11(told, "utf8").split("\n")[0] === started) {
     return { watchdog: `stopped since ${started} \xB7 the operator already told` };
   }
   const seen = [];
@@ -9595,7 +9858,7 @@ function watchdogCommand(args) {
     setExit(1);
     return { watchdog: `stopped since ${started} \xB7 cannot tell the operator: every escalation script failed`, escalations: results };
   }
-  writeFileSync6(told, `${started}
+  writeFileSync7(told, `${started}
 `);
   if (blocked) {
     return { watchdog: `stopped since ${started} \xB7 the operator told \xB7 outage not recorded while ${blocked}`, escalations: results };
@@ -9665,8 +9928,8 @@ function nudgeCommand(args) {
   if (!wake2 && last && now - (parseIso(last) ?? 0) < quiet * 6e4) {
     return { nudge: `nothing \xB7 last cycle ${last}` };
   }
-  if (existsSync13(marker) && !firstWake) {
-    const [prev2, why] = readFileSync10(marker, "utf8").split("\n");
+  if (existsSync14(marker) && !firstWake) {
+    const [prev2, why] = readFileSync11(marker, "utf8").split("\n");
     if (prev2 && /^\d+$/.test(prev2) && now - Number(prev2) * 1e3 < cooldown * 6e4) {
       const ago = Math.floor((now - Number(prev2) * 1e3) / 6e4);
       return { nudge: wake2 ? `nothing \xB7 woke ${ago} min ago${why ? ` for: ${why}` : ""}` : `nothing \xB7 nudged ${ago} min ago and no cycle since` };
@@ -9691,11 +9954,11 @@ ${reason}
     writeSleep(root, { ...asleep, woken: { at, reason: `nudge --now${reason ? `: ${reason}` : ""}`, event_at: at, sent: true } });
   }
   if (!r.ok) {
-    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") writeFileSync6(marker, stamp);
+    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") writeFileSync7(marker, stamp);
     setExit(1);
     return { nudge: `cannot \xB7 ${rt.name} prompt ${agent}: ${r.code}: ${r.message}` };
   }
-  writeFileSync6(marker, stamp);
+  writeFileSync7(marker, stamp);
   return { nudge: `${wake2 ? `woke ${agent}${reason ? ` for: ${reason}` : ""}` : `nudged ${agent}: ${line}`}${via}`, at: nowIso() };
 }
 var init_liveness = __esm({
@@ -9715,26 +9978,26 @@ var init_liveness = __esm({
 });
 
 // src/opsbot-core/commands/infra.ts
-import { existsSync as existsSync14, mkdirSync as mkdirSync4, readFileSync as readFileSync11, readdirSync as readdirSync3, rmSync as rmSync6, writeFileSync as writeFileSync7 } from "node:fs";
+import { existsSync as existsSync15, mkdirSync as mkdirSync5, readFileSync as readFileSync12, readdirSync as readdirSync4, rmSync as rmSync7, writeFileSync as writeFileSync8 } from "node:fs";
 import { homedir as homedir11 } from "node:os";
-import { join as join18 } from "node:path";
+import { join as join19 } from "node:path";
 function unitDir() {
-  const base = process.env.XDG_CONFIG_HOME || join18(homedir11(), ".config");
-  return join18(base, "systemd", "user");
+  const base = process.env.XDG_CONFIG_HOME || join19(homedir11(), ".config");
+  return join19(base, "systemd", "user");
 }
 function templatesDir() {
   const env = process.env.OPSBOT_TEMPLATES;
   if (env) return env;
-  return join18(skillDir(), "templates");
+  return join19(skillDir(), "templates");
 }
 function template(name) {
-  const p = join18(templatesDir(), name);
-  if (!existsSync14(p)) {
+  const p = join19(templatesDir(), name);
+  if (!existsSync15(p)) {
     throw new AxiError(`the unit template ${name} is missing from ${templatesDir()}`, "CANNOT_RUN", [
       "Reinstall the skill: npx skills add JarvusInnovations/opsbots --skill opsbot-core"
     ]);
   }
-  return readFileSync11(p, "utf8");
+  return readFileSync12(p, "utf8");
 }
 function fill(t, vars) {
   return t.replace(/@([A-Z_]+)@/g, (m, k) => k in vars ? vars[k] : m);
@@ -9799,8 +10062,8 @@ function systemctl(args) {
 }
 function installed(s) {
   const dir = unitDir();
-  if (!existsSync14(dir)) return [];
-  return readdirSync3(dir).filter((f) => f.startsWith(prefix(s))).sort();
+  if (!existsSync15(dir)) return [];
+  return readdirSync4(dir).filter((f) => f.startsWith(prefix(s))).sort();
 }
 function infraCommand(args) {
   const [sub, ...rest] = args;
@@ -9816,8 +10079,8 @@ function infraCommand(args) {
     const { units, problems } = renderUnits(root, settings);
     const want = new Set(units.map((u) => u.file));
     const rows = units.map((u) => {
-      const p = join18(dir, u.file);
-      const state = !existsSync14(p) ? "missing" : samePathless(readFileSync11(p, "utf8"), u.content) ? "current" : "stale";
+      const p = join19(dir, u.file);
+      const state = !existsSync15(p) ? "missing" : samePathless(readFileSync12(p, "utf8"), u.content) ? "current" : "stale";
       let active = "-";
       if (u.enable && state !== "missing") {
         const r = systemctl(["is-active", u.file]);
@@ -9858,12 +10121,12 @@ function infraCommand(args) {
         units: units.map((u) => ({ unit: u.file, content: u.content }))
       };
     }
-    mkdirSync4(dir, { recursive: true });
+    mkdirSync5(dir, { recursive: true });
     if (stale.length) {
       systemctl(["disable", "--now", ...stale]);
-      for (const f of stale) rmSync6(join18(dir, f), { force: true });
+      for (const f of stale) rmSync7(join19(dir, f), { force: true });
     }
-    for (const u of units) writeFileSync7(join18(dir, u.file), u.content);
+    for (const u of units) writeFileSync8(join19(dir, u.file), u.content);
     const steps = [];
     const reload2 = systemctl(["daemon-reload"]);
     steps.push({ step: "daemon-reload", ok: reload2.ok, detail: firstLine(reload2.out) });
@@ -9880,7 +10143,7 @@ function infraCommand(args) {
   if (files.length === 0) return { infra: `no ${prefix(settings)}* units installed (no-op)` };
   if (dry) return { infra: `would disable and remove ${files.length} units from ${dir}`, units: files };
   const dis = systemctl(["disable", "--now", ...files]);
-  for (const f of files) rmSync6(join18(dir, f), { force: true });
+  for (const f of files) rmSync7(join19(dir, f), { force: true });
   const reload = systemctl(["daemon-reload"]);
   if (!reload.ok) setExit(1);
   return {
@@ -9908,32 +10171,32 @@ var init_infra = __esm({
 });
 
 // src/opsbot-core/commands/hook.ts
-import { existsSync as existsSync15, mkdirSync as mkdirSync5, readFileSync as readFileSync12, writeFileSync as writeFileSync8 } from "node:fs";
+import { existsSync as existsSync16, mkdirSync as mkdirSync6, readFileSync as readFileSync13, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
-import { dirname as dirname10, join as join19, relative as relative2 } from "node:path";
+import { dirname as dirname10, join as join20, relative as relative3 } from "node:path";
 function settingsPath(scope, dir) {
-  if (scope === "global") return join19(homedir12(), ".claude", "settings.json");
-  return join19(dir, ".claude", "settings.json");
+  if (scope === "global") return join20(homedir12(), ".claude", "settings.json");
+  return join20(dir, ".claude", "settings.json");
 }
 function hookBase(scope, dir) {
   const shim = shimPath();
   if (scope === "project" && dir) {
-    const rel = relative2(dir, shim);
+    const rel = relative3(dir, shim);
     if (!rel.startsWith("..") && !rel.startsWith("/")) return `"\${CLAUDE_PROJECT_DIR}/${rel}"`;
   }
   return JSON.stringify(shim);
 }
 function readSettings(p) {
-  if (!existsSync15(p)) return {};
+  if (!existsSync16(p)) return {};
   try {
-    return JSON.parse(readFileSync12(p, "utf8"));
+    return JSON.parse(readFileSync13(p, "utf8"));
   } catch {
     throw new AxiError(`${p} is not valid JSON; not touching it`, "CANNOT_RUN", ["Fix the file by hand, then run hook install again"]);
   }
 }
 function writeSettings(p, s) {
-  mkdirSync5(dirname10(p), { recursive: true });
-  writeFileSync8(p, `${JSON.stringify(s, null, 2)}
+  mkdirSync6(dirname10(p), { recursive: true });
+  writeFileSync9(p, `${JSON.stringify(s, null, 2)}
 `);
 }
 function upsertPreTool(settings, command) {
@@ -10038,7 +10301,7 @@ var init_hook = __esm({
 });
 
 // src/opsbot-core/commands/sleep.ts
-import { statSync as statSync6 } from "node:fs";
+import { statSync as statSync7 } from "node:fs";
 import { basename as basename7 } from "node:path";
 function wakePrompt(s, reason) {
   return `${s.loop.prompt} (woken: ${reason})`;
@@ -10206,7 +10469,7 @@ var init_sleep2 = __esm({
     COMPACT = "/compact";
     mtime = (f) => {
       try {
-        return iso(statSync6(f).mtimeMs);
+        return iso(statSync7(f).mtimeMs);
       } catch {
         return null;
       }
@@ -10214,9 +10477,228 @@ var init_sleep2 = __esm({
   }
 });
 
+// src/opsbot-core/commands/memory.ts
+import { copyFileSync, existsSync as existsSync17, mkdirSync as mkdirSync7, readdirSync as readdirSync5, readFileSync as readFileSync14, statSync as statSync8, writeFileSync as writeFileSync10 } from "node:fs";
+import { dirname as dirname11, join as join21, resolve as resolve8 } from "node:path";
+function settingsFor(root) {
+  try {
+    return loadSettings(root).settings;
+  } catch (e) {
+    const s = trySettings(root);
+    if (s) return s;
+    throw e;
+  }
+}
+function requireMemory(root, s) {
+  const dir = memoryDir(root, s);
+  if (!dir) {
+    setExit(1);
+    throw new AxiError("auto memory is off for this bot (memory: false in opsbot.json)", "REFUSED", [
+      "Remove `memory: false` from opsbot.json, commit it, and restart with `start --continue` to turn it on"
+    ]);
+  }
+  return dir;
+}
+function memoryCommand(args) {
+  const [sub, ...rest] = args;
+  if (sub === "status") return status(rest);
+  if (sub === "review") return review(rest);
+  if (sub === "import") return importCommand(rest);
+  throw usageError(sub ? `unknown memory subcommand ${sub}` : "memory needs a subcommand", MEMORY_USAGE);
+}
+function status(args) {
+  parseArgs(args, {}, "memory status");
+  const root = requireRoot();
+  const s = settingsFor(root);
+  requireMemory(root, s);
+  const now = nowMs();
+  const st = memoryStatus(root, s, now);
+  setExit(0);
+  const out = {
+    memory: `${s.memory.dir}/ \xB7 ${st.files.length} file${st.files.length === 1 ? "" : "s"} \xB7 ${st.bytes} bytes`,
+    index: st.index ? `${MEMORY_INDEX} \xB7 ${st.index.bytes} bytes \xB7 ${st.index.lines} lines` : `no ${MEMORY_INDEX}`,
+    oldest_unreviewed: st.oldest_unreviewed_ms === null ? "none" : `${ageText(st.oldest_unreviewed_ms)} (${st.unreviewed.length} unreviewed)`,
+    last_review: st.last_review ?? "never",
+    review: st.due ? `due: ${st.why}` : `not due: ${st.why}`
+  };
+  if (st.due) out.help = [`Run \`${cliInvocation()} memory review --begin\` for the worksheet`];
+  return out;
+}
+function protocolLines() {
+  const dir = process.env.OPSBOT_PACK_DIR || join21(skillDir(), "references", "pack");
+  const f = join21(dir, "50-memory.md");
+  const alt = join21(skillDir(), PACK_SECTION);
+  const file = existsSync17(f) ? f : existsSync17(alt) ? alt : null;
+  if (!file) return [`(the protocol is in ${join21(skillDir(), GUIDE)})`];
+  const items = [];
+  let cur = null;
+  const body = readFileSync14(file, "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "").replace(/^#\s+.+\n+/m, "");
+  for (const line of body.split("\n")) {
+    const t = line.trim();
+    if (!t) {
+      if (cur !== null) items.push(cur);
+      cur = null;
+      continue;
+    }
+    if (t.startsWith("- ") || cur === null) {
+      if (cur !== null) items.push(cur);
+      cur = t;
+    } else cur += ` ${t}`;
+  }
+  if (cur !== null) items.push(cur);
+  return items;
+}
+function review(args) {
+  const usage = "memory review --begin | memory review --done [--note TEXT]";
+  const { flags } = parseArgs(args, { bool: ["begin", "done"], value: ["note"] }, usage);
+  if (!!flags.begin === !!flags.done) throw usageError("give exactly one of --begin or --done", usage);
+  if (flags.begin && flags.note !== void 0) throw usageError("--note goes with --done", usage);
+  const root = requireRoot();
+  const s = settingsFor(root);
+  const dir = requireMemory(root, s);
+  const now = nowMs();
+  const cli = cliInvocation();
+  setExit(0);
+  if (flags.begin) {
+    const st = memoryStatus(root, s, now);
+    const replaced = readSnapshot(root) !== null;
+    writeSnapshot(root, { at: nowIso(), dir: s.memory.dir, files: Object.fromEntries(st.files.map((f) => [f.name, f.sha])) });
+    const unreviewed = new Set(st.unreviewed.map((f) => f.name));
+    const out2 = {
+      review: `begun \xB7 ${st.files.length} file${st.files.length === 1 ? "" : "s"} in ${s.memory.dir}/ \xB7 last review ${st.last_review ?? "never"}${replaced ? " \xB7 replaced an earlier snapshot" : ""}`,
+      files: st.files.length ? st.files.map((f) => ({
+        name: f.name,
+        type: f.type ?? "",
+        bytes: f.bytes,
+        age: f.changed === null ? "unknown" : ageText(now - f.changed),
+        changed_since_review: unreviewed.has(f.name) ? "yes" : "no"
+      })) : "0 memory files: nothing to review",
+      index: st.index ? `${MEMORY_INDEX} \xB7 ${st.index.lines} lines \xB7 ${st.index.bytes} bytes` : `no ${MEMORY_INDEX}`,
+      protocol: protocolLines(),
+      guide: join21(skillDir(), GUIDE),
+      help: [`For each file: fold, update, keep or prune; then run \`${cli} memory review --done --note "<what was folded where>"\``]
+    };
+    return out2;
+  }
+  const snap = readSnapshot(root);
+  if (!snap) {
+    setExit(1);
+    throw new AxiError("no review has begun: there is no snapshot to compare with", "REFUSED", [`Run \`${cli} memory review --begin\` first`]);
+  }
+  const c = reviewCounts(snap, listMemory(root, dir));
+  const note = typeof flags.note === "string" ? flags.note : void 0;
+  const line = { at: nowIso(), outcome: REVIEW_OUTCOME, files: c.files, kept: c.kept, updated: c.updated, removed: c.removed, added: c.added };
+  if (note !== void 0) line.note = note;
+  appendJsonl(paths(root).log, line);
+  clearSnapshot(root);
+  const out = {
+    review: `done \xB7 ${c.files} reviewed \xB7 kept ${c.kept} \xB7 updated ${c.updated} \xB7 removed ${c.removed} (folded or pruned) \xB7 added ${c.added}`,
+    logged: "a memory-review line in the cycle log, committed with the next cycle"
+  };
+  if (note === void 0 && c.removed > 0) out.help = ["Next time add --note saying what was folded where: the counts cannot tell a fold from a prune"];
+  return out;
+}
+function indexTarget(line) {
+  const m = line.match(/\]\(([^)\s]+)\)/);
+  return m ? m[1].replace(/^\.\//, "") : null;
+}
+function planImport(src, dest) {
+  const plan = { copy: [], same: [], clashes: [], skipped: [], indexAdd: [], indexSkipped: [] };
+  for (const e of readdirSync5(src, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    if (e.name === MEMORY_INDEX) continue;
+    if (e.name.startsWith(".") || !e.isFile()) {
+      plan.skipped.push(e.name);
+      continue;
+    }
+    const to = join21(dest, e.name);
+    if (!existsSync17(to)) plan.copy.push(e.name);
+    else if (statSync8(to).isFile() && readFileSync14(to).equals(readFileSync14(join21(src, e.name)))) plan.same.push(e.name);
+    else plan.clashes.push(e.name);
+  }
+  const srcIdx = join21(src, MEMORY_INDEX);
+  if (existsSync17(srcIdx)) {
+    const destIdx = join21(dest, MEMORY_INDEX);
+    const have = existsSync17(destIdx) ? readFileSync14(destIdx, "utf8").split("\n") : [];
+    const haveLines = new Set(have.map((l) => l.trim()).filter(Boolean));
+    const haveTargets = new Set(have.map(indexTarget).filter((t) => t !== null));
+    const clash = new Set(plan.clashes);
+    for (const raw of readFileSync14(srcIdx, "utf8").split("\n")) {
+      const l = raw.trimEnd();
+      if (!l.trim()) continue;
+      const t = indexTarget(l);
+      if (haveLines.has(l.trim()) || t !== null && haveTargets.has(t)) continue;
+      if (t !== null && clash.has(t)) {
+        plan.indexSkipped.push(l);
+        continue;
+      }
+      plan.indexAdd.push(l);
+      haveLines.add(l.trim());
+      if (t !== null) haveTargets.add(t);
+    }
+  }
+  return plan;
+}
+function importCommand(args) {
+  const usage = "memory import <path> [--dry-run]";
+  const { positionals, flags } = parseArgs(args, { bool: ["dry-run"], maxPositionals: 1 }, usage);
+  if (!positionals[0]) throw usageError("give the directory to import from", usage);
+  const root = requireRoot();
+  const s = settingsFor(root);
+  const dest = requireMemory(root, s);
+  const src = resolve8(positionals[0].replace(/^~(?=$|\/)/, process.env.HOME ?? "~"));
+  if (!existsSync17(src) || !statSync8(src).isDirectory()) {
+    setExit(1);
+    throw new AxiError(`${src} is not a directory`, "REFUSED", ["Give the memory directory to import, such as ~/.claude/projects/<project>/memory"]);
+  }
+  if (resolve8(src) === resolve8(dest)) {
+    setExit(1);
+    throw new AxiError(`${src} is the bot's own memory directory`, "REFUSED", ["Give the old directory to import from"]);
+  }
+  const plan = planImport(src, dest);
+  const dry = flags["dry-run"] === true;
+  if (!dry) {
+    mkdirSync7(dest, { recursive: true });
+    for (const f of plan.copy) copyFileSync(join21(src, f), join21(dest, f));
+    if (plan.indexAdd.length) {
+      const destIdx = join21(dest, MEMORY_INDEX);
+      const cur = existsSync17(destIdx) ? readFileSync14(destIdx, "utf8") : "";
+      mkdirSync7(dirname11(destIdx), { recursive: true });
+      writeFileSync10(destIdx, `${cur}${cur && !cur.endsWith("\n") ? "\n" : ""}${plan.indexAdd.join("\n")}
+`);
+    }
+  }
+  setExit(0);
+  const out = {
+    import: `${dry ? "would copy" : "copied"} ${plan.copy.length} \xB7 already there ${plan.same.length} \xB7 clashes ${plan.clashes.length} \xB7 index lines ${dry ? "to add" : "added"} ${plan.indexAdd.length}${dry ? " \xB7 dry run: nothing written" : ""}`,
+    from: src,
+    to: dest
+  };
+  if (plan.copy.length) out.copied = plan.copy;
+  if (plan.clashes.length) out.clashes = plan.clashes.map((f) => `${f}: a different file of that name is already there; left out, with its index line`);
+  if (plan.skipped.length) out.skipped = plan.skipped.map((f) => `${f}: not a plain file`);
+  out.help = dry ? [`Run \`${cliInvocation()} memory import ${positionals[0]}\` to copy`] : [`The next cycle commits them; then run \`${cliInvocation()} memory review --begin\` to review what came in`];
+  return out;
+}
+var MEMORY_USAGE, GUIDE, PACK_SECTION;
+var init_memory2 = __esm({
+  "src/opsbot-core/commands/memory.ts"() {
+    "use strict";
+    init_dist2();
+    init_args();
+    init_invocation();
+    init_repo();
+    init_settings();
+    init_state();
+    init_memory();
+    MEMORY_USAGE = "memory status | memory review --begin | memory review --done [--note TEXT] | memory import <path> [--dry-run]";
+    GUIDE = "references/memory-review.md";
+    PACK_SECTION = "references/pack/50-memory.md";
+  }
+});
+
 // src/opsbot-core/commands/simple.ts
-import { existsSync as existsSync16, readFileSync as readFileSync13 } from "node:fs";
-import { join as join20 } from "node:path";
+import { existsSync as existsSync18, readFileSync as readFileSync15 } from "node:fs";
+import { join as join22 } from "node:path";
 function nextDelayCommand(args) {
   parseArgs(args, {}, "next-delay");
   const root = requireRoot();
@@ -10279,6 +10761,8 @@ function detail2(l) {
       return `outage from ${l.started ?? ""} ended ${l.ended ?? ""}`;
     case "sleep":
       return `quiet since ${l.quiet_since ?? ""}${l.due ? ` \xB7 due ${String(l.due)}` : ""}`;
+    case "memory-review":
+      return `kept ${l.kept ?? 0} \xB7 updated ${l.updated ?? 0} \xB7 removed ${l.removed ?? 0} \xB7 added ${l.added ?? 0}${l.note ? ` \xB7 ${String(l.note)}` : ""}`;
     case "wake":
       return `${l.reason ?? ""}${typeof l.latency_s === "number" ? ` \xB7 ${l.latency_s} s after the event` : ""}`;
     default:
@@ -10347,8 +10831,8 @@ function settingsCommand(args) {
     text = showHead(root, SETTINGS_FILE);
     where = `${SETTINGS_FILE} at HEAD`;
   } else {
-    const p = join20(root, SETTINGS_FILE);
-    text = existsSync16(p) ? readFileSync13(p, "utf8") : null;
+    const p = join22(root, SETTINGS_FILE);
+    text = existsSync18(p) ? readFileSync15(p, "utf8") : null;
     where = SETTINGS_FILE;
   }
   if (text === null) {
@@ -10357,11 +10841,16 @@ function settingsCommand(args) {
     ]);
   }
   const { raw, problems } = parseSettingsText(text, where);
-  const claude = join20(root, ".claude", "settings.json");
-  if (raw && existsSync16(claude)) {
+  const claude = join22(root, ".claude", "settings.json");
+  if (raw && existsSync18(claude)) {
     try {
-      const cs = JSON.parse(readFileSync13(claude, "utf8"));
+      const cs = JSON.parse(readFileSync15(claude, "utf8"));
       const loop = raw.loop ?? {};
+      for (const k of ["autoMemoryEnabled", "autoMemoryDirectory"]) {
+        if (cs && cs[k] !== void 0) {
+          problems.push(`.claude/settings.json sets ${k}; auto memory is set by memory in opsbot.json, which start passes to Claude Code, so set it in one place`);
+        }
+      }
       if (cs && cs.autoCompactWindow !== void 0 && String(cs.autoCompactWindow) !== String(loop.autocompact ?? "")) {
         problems.push(
           `.claude/settings.json sets autoCompactWindow ${JSON.stringify(cs.autoCompactWindow)} but loop.autocompact is ${JSON.stringify(loop.autocompact ?? null)}; set it in one place`
@@ -10441,6 +10930,7 @@ var init_cli2 = __esm({
     init_hook();
     init_start();
     init_sleep2();
+    init_memory2();
     init_simple();
     CLI = cliInvocation();
     TOP_HELP = `usage: ${CLI} <command> [subcommand] [args] [flags]
@@ -10468,6 +10958,7 @@ env:   OPSBOT_ROOT (the bot's repo; default: the git top level of the working di
       log: (a) => logCommand(a),
       settings: (a) => settingsCommand(a),
       start: (a) => startCommand(a),
+      memory: (a) => memoryCommand(a),
       // shadows the SDK's npm self-update: this CLI ships inside a skill
       update: () => {
         throw new AxiError("opsbot-core ships inside a skill, not on npm", "VALIDATION_ERROR", [

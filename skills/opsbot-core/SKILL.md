@@ -82,8 +82,9 @@ in the bot's checkout and sets a pending flag; until the pack has been **read wh
 2. one section per `opsbot.d/wake.d/` script (what is owed, open escalations, …), each cut
    to its share of the wake budget (6 000 bytes across them all) with `… N more lines`
 3. the last 48 hours of the cycle log: counts, the longest gap, the last degraded cycle,
-   outages
-4. memory before this point is untrusted: open the source before saying
+   outages, and one line when a memory review is due
+4. memory before this point is untrusted, the auto-memory files included: open the source
+   before saying
 
 Read the whole pack, then start a cycle.
 
@@ -131,6 +132,9 @@ commit also take when they exist and have changes: a baseline an adapter updates
 append-only log a helper script writes between cycles. Nothing else is added to those
 commits. It refuses an absolute path, a `..` segment, and a path under `.git/` or `.claude/`.
 
+`memory` (optional) is `{dir, review_days}`, defaults `memory` and `7`, or `false`. See
+*Auto memory* below.
+
 ## State it keeps
 
 | Path | What |
@@ -139,6 +143,8 @@ commits. It refuses an absolute path, a `..` segment, and a path under `.git/` o
 | `logs/intake/seen`, `logs/intake/watermark` | typed seen keys; one UTC time |
 | `logs/outages.jsonl` | outages and their ends |
 | `.git/opsbot-cycle.lock` | the writer lock `{pid, session, started}`, never committed |
+| `memory/` (`memory.dir`) | the session's auto memory: `MEMORY.md` and one file per memory; committed with the cycles |
+| `.git/opsbot-memory-review.json` | the snapshot a memory review diffs against; never committed |
 | `.git/opsbot-sleep` | while going down, asleep, or woken and not yet answered; removed by `cycle begin`; never committed. The log gets `sleep` and `wake` lines, and its readers treat the span between them as intended silence |
 
 ## Staying alive
@@ -164,8 +170,9 @@ nudge to reach it.
 after the rule card, whole, at every start, resume, clear and compaction: the house
 writing style (`10-writing.md`: tone, shape, Slack mrkdwn, email, records, logs) and the
 delegation rubric (`20-delegation.md`: which model class earns which work, and what the
-loop keeps for itself), how to read the digest (`30-digest.md`) and where scratch files go
-(`40-scratch.md`). They update with `npx skills update`, so no bot copies them into
+loop keeps for itself), how to read the digest (`30-digest.md`), where scratch files go
+(`40-scratch.md`) and what memory files are for (`50-memory.md`, only while auto memory is
+on). They update with `npx skills update`, so no bot copies them into
 its CLAUDE.md.
 
 ## The scratch directory
@@ -180,20 +187,43 @@ flag left at the pack's earlier home, `~/.cache/<bot>/`, is honored once: a whol
 the old pack clears it, and the next `cold-start --write` removes it. The old pack file is
 left where it is; delete it by hand when you like. A bot's own `specs/persona.md` colors the style and never overrides it.
 
+## Auto memory
+
+Claude Code's auto memory is a folder of small notes the model writes on its own: an index,
+`MEMORY.md`, loaded at every session start, and one file per memory. A bot keeps that folder
+in its repo, so it is versioned, reviewable, and moves with the bot.
+
+- `start` passes `autoMemoryEnabled: true` and `autoMemoryDirectory` (the absolute path of
+  `memory.dir`) in its one `--settings` object, and creates the directory when it is
+  missing. `memory: false` turns auto memory off instead. No setting leaves it at Claude
+  Code's default location, so launch the bot with `start`.
+- The check's commit and the `cycle end` commit take every changed file under the directory,
+  new, modified or deleted, and nothing else. Memory written between cycles is committed at
+  the next one.
+- Every `review_days` (7) a review is due. `cycle end` prints one `memory` line with the
+  command, and the cold-start pack carries one line; neither blocks a cycle. Run
+  `scripts/opsbot-core memory review --begin`, work the worksheet (each file is folded,
+  updated, kept or pruned, as `references/memory-review.md` says), then
+  `scripts/opsbot-core memory review --done --note "<what was folded where>"`. The count puts
+  folded and pruned files together as `removed`; the note says which was which.
+- A bot that ran before this setting brings its old notes in with
+  `scripts/opsbot-core memory import ~/.claude/projects/<encoded path>/memory --dry-run`,
+  then without `--dry-run`, and reviews them.
+
 <!-- BEGIN GENERATED: command-reference -->
 
 ### The cycle
 
 - `scripts/opsbot-core cycle begin` — Refuse while another writer holds the checkout (exit 30, `wait · … · next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it. With `loop.schedule: monitor`, on 0 and 30 the `wake` field holds the schedule monitor's state and the one Monitor call to make now. With `sleep` set, a nothing-new begin that finds the loop quiet for `after_minutes` prints a `sleep` field in place of `wake`: arm nothing, end the turn. A begin that finds `.git/opsbot-sleep` removes it and logs the wake.
 - `scripts/opsbot-core check [--no-commit]` — Run every `opsbot.d/heartbeat.d/` script, record seen keys, log, commit. Exit 0 nothing new · 10 new (digest) · 20 degraded (failed inputs named) · 2 cannot run.
-- `scripts/opsbot-core cycle end --records N [--degraded] [--summary TEXT]` — Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle. With `sleep` set, a `sleep` field may replace `wake`, as at `cycle begin`.
+- `scripts/opsbot-core cycle end --records N [--degraded] [--summary TEXT]` — Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle. With `sleep` set, a `sleep` field may replace `wake`, as at `cycle begin`. When a memory review is due, one `memory` line says so with the command to run; it never blocks the cycle.
 - `scripts/opsbot-core check --peek` — Run every heartbeat script as a check does (each also gets `OPSBOT_PEEK=1`) and print the count of new items per input. Records, logs and commits nothing; the watermark and seen keys are untouched, so the next check sees the same items. Exit 0 · 10 · 20 · 2 as `check`.
 - `scripts/opsbot-core next-delay` — Seconds until the next cycle and why, from the cycle log and the cadence table. With `loop.schedule: monitor`, never over 1740 (29 min), and the reason says when that cap applied.
 
 ### Cold start
 
-- `scripts/opsbot-core start [--continue] [--dry-run] [-- <extra claude args>]` — Launch the bot's Claude Code session with the flags opsbot.json implies: permission mode (default auto), model, autocompact window, autocompact forced on, and `loop.prompt` as the first message. `--continue` resumes the last session in this checkout. A bot's `bin/start` shim calls this.
-- `scripts/opsbot-core cold-start [--write]` — Print the reground pack: the rule card, the kit's sections (house style, delegation, what the session log says, the live wake to arm), each `wake.d/` section, the last 48 hours of the cycle log, the untrusted-memory line. `--write` also makes sure `.scratch/` exists and is git-excluded, writes the pack to `.scratch/opsbot-core/reground.md`, sets the pending flag and records the session log's path for `cycle` and `nudge`.
+- `scripts/opsbot-core start [--continue] [--dry-run] [-- <extra claude args>]` — Launch the bot's Claude Code session with the flags opsbot.json implies: permission mode (default auto), model, autocompact window, autocompact forced on, auto memory in the repo (`autoMemoryDirectory` set to `memory.dir` as an absolute path, created when missing; off with `memory: false`), and `loop.prompt` as the first message. `--continue` resumes the last session in this checkout. A bot's `bin/start` shim calls this.
+- `scripts/opsbot-core cold-start [--write]` — Print the reground pack: the rule card, the kit's sections (house style, delegation, what the session log says, the live wake to arm), each `wake.d/` section, the last 48 hours of the cycle log (with one line when a memory review is due), the untrusted-memory line. `--write` also makes sure `.scratch/` exists and is git-excluded, writes the pack to `.scratch/opsbot-core/reground.md`, sets the pending flag and records the session log's path for `cycle` and `nudge`.
 - `scripts/opsbot-core gate check` — PreToolUse body: exit 0 when nothing is pending or this call reads the pack whole; otherwise deny (exit 2).
 
 ### State
@@ -201,6 +231,12 @@ left where it is; delete it by hand when you like. A bot's own `specs/persona.md
 - `scripts/opsbot-core lock status | lock release [--abandon]` — Show the writer lock, or release it (another live process's only with `--abandon`).
 - `scripts/opsbot-core outage record <kind> [--note TEXT] [--started ISO] [--ended ISO] | outage end | outage list` — Record, close or list outages: failed-turn, refused, plan-limit, session-ended, stopped.
 - `scripts/opsbot-core log tail [--n N]` — The last N cycle-log lines (default 10).
+
+### Memory
+
+- `scripts/opsbot-core memory status` — The repo's auto-memory directory (`memory.dir`): memory files, their bytes, the `MEMORY.md` index's size, the oldest unreviewed file's age, the last review, and whether one is due (`review_days` after the last, or, never reviewed, after the oldest file).
+- `scripts/opsbot-core memory review --begin | memory review --done [--note TEXT]` — `--begin` snapshots the directory under `.git/` and prints the worksheet: one row per file (name, frontmatter `type`, bytes, age, changed since the last review), the protocol, and the path of `references/memory-review.md`. `--done` diffs against the snapshot and logs `memory-review` with `kept`, `updated`, `removed` (folded or pruned) and `added`; say in `--note` what was folded where.
+- `scripts/opsbot-core memory import <path> [--dry-run]` — Copy memory files from another directory (Claude Code's default location) into `memory.dir`: never overwrites (a different file of the same name is a reported clash), merges `MEMORY.md` index lines without duplicates, reads nothing but `<path>`. The next cycle commits them.
 
 ### Liveness (run by system timers)
 
@@ -213,6 +249,6 @@ left where it is; delete it by hand when you like. A bot's own `specs/persona.md
 
 - `scripts/opsbot-core hook install|uninstall|status [--scope project|global] [--dir PATH]` — Register the SessionStart (`cold-start --write`) and PreToolUse (`gate check`) hooks; project scope by default.
 - `scripts/opsbot-core hooks list [--point P]` — Every script that will run at each lifecycle point, in order, with its source.
-- `scripts/opsbot-core settings validate [--head]` — Refuse an `opsbot.json` with an unknown key, a missing required key, or a cadence over the cap.
+- `scripts/opsbot-core settings validate [--head]` — Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` outside the repo; and a `.claude/settings.json` that sets auto memory itself.
 
 <!-- END GENERATED: command-reference -->
