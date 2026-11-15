@@ -81,6 +81,10 @@ In the repo:
 
 ## The pieces
 
+`install` prints the `wake.files` entry in its object form, naming `heartbeat.d/20-slack-events` as the
+input that reads the file, so a wake from it runs a fast check
+([opsbot-core](opsbot-core.md#a-fast-cycle)).
+
 **`monitor.d/10-slack-listener`.** A Socket Mode client on the app-level token. It keeps a DM to
 the bot, an `app_mention`, a thread reply in a channel or private channel the bot is in (when
 the app subscribes to channel messages), a `reaction_added` on the bot's own message, and a

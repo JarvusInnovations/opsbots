@@ -53,6 +53,7 @@ The bot's own files the skill reads and writes:
 | `loop.model`, `loop.permission_mode` | what `start` passes as `--model` and `--permission-mode` (default `auto`); the only place the launch flags are set |
 | `cadence` | `{hot, warm, quiet_working, quiet, night, cap}` in seconds, plus `working_hours` (`days` as ISO weekday numbers 1–7, `start`, `end` as `HH:MM`) and `night_hours` (`start`, `end`, a span that may cross midnight) in the bot's timezone; every key optional, defaulting to the architecture's table (working hours Monday–Friday 09:00–17:00, night 22:00–07:00); for a dispatcher with `wake.files`, unset `quiet_working` and `quiet` default to `cap`, because its streams wake it and the timer only keeps the cache warm |
 | `lock_max_minutes` | after which a lock is abandoned |
+| `check` | `{full_minutes}`: how long after a full check a wake from a wake file may run a fast check ([A fast cycle](#a-fast-cycle)); `0` turns fast checks off | `10` |
 | `liveness` | `{watchdog_minutes, nudge_minutes, nudge_cooldown_minutes, wake_cooldown_minutes, interval_minutes}`: the stop limit (60), the quiet limit before a nudge (50; 35 with `loop.schedule: "monitor"`), the nudge's cooldown (50; 35 with `monitor`), the cooldown of `nudge --now` (10), and how often the watchdog and nudge timers fire (10; the nudge runs half an interval after the watchdog) |
 | `sleep` | optional and, until a week's trial on a working bot is read, a trial setting; absent, the bot never sleeps. `{after_minutes, probe_minutes, max_minutes, compact}`: how long the loop must be quiet before it sleeps (60), how often the outside probe looks at the streams while it sleeps (10; 60 at most, so the compaction on the way down lands while the one-hour cache is warm), the longest one sleep may last (480), and whether the session is compacted on the way down (`true`). Requires `loop.schedule: "monitor"`; see *Sleep* below |
 | `runtime` | `{adapter: "herdr", agent: "<name>"}`; the adapter supplies `idle` and `prompt`. The herdr adapter finds the bot's pane by that name first and, when the name is missing (a renamed pane, a restarted herdr), by the one agent whose cwd is the bot's checkout; it prompts the pane, not the name |
@@ -96,10 +97,11 @@ it tells its operator once. Outside a session (`CLAUDECODE` unset) nothing is ch
 | --- | --- | --- |
 | *(none)* | home: bot name, bin path, last cycle outcome and age, lock state, next wake, counts of failed inputs and open outages, one `memory` line (as `memory status` prints it, or `off`), and with `sleep` set the sleep state (`awake`, going down, `asleep since HH:MMZ, next look HH:MMZ, wake by HH:MMZ`, or woken and waiting); three help lines | 0 |
 | `check` | runs every script in `heartbeat.d/` and the core's own `routines` input (one item per due routine occurrence; see *Routines*), aggregates, records seen keys, logs, commits; prints the digest or one line | 0 nothing new · 10 new · 20 degraded · 2 cannot run |
-| `cycle begin` | refuses while another writer holds the checkout; takes the lock; records a `stopped` outage if overdue; runs `cycle.d/begin/`; runs `check`; on 0 releases and prints the closing line. With `loop.schedule: "monitor"`, on 0 and on 30 it also prints a `wake` field: the schedule monitor's state and the one `Monitor` call to make now | as `check`; 30 wait |
-| `cycle end --records N [--degraded] [--summary TEXT]` | runs `cycle.d/end/`; pins the watermark to this cycle's check time; appends `finished`; commits with `--only`; pushes; releases; prints whatever `cycle.d/end/` scripts printed (due promises, owed fixes), then `next <s> <reason>`; a `memory` line when the memory review is due and a `routines` field with one line per other due routine (neither alongside a `sleep` field); with `loop.schedule: "monitor"`, then a `wake` field with the schedule monitor's state and the one `Monitor` call to make now, and no self-paced guidance | 0 · 1 refused (nothing written; the lock released) or could not commit (the lock kept) |
+| `cycle begin` | refuses while another writer holds the checkout; takes the lock; records a `stopped` outage if overdue; runs `cycle.d/begin/`; runs `check`, or a fast check when a wake file woke it ([A fast cycle](#a-fast-cycle)); on 0 releases and prints the closing line. With `loop.schedule: "monitor"`, on 0 and on 30 it also prints a `wake` field: the schedule monitor's state and the one `Monitor` call to make now | as `check`; 30 wait |
+| `cycle end --records N [--degraded] [--summary TEXT]` | runs `cycle.d/end/`; pins the watermark to this cycle's check time; appends `finished`; commits with `--only`; pushes; releases; prints whatever `cycle.d/end/` scripts printed (due promises, owed fixes), then, when a wake file gained lines since this cycle's check, an `arrived` field and `next 0 arrived` with no `wake` field ([A fast cycle](#a-fast-cycle)), else `next <s> <reason>`; a `memory` line when the memory review is due and a `routines` field with one line per other due routine (neither alongside a `sleep` field); with `loop.schedule: "monitor"`, then a `wake` field with the schedule monitor's state and the one `Monitor` call to make now, and no self-paced guidance | 0 · 1 refused (nothing written; the lock released) or could not commit (the lock kept) |
 | `check --peek` | runs every script in `heartbeat.d/` and the `routines` input, and prints the count of new items per input; records nothing, logs nothing, commits nothing, and leaves the watermark and the seen keys alone, so the cycle that follows sees the same items. Each script also gets `OPSBOT_PEEK=1`: an adapter that keeps state of its own (a baseline it updates) must leave that state alone when it is set, or the check that follows misses what the peek saw | 0 nothing new · 10 new · 20 degraded · 2 cannot run |
 | `sleep tick [--dry-run]` | the sleep timer's one command, a no-op unless `.git/opsbot-sleep` exists and `sleep` is set. Going down: once the session is idle by the nudge's test (the runtime's `idle` or `done`, or `working` with the session log showing the turn ended), types `/compact` through the adapter when `sleep.compact` is set, and marks the sleep begun. Asleep: wakes the session, typing `<loop.prompt> (woken: <reason>)` through the adapter, when the operator wrote to the session since the decision, when a wake file has a line past the count taken at the decision, when the recorded due time has passed, when `max_minutes` since the decision is up, or when `check --peek` exits 10 or 20 (tested in that order, the peek last and only once the sleep has begun); otherwise records its look and does nothing. Any of these while going down is a wake, not a compaction. A busy session is woken at a later tick; one that cannot be reached, or sits at a dialog, is recorded as woken unsent and tried again. A wake not followed by a `cycle begin` within `watchdog_minutes` is told to the operator once through `escalate.d/` and recorded as a `stopped` outage from the wake. `--dry-run` types and writes nothing | 0 · 1 could not reach the runtime, or could not tell the operator |
+| `wake wait --until <epoch seconds>` | the schedule monitor's poller, run by the session's one `Monitor` call and by nothing else: polls every 2 seconds from the line counts the last check recorded; prints the new lines of any wake file, each prefixed with the file's basename and cut to 300 characters, at most 20, and exits 0; or prints `cycle due` and exits 0 when the time passes. Without a recorded count for a file it starts at that file's end. A time more than 1 800 seconds ahead is refused | 0 · 2 |
 | `next-delay` | reads the log and the cadence table; prints `<seconds> <reason>`. With `loop.schedule: "monitor"` no delay passes 1 740 seconds (29 minutes: the delay plus the monitor's one-minute margin stays inside the harness's 30-minute limit), and a capped reason says so: `night (capped at 29 min: a monitor's limit)` | 0 |
 | `start [--continue] [--dry-run] [-- <extra>]` | launches `claude` with the flags `opsbot.json` implies: permission mode, model, autocompact window, and one `--settings` object holding `autoCompactEnabled: true` and the auto memory keys (`autoMemoryEnabled: true` and `autoMemoryDirectory: <absolute root>/<memory.dir>`, the directory created first when missing; or, with `memory: false`, `autoMemoryEnabled: false` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` in its `env` and the process environment), and `loop.prompt` as the first message; `--continue` resumes the session that last ran a cycle here, by id (`--resume <id>`, recorded at every `cycle begin` in `.git/opsbot-loop-session`), and by `loop.session_name` when none is recorded; it never takes the directory's most recent session (a person's session opened in the bot's checkout would be that, and get the loop). Every start passes `--name <loop.session_name>`; the bot's `bin/start` shim is two lines calling this | exit code of `claude` |
 | `cold-start [--write] [--transcript <jsonl>]` | prints the pack: the rule card; the kit's own sections (`references/pack/*.md` shipped with the skill, in order, whole: house writing style, delegation rubric); then, when the SessionStart hook payload on stdin names a `transcript_path` (or `--transcript` does), a "Before this start" section read from the bot's own session log since its last compaction through `agent-recall-axi` (bundled; the kit's own text reader is the fallback when the library cannot read the log): the operator's messages verbatim (the highest-authority record of intent; the loop prompt excluded, since the nudge and the bot's wakeups type it), newest kept whole within their share and the rest counted with the exact command that prints them; the last tool calls with their status as data; and the bot's last statements flagged as its own claims, each layer with its own share so one long message cannot crowd out the others, capped at 4 000 bytes; then every script in `wake.d/` in order (each prints one section); then the 48 h log summary (with one more line when the memory review is due, and a few lines naming the other due routines) and the untrusted-memory line, which names the memory files too; `--write` first makes sure `.scratch/` exists and is excluded, then writes the pack file and sets pending there | 0 |
@@ -269,10 +271,13 @@ With `loop.schedule: "monitor"` one monitor is both the schedule and the live wa
 replaces the per-file monitors and the self-paced call.
 
 - **One call.** At the end of every cycle the session arms exactly one bounded `Monitor`,
-  described as `<bot> schedule`. Its command baked in the seconds until the next cycle is
-  due (`end=$(( $(date +%s) + N ))`) and polls every 2 seconds. It exits when a new line
-  appears in any file in `wake.files`, printing the new lines, each prefixed with the
-  file's basename and cut to 300 characters; or when the deadline passes, printing one
+  described as `<bot> schedule`. Its command is short and fixed in shape:
+  `<absolute path to opsbot-core> wake wait --until <epoch seconds>`, where the time is when
+  the next cycle is due. The poller itself lives in the core, so the session copies a line of
+  a few dozen characters, not a shell program: an earlier form made the model re-type the
+  whole poller at every cycle, which was most of a quiet cycle's output. It exits when a new
+  line appears in any file in `wake.files`, printing the new lines, each prefixed with the
+  file's basename and cut to 300 characters; or when the time passes, printing one
   line, `cycle due`. The `timeout_ms` is the deadline plus a 60-second margin, so the
   command ends itself and the harness never kills it. With no `wake.files` it is only the
   timer.
@@ -284,12 +289,13 @@ replaces the per-file monitors and the self-paced call.
   armed but due later than the next cycle (a cycle the monitor did not start), the line
   says to stop it and arm the new one. No self-paced guidance is printed in this mode.
 - **The state.** Read from the session log: the last `Monitor` call with the schedule
-  description, armed until its call time plus its baked seconds, ended by a later notice
-  naming it.
+  description, armed until the time in its command, ended by a later notice naming it. The
+  two earlier forms of the command (seconds baked into a shell poller) are still recognised,
+  since a running session may hold one.
 - **The pack.** The cold-start pack's live-wake section is always present in this mode.
   It gives the state and the rules: the monitor is your schedule and your live wake; when
   it delivers `cycle due` or an event line, run `cycle begin`; at the end of every cycle arm
-  the one monitor `cycle end` prints, exactly as printed; never call ScheduleWakeup and
+  the one monitor `cycle end` prints, exactly as printed; when `cycle end` prints `arrived`, run `cycle begin` again in the same turn and arm nothing; when the work of a cycle is one command, chain `cycle end` after it in the same call (`<the command> && <core> cycle end …`); end the turn with one short line at most; never call ScheduleWakeup and
   never start `/loop`; never two monitors, never a longer deadline; if you find none armed
   (after a start, a compaction, an error), arm it by running `cycle begin`. With `sleep` set
   it adds two rules: a `sleep` field means arm nothing and end the turn; a wake from sleep is
@@ -300,6 +306,50 @@ replaces the per-file monitors and the self-paced call.
 - **The backstop.** The nudge re-issues `loop.prompt`, which in this mode is a plain
   message, not a slash command. Its defaults tighten to 35 minutes, so a session whose
   monitor was not re-armed is noticed within one missed wake and a margin.
+
+### A fast cycle
+
+A message that wakes the session should be answered in seconds, and a cycle that checks every
+input before it looks at the message is not that. Measured on an adopting bot: 23 seconds of a
+31-second reply were the check running mail, a code host and a knowledge server for a wake
+that came from one chat line.
+
+**Which inputs a wake file feeds.** An entry of `wake.files` may be an object,
+`{ "file": "<path>", "inputs": ["<heartbeat.d script name>", …] }`, naming the inputs that read
+that file. A bare string is a file that names no inputs. A channel skill's `install` prints the
+object form.
+
+**The fast check.** `cycle begin` runs only the inputs a wake names when all of these hold:
+
+- at least one wake file has lines past the count recorded at the last check, and every such
+  file names its inputs;
+- the last full check began less than `check.full_minutes` ago (default 10);
+- the last check, full or fast, did not fail an input.
+
+Otherwise it runs the full check, as before. A fast check:
+
+- runs the named inputs and nothing else (not the `routines` input, not the other scripts);
+- gives them the `OPSBOT_SINCE` of the last full check, and leaves the watermark where it is.
+  Only a full check moves the watermark, so an input that was skipped loses nothing: its next
+  run covers the same window, and the seen keys drop what a fast check already reported;
+- records seen keys and logs its line like any check, marked `fast: true` with the inputs it
+  ran; a failed input makes the cycle degraded and the next check full;
+- runs `cycle.d/begin/` scripts only if they declare themselves quick (a file name ending
+  `.fast`), so a repository sync does not run on every message;
+- prints the digest with one more line, `check: fast (<inputs>); full check due <HH:MMZ>`.
+
+`cycle begin --full` forces a full check. The watchdog, the outage record and `next-delay`
+count a fast cycle as a cycle. A quiet deadline (`cycle due`) is never fast.
+
+**Arrivals during a cycle.** `cycle end` compares each wake file with the count recorded at
+this cycle's check. When any has grown it prints `arrived: <n> on <file>` and
+`next 0 arrived`, and no `wake` field: the session runs `cycle begin` again in the same turn.
+The session is awake and holding the context; ending the turn, arming a monitor and being
+woken by it costs three model calls and some seconds to reach the same `cycle begin`.
+
+**The listeners.** A listener whose nudge is refused because the session is mid-turn logs it
+once per wake and keeps waiting; a working session reaches `cycle end`, which reports the
+arrival.
 
 ### Sleep
 
