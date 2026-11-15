@@ -244,6 +244,10 @@ other, in this order:
    on one file, never a longer deadline, never a different command.
 2. **Out-of-band, the backstop.** The listener's `nudge --now`, which survives the session
    and covers a session that never armed (a fresh start, a compaction that dropped the rule).
+   A backstop comes second: a listener waits a short grace for the monitor to start the cycle
+   and nudges only when it did not, so a healthy session is woken by its own monitor and no
+   prompt is typed into it. A prompt typed for every event would hide a monitor that has
+   stopped working, and puts a line in the session for each message.
 
 Every surface prints the same lines (`wake.ts`): the state of each file read from the
 session log (the last `Monitor` call on that file, its deadline, and whether a later
