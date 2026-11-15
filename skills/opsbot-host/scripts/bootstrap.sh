@@ -118,7 +118,7 @@ step keep-sessions 'node -e "const fs=require(\"fs\");let j={};try{j=JSON.parse(
 # agent-recall-axi's session hook, for every project this user opens: an agent starts each
 # session with its past sessions in reach, and gets a resume pack after a compaction.
 case " $TOOLS " in *" agent-recall-axi "*)
-  step recall-hook 'grep -q agent-recall-axi "$HOME/.claude/settings.json" 2>/dev/null && echo "~/.claude/settings.json"' 'agent-recall-axi hook install --scope user --agent claude </dev/null'
+  step recall-hook 'grep -q agent-recall-axi "$HOME/.claude/settings.json" 2>/dev/null && echo "~/.claude/settings.json"' 'agent-recall-axi setup hooks --scope user --agent claude </dev/null'
 ;; esac
 if [ "$HERDR" = 1 ]; then
   step herdr 'herdr --version' 'curl -fsSL https://herdr.dev/install.sh | sh'

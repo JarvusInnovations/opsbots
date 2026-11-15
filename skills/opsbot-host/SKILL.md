@@ -64,7 +64,7 @@ It installs, each only when missing: `~/.local/bin` and the asdf shims on `PATH`
 of `.bashrc`, above the interactive guard, so non-interactive shells get them too), asdf, node,
 the GitHub CLI, the AXI tools (`gh-axi`, `gws-axi`, `slack-axi`, `gitsheets-axi`,
 `agent-recall-axi`, `chrome-devtools-axi`; `--tools "a b"` names others, `--tools none` skips
-them), `agent-recall-axi`'s session hook for the user (`hook install --scope user`), Claude
+them), `agent-recall-axi`'s session hook for the user (`setup hooks --scope user`), Claude
 Code, session-log retention (`cleanupPeriodDays` 36500 in the user's `~/.claude/settings.json`,
 since Claude Code otherwise deletes session logs after 30 days), and herdr with its agent skill installed for the user
 (`npx skills add -g ogulcancelik/herdr --skill herdr`; `--no-herdr` skips both). The browser tool drives a Chrome that is
