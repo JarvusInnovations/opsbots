@@ -117,8 +117,12 @@ from_peer?, recorded_at}`, keyed `slack:<conv>:<ts>:msg`, `slack:<conv>:<ts>:<em
 only on a peer's message. On a message it reacts `receipt_emoji`, or `peer_receipt_emoji` on
 a peer's. It gives the session's own monitor the first chance: it waits
 `wake_grace_seconds` (default 20), and nudges only if by then the key is not in
-`logs/intake/seen` and no cycle has begun since the event (the cycle lock, or a cycle log line
-newer than the event). When the bot is asleep (`.git/opsbot-sleep` exists) there is no monitor
+`logs/intake/seen` and no cycle's check has begun since the event (a check line in the cycle log
+newer than the event). **A cycle that was already running when the event arrived does not
+count**: its check may have read the stream before the event landed, so the event is in nobody's
+hands. While such a cycle holds the lock the listener waits for it to end, since a busy session
+cannot be nudged, and then looks again: the key seen, or a newer check begun, ends the wake;
+otherwise it nudges at once, with no second grace. When the bot is asleep (`.git/opsbot-sleep` exists) there is no monitor
 to wait for, so it nudges at once. The nudge is `$OPSBOT_CORE nudge --now --reason …`, again every
 10 seconds while the nudge reports the agent busy, until it wakes, the key is seen, or
 `ack_timeout_minutes` pass. It reacts `ack_emoji` only once the key is in `logs/intake/seen`.
