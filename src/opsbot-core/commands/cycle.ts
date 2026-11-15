@@ -46,7 +46,7 @@ import { loadRoutines, routineDueLines } from "../routines.js";
 import { sessionPointer } from "./coldstart.js";
 import { lastModel, readEvents } from "../transcript.js";
 import { driftReport, sessionDrift } from "../drift.js";
-import { scheduleLines, wakeFiles, wakeLines } from "../wake.js";
+import { readWakeBase, recordWakeBase, scheduleLines, wakeFiles, wakeLines } from "../wake.js";
 import { existsSync, rmSync } from "node:fs";
 import { clearSleep, decideSleep, readSleep, silenceFrom, sleepFieldLines, sleepLogLine, wakeLogLine, writeSleep, type SleepState } from "../sleep.js";
 
@@ -64,7 +64,7 @@ function wakeReport(root: string, s: Settings, boundByNext: boolean): string[] {
   const ptr = sessionPointer(root);
   const evs = ptr ? readEvents(ptr.transcript_path) : [];
   const until = boundByNext ? nextDelay(s, readCycleLog(root), nowMs()).seconds * 1000 : null;
-  return wakeLines(s, evs.length ? evs : null, nowMs(), until);
+  return wakeLines(s, evs.length ? evs : null, nowMs(), until, readWakeBase(root));
 }
 
 /** With a monitor schedule: the schedule monitor's state and the one call to make now, due at the
@@ -72,7 +72,7 @@ function wakeReport(root: string, s: Settings, boundByNext: boolean): string[] {
 function scheduleReport(root: string, s: Settings): string[] {
   const ptr = sessionPointer(root);
   const evs = ptr ? readEvents(ptr.transcript_path) : [];
-  return scheduleLines(s, evs.length ? evs : null, nowMs(), nextDelay(s, readCycleLog(root), nowMs()).seconds);
+  return scheduleLines(s, evs.length ? evs : null, nowMs(), nextDelay(s, readCycleLog(root), nowMs()).seconds, readWakeBase(root));
 }
 
 /** The session log's events, when the pointer names one. */
@@ -181,6 +181,9 @@ function cycleBegin(): Record<string, unknown> {
       };
     }
   }
+
+  // where this check starts reading each wake file: the monitor armed after it starts there
+  recordWakeBase(root, wakeFiles(settings));
 
   // the check, with this session's trailers on its commit
   const prev = process.env.OPSBOT_COMMIT_TRAILERS;

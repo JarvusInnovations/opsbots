@@ -55,7 +55,9 @@ the CLI is not on PATH.
      call, using the loop prompt verbatim.
    - **`monitor`**. `cycle begin` (on 0 or 30) and `cycle end` print a `wake` field with one
      `Monitor` call. Make it exactly as printed. It exits on a new line in a wake file or
-     with `cycle due` when the next cycle is due; either way, run `cycle begin`. Never call
+     with `cycle due` when the next cycle is due; either way, run `cycle begin`. It starts
+     from where the last check read to, so a line that arrived after that check began, while
+     you worked or before you armed it, is delivered the moment it is armed. Never call
      ScheduleWakeup and never start `/loop`; the loop prompt is a plain message. Never two
      monitors. If none is armed (after a start, a compaction, an error), run `cycle begin`.
 5. **Sleep** (only with `sleep` set, which needs `loop.schedule: monitor`). After
@@ -168,7 +170,6 @@ match `opsbot.json`, and with `sleep` set, the sleep state. The session must run
 nudge to reach it.
 
 ## Commands
-
 
 ## What the kit puts in every cold start
 

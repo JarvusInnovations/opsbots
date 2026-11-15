@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "ea33934" : "dev";
+    VERSION = true ? "8023ca9" : "dev";
   }
 });
 
@@ -8912,6 +8912,7 @@ var init_transcript = __esm({
 });
 
 // src/opsbot-core/wake.ts
+import { readFileSync as readFileSync9, rmSync as rmSync3, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir8 } from "node:os";
 function expandHome3(p) {
   return p.replace(/^~(?=\/|$)/, homedir8());
@@ -8919,15 +8920,56 @@ function expandHome3(p) {
 function wakeFiles(s) {
   return s.wake.files.map(expandHome3);
 }
-function monitorCommand(file) {
+function lineCount(file) {
+  let buf;
+  try {
+    buf = readFileSync9(file);
+  } catch {
+    return 0;
+  }
+  let n = 0;
+  for (let i = buf.indexOf(10); i !== -1; i = buf.indexOf(10, i + 1)) n++;
+  return n;
+}
+function recordWakeBase(root, files) {
+  const p = gitPath(root, WAKE_BASE_NAME);
+  try {
+    if (files.length === 0) {
+      rmSync3(p, { force: true });
+      return;
+    }
+    const lines = {};
+    for (const f of files) lines[f] = lineCount(f);
+    writeFileSync5(p, `${JSON.stringify({ at: nowIso(), lines })}
+`);
+  } catch {
+  }
+}
+function readWakeBase(root) {
+  try {
+    const v = JSON.parse(readFileSync9(gitPath(root, WAKE_BASE_NAME), "utf8"));
+    const lines = v && typeof v === "object" ? v.lines : null;
+    if (!lines || typeof lines !== "object") return null;
+    const out = {};
+    for (const [k, n] of Object.entries(lines)) if (Number.isInteger(n) && n >= 0) out[k] = n;
+    return out;
+  } catch {
+    return null;
+  }
+}
+function baseFor(base, file) {
+  const n = base?.[file];
+  return typeof n === "number" ? n : null;
+}
+function monitorCommand(file, base = null) {
   const q = JSON.stringify(file);
-  return `f=${q}; c() { [ -f "$f" ] && wc -l < "$f" || echo 0; }; n=$(c); while sleep 2; do m=$(c); if [ "$m" -lt "$n" ]; then n=$m; fi; if [ "$m" -gt "$n" ]; then tail -n $((m-n)) "$f" | cut -c1-300; exit 0; fi; done`;
+  return `f=${q}; c() { [ -f "$f" ] && wc -l < "$f" || echo 0; }; n=${base === null ? "$(c)" : Math.max(0, Math.floor(base))}; while :; do m=$(c); if [ "$m" -lt "$n" ]; then n=0; fi; if [ "$m" -gt "$n" ]; then k=$((m-n)); [ "$k" -gt ${DELIVER_MAX_LINES} ] && k=${DELIVER_MAX_LINES}; tail -n "$k" "$f" | cut -c1-300; exit 0; fi; sleep 2; done`;
 }
 function monitorDescription(bot, file) {
   return `${bot} wake: new lines in ${file}`;
 }
-function monitorCall(bot, file, timeoutMs) {
-  return `Monitor({ command: ${JSON.stringify(monitorCommand(file))}, description: ${JSON.stringify(monitorDescription(bot, file))}, timeout_ms: ${timeoutMs} })`;
+function monitorCall(bot, file, timeoutMs, base = null) {
+  return `Monitor({ command: ${JSON.stringify(monitorCommand(file, base))}, description: ${JSON.stringify(monitorDescription(bot, file))}, timeout_ms: ${timeoutMs} })`;
 }
 function monitorTimeout(untilNextWakeMs) {
   const t = untilNextWakeMs === null ? MONITOR_MAX_MS : Math.min(MONITOR_MAX_MS, untilNextWakeMs);
@@ -8944,7 +8986,7 @@ function wakeStates(evs, files, now) {
     return { file, armed: { at: iso(at), until: iso(until) } };
   });
 }
-function wakeLines(s, evs, now, untilNextWakeMs) {
+function wakeLines(s, evs, now, untilNextWakeMs, base = null) {
   const files = wakeFiles(s);
   if (files.length === 0) return [];
   const timeout = monitorTimeout(untilNextWakeMs);
@@ -8952,7 +8994,7 @@ function wakeLines(s, evs, now, untilNextWakeMs) {
   const out = [];
   for (const st of states) {
     if (st.armed) out.push(`armed on ${st.file} until ${hhmm2(st.armed.until)} (since ${hhmm2(st.armed.at)}); nothing to do`);
-    else out.push(`${evs ? "not armed" : "state unknown (no session log)"} on ${st.file} \xB7 arm now: ${monitorCall(s.name, st.file, timeout)}`);
+    else out.push(`${evs ? "not armed" : "state unknown (no session log)"} on ${st.file} \xB7 arm now: ${monitorCall(s.name, st.file, timeout, baseFor(base, st.file))}`);
   }
   return out;
 }
@@ -8962,20 +9004,23 @@ function scheduleDescription(bot) {
 function shq(s) {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
-function scheduleCommand(files, seconds) {
+function scheduleCommand(files, seconds, bases = []) {
   const parts2 = [`end=$(( $(date +%s) + ${Math.max(1, Math.round(seconds))} ))`];
   if (files.length) parts2.push(`c() { [ -f "$1" ] && wc -l < "$1" || echo 0; }`);
-  files.forEach((f, i) => parts2.push(`f${i}=${shq(f)}; n${i}=$(c "$f${i}")`));
+  files.forEach((f, i) => {
+    const b = bases[i] ?? null;
+    parts2.push(`f${i}=${shq(f)}; n${i}=${b === null ? `$(c "$f${i}")` : Math.max(0, Math.floor(b))}`);
+  });
   const body = [];
   if (files.length) body.push("h=0");
   files.forEach((f, i) => {
     body.push(
-      `m=$(c "$f${i}"); if [ "$m" -lt "$n${i}" ]; then n${i}=$m; fi; if [ "$m" -gt "$n${i}" ]; then tail -n $((m-n${i})) "$f${i}" | cut -c1-300 | while IFS= read -r l; do printf '%s: %s\\n' ${shq(basename7(f))} "$l"; done; n${i}=$m; h=1; fi`
+      `m=$(c "$f${i}"); if [ "$m" -lt "$n${i}" ]; then n${i}=0; fi; if [ "$m" -gt "$n${i}" ]; then k=$((m-n${i})); [ "$k" -gt ${DELIVER_MAX_LINES} ] && k=${DELIVER_MAX_LINES}; tail -n "$k" "$f${i}" | cut -c1-300 | while IFS= read -r l; do printf '%s: %s\\n' ${shq(basename7(f))} "$l"; done; n${i}=$m; h=1; fi`
     );
   });
   if (files.length) body.push(`if [ "$h" = 1 ]; then exit 0; fi`);
   body.push(`if [ "$(date +%s)" -ge "$end" ]; then echo ${shq(CYCLE_DUE)}; exit 0; fi`);
-  parts2.push(`while sleep 2; do ${body.join("; ")}; done`);
+  parts2.push(`while :; do ${body.join("; ")}; sleep 2; done`);
   return parts2.join("; ");
 }
 function scheduleSeconds(command) {
@@ -8985,8 +9030,8 @@ function scheduleSeconds(command) {
 function scheduleTimeoutMs(seconds) {
   return (Math.max(1, Math.round(seconds)) + SCHEDULE_MARGIN_S) * 1e3;
 }
-function scheduleCall(bot, files, seconds) {
-  return `Monitor({ command: ${JSON.stringify(scheduleCommand(files, seconds))}, description: ${JSON.stringify(scheduleDescription(bot))}, timeout_ms: ${scheduleTimeoutMs(seconds)} })`;
+function scheduleCall(bot, files, seconds, bases = []) {
+  return `Monitor({ command: ${JSON.stringify(scheduleCommand(files, seconds, bases))}, description: ${JSON.stringify(scheduleDescription(bot))}, timeout_ms: ${scheduleTimeoutMs(seconds)} })`;
 }
 function scheduleState(evs, bot, now) {
   const desc = scheduleDescription(bot);
@@ -8999,8 +9044,9 @@ function scheduleState(evs, bot, now) {
   if (until <= now) return null;
   return { at: iso(at), until: iso(until) };
 }
-function scheduleLines(s, evs, now, dueSeconds) {
-  const call = scheduleCall(s.name, wakeFiles(s), dueSeconds);
+function scheduleLines(s, evs, now, dueSeconds, base = null) {
+  const files = wakeFiles(s);
+  const call = scheduleCall(s.name, files, dueSeconds, files.map((f) => baseFor(base, f)));
   if (!evs) return [`state unknown (no session log) \xB7 arm now: ${call}`];
   const st = scheduleState(evs, s.name, now);
   if (!st) return [`not armed \xB7 arm now: ${call}`];
@@ -9015,7 +9061,7 @@ function schedulePackLines(s, evs, now) {
   if (st) return [`armed until ${hhmm2(st.until)} (since ${hhmm2(st.at)}); nothing to do until it delivers`];
   return [`${evs ? "not armed" : "state unknown (no session log)"} \xB7 run \`cycle begin\` now; it prints the one Monitor call to make`];
 }
-var MONITOR_MAX_MS, MONITOR_MIN_MS, hhmm2, WAKE_RULES, SCHEDULE_MARGIN_S, CYCLE_DUE, basename7, SLEEP_RULES, SCHEDULE_RULES;
+var MONITOR_MAX_MS, MONITOR_MIN_MS, WAKE_BASE_NAME, DELIVER_MAX_LINES, hhmm2, WAKE_RULES, SCHEDULE_MARGIN_S, CYCLE_DUE, basename7, SLEEP_RULES, SCHEDULE_RULES;
 var init_wake = __esm({
   "src/opsbot-core/wake.ts"() {
     "use strict";
@@ -9023,10 +9069,12 @@ var init_wake = __esm({
     init_transcript();
     MONITOR_MAX_MS = 18e5;
     MONITOR_MIN_MS = 6e4;
+    WAKE_BASE_NAME = "opsbot-wake-base";
+    DELIVER_MAX_LINES = 20;
     hhmm2 = (s) => `${s.slice(11, 16)}Z`;
     WAKE_RULES = [
       "The monitor is the live wake: its notification means a stream has something new, so run `cycle begin` then.",
-      "It exits on the first arrival or at its deadline. Arm it again at the end of every cycle when it is not armed, and when it reports an expiry with nothing delivered; never two on one file, never a longer deadline, never a different command.",
+      "It starts from where the last check read to, so a line that arrived since that check began is delivered the moment it is armed; otherwise it exits on the first arrival or at its deadline. Arm it again at the end of every cycle when it is not armed, and when it reports an expiry with nothing delivered; never two on one file, never a longer deadline, never a different command.",
       "The listener's nudge is the backstop when no monitor is armed; neither path depends on the other."
     ];
     SCHEDULE_MARGIN_S = 60;
@@ -9039,6 +9087,7 @@ var init_wake = __esm({
     SCHEDULE_RULES = [
       "The monitor is your schedule and your live wake.",
       "When it delivers `cycle due` or an event line, run `cycle begin`.",
+      "It starts from where the last check read to, so a line that arrived since that check began is delivered the moment it is armed.",
       "At the end of every cycle, arm the one monitor `cycle end` prints, exactly as printed.",
       "Never call ScheduleWakeup and never start `/loop`.",
       "Never two monitors, never a longer deadline.",
@@ -9049,13 +9098,13 @@ var init_wake = __esm({
 });
 
 // src/opsbot-core/sleep.ts
-import { existsSync as existsSync12, readFileSync as readFileSync9, rmSync as rmSync3, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync12, readFileSync as readFileSync10, rmSync as rmSync4, writeFileSync as writeFileSync6 } from "node:fs";
 function sleepFile(root) {
   return gitPath(root, SLEEP_STATE);
 }
 function readSleep(root) {
   try {
-    const v = JSON.parse(readFileSync9(sleepFile(root), "utf8"));
+    const v = JSON.parse(readFileSync10(sleepFile(root), "utf8"));
     return v && typeof v === "object" && typeof v.decided_at === "string" ? v : null;
   } catch {
     return null;
@@ -9065,15 +9114,15 @@ function activeSleep(root, s) {
   return s.sleep ? readSleep(root) : null;
 }
 function writeSleep(root, st) {
-  writeFileSync5(sleepFile(root), `${JSON.stringify(st)}
+  writeFileSync6(sleepFile(root), `${JSON.stringify(st)}
 `);
 }
 function clearSleep(root) {
-  rmSync3(sleepFile(root), { force: true });
+  rmSync4(sleepFile(root), { force: true });
 }
-function lineCount(file) {
+function lineCount2(file) {
   try {
-    const t = readFileSync9(file, "utf8");
+    const t = readFileSync10(file, "utf8");
     if (!t) return 0;
     return t.split("\n").length - (t.endsWith("\n") ? 1 : 0);
   } catch {
@@ -9081,7 +9130,7 @@ function lineCount(file) {
   }
 }
 function wakeLineCounts(s) {
-  return Object.fromEntries(wakeFiles(s).map((f) => [f, lineCount(f)]));
+  return Object.fromEntries(wakeFiles(s).map((f) => [f, lineCount2(f)]));
 }
 function lastOperatorAt(evs, loopPrompt, after) {
   const prompt = loopPrompt.trim();
@@ -9362,7 +9411,7 @@ var init_args = __esm({
 });
 
 // src/opsbot-core/commands/check.ts
-import { existsSync as existsSync13, rmSync as rmSync4 } from "node:fs";
+import { existsSync as existsSync13, rmSync as rmSync5 } from "node:fs";
 function gateWordIn(text, word) {
   if (!/^[A-Z]{3,}$/.test(word)) return false;
   return new RegExp(`(?<![\\p{L}\\p{N}])${word}(?![\\p{L}\\p{N}])`, "u").test(text ?? "");
@@ -9548,7 +9597,7 @@ function sweep(root, opts) {
       truncateTo(p.log, logSize);
       truncateTo(p.seen, seenSize);
       if (oldWm !== null) writeWatermark(root, oldWm);
-      else rmSync4(p.watermark, { force: true });
+      else rmSync5(p.watermark, { force: true });
       failed("commit", `cannot commit: ${why}`);
       outcome = "degraded";
       writeState();
@@ -9612,7 +9661,7 @@ var init_check = __esm({
 });
 
 // src/opsbot-core/commands/coldstart.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync14, mkdirSync as mkdirSync4, readdirSync as readdirSync4, readFileSync as readFileSync10, rmSync as rmSync5, statSync as statSync6, writeFileSync as writeFileSync6 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync14, mkdirSync as mkdirSync4, readdirSync as readdirSync4, readFileSync as readFileSync11, rmSync as rmSync6, statSync as statSync6, writeFileSync as writeFileSync7 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
 import { dirname as dirname10, join as join19, resolve as resolve8 } from "node:path";
 function legacyCacheDir(name) {
@@ -9626,7 +9675,7 @@ function ensureScratch(root) {
   const exclude = gitPath(root, "info/exclude");
   let text = "";
   try {
-    text = readFileSync10(exclude, "utf8");
+    text = readFileSync11(exclude, "utf8");
   } catch {
   }
   const present = text.split("\n").some((l) => ["/.scratch", "/.scratch/", ".scratch", ".scratch/"].includes(l.trim()));
@@ -9639,14 +9688,14 @@ function ensureScratch(root) {
 }
 function writeSessionPointer(root, p) {
   try {
-    writeFileSync6(gitPath(root, "opsbot-session"), `${JSON.stringify(p)}
+    writeFileSync7(gitPath(root, "opsbot-session"), `${JSON.stringify(p)}
 `);
   } catch {
   }
 }
 function sessionPointer(root) {
   try {
-    const v = JSON.parse(readFileSync10(gitPath(root, "opsbot-session"), "utf8"));
+    const v = JSON.parse(readFileSync11(gitPath(root, "opsbot-session"), "utf8"));
     return v && typeof v.transcript_path === "string" ? v : null;
   } catch {
     return null;
@@ -9745,7 +9794,7 @@ function kitSections(mode, opts = {}) {
     const m = f.match(/^\d+[-_]mode-([a-z]+)\.md$/);
     return !m || m[1] === (mode ?? "strategist");
   }).filter((f) => opts.memory !== false || !/^\d+[-_]memory\.md$/.test(f)).filter((f) => opts.routines === true || !/^\d+[-_]routines\.md$/.test(f)).sort().map((f) => {
-    let text = readFileSync10(join19(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
+    let text = readFileSync11(join19(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
     const m = text.match(/^#\s+(.+)$/m);
     const title = m ? m[1].trim() : f.replace(/^\d+[-_]/, "").replace(/\.md$/, "");
     if (m) text = text.replace(m[0], "").replace(/^\n+/, "");
@@ -9786,7 +9835,7 @@ ${capSection(body, SESSION_LOG_CAP)}`);
 ${lines.join("\n")}`);
   } else if (wakeFiles(s).length) {
     const evs = transcript ? readEvents(transcript) : null;
-    const lines = [...wakeLines(s, evs && evs.length ? evs : null, now, null), ...WAKE_RULES];
+    const lines = [...wakeLines(s, evs && evs.length ? evs : null, now, null, readWakeBase(root)), ...WAKE_RULES];
     kit.push(`\u2550\u2550\u2550 1.${kit.length + 1} The live wake (arm it before anything else)
 ${lines.join("\n")}`);
   }
@@ -9862,11 +9911,11 @@ async function coldStartCommand(args) {
   ensureScratch(root);
   const { dir, pack: packFile, pending } = packPaths(root);
   mkdirSync4(dir, { recursive: true });
-  writeFileSync6(packFile, pack);
-  writeFileSync6(pending, `${nowIso()}
+  writeFileSync7(packFile, pack);
+  writeFileSync7(pending, `${nowIso()}
 `);
   try {
-    rmSync5(legacyPackPaths(s.name).pending, { force: true });
+    rmSync6(legacyPackPaths(s.name).pending, { force: true });
   } catch {
   }
   return [
@@ -9904,7 +9953,7 @@ async function gateCommand(args) {
     packSize = 0;
   }
   if (packSize === 0) {
-    rmSync5(pending, { force: true });
+    rmSync6(pending, { force: true });
     return { gate: "open (no pack to read; flag cleared)" };
   }
   let input = {};
@@ -9918,7 +9967,7 @@ async function gateCommand(args) {
   const path = typeof ti.file_path === "string" ? ti.file_path : "";
   const partial = ti.offset !== void 0 || ti.limit !== void 0 || ti.pages !== void 0;
   if (tool === "Read" && path && resolve8(path) === resolve8(pack) && !partial) {
-    rmSync5(pending, { force: true });
+    rmSync6(pending, { force: true });
     return { gate: "open (pack read whole; flag cleared)" };
   }
   const reason = `Reground first: Read ${pack} whole (no offset or limit) before any other tool. The hook output you saw may have been cut short; the file holds the rule card, what is owed and the live state.`;
@@ -10027,7 +10076,7 @@ var init_start = __esm({
 });
 
 // src/opsbot-core/drift.ts
-import { readFileSync as readFileSync11, writeFileSync as writeFileSync7 } from "node:fs";
+import { readFileSync as readFileSync12, writeFileSync as writeFileSync8 } from "node:fs";
 function modelMatches(want, have) {
   const w = cls(want);
   const h = cls(have);
@@ -10054,19 +10103,19 @@ ${lines.join("\n")}
 `;
   let prev2 = "";
   try {
-    prev2 = readFileSync11(marker, "utf8");
+    prev2 = readFileSync12(marker, "utf8");
   } catch {
   }
   if (lines.length === 0) {
     if (prev2) try {
-      writeFileSync7(marker, "");
+      writeFileSync8(marker, "");
     } catch {
     }
     return [];
   }
   if (prev2 === sig) return [];
   try {
-    writeFileSync7(marker, sig);
+    writeFileSync8(marker, sig);
   } catch {
   }
   return [
@@ -10087,7 +10136,7 @@ var init_drift = __esm({
 });
 
 // src/opsbot-core/commands/cycle.ts
-import { existsSync as existsSync15, rmSync as rmSync6 } from "node:fs";
+import { existsSync as existsSync15, rmSync as rmSync7 } from "node:fs";
 function next2(root, s) {
   return delayLine(nextDelay(s, readCycleLog(root), nowMs()));
 }
@@ -10097,12 +10146,12 @@ function wakeReport(root, s, boundByNext) {
   const ptr = sessionPointer(root);
   const evs = ptr ? readEvents(ptr.transcript_path) : [];
   const until = boundByNext ? nextDelay(s, readCycleLog(root), nowMs()).seconds * 1e3 : null;
-  return wakeLines(s, evs.length ? evs : null, nowMs(), until);
+  return wakeLines(s, evs.length ? evs : null, nowMs(), until, readWakeBase(root));
 }
 function scheduleReport(root, s) {
   const ptr = sessionPointer(root);
   const evs = ptr ? readEvents(ptr.transcript_path) : [];
-  return scheduleLines(s, evs.length ? evs : null, nowMs(), nextDelay(s, readCycleLog(root), nowMs()).seconds);
+  return scheduleLines(s, evs.length ? evs : null, nowMs(), nextDelay(s, readCycleLog(root), nowMs()).seconds, readWakeBase(root));
 }
 function sessionEvents(root) {
   const ptr = sessionPointer(root);
@@ -10191,6 +10240,7 @@ function cycleBegin() {
       };
     }
   }
+  recordWakeBase(root, wakeFiles(settings));
   const prev2 = process.env.OPSBOT_COMMIT_TRAILERS;
   process.env.OPSBOT_COMMIT_TRAILERS = trailers();
   let r;
@@ -10324,7 +10374,7 @@ function cycleEnd(args) {
   if (why) {
     truncateTo(p.log, logSize);
     if (oldWm) writeWatermark(root, oldWm);
-    else if (!degraded) rmSync6(p.watermark, { force: true });
+    else if (!degraded) rmSync7(p.watermark, { force: true });
     throw new AxiError(`cannot commit the cycle log (${why}); nothing written, the checkout still held`, "CANNOT_COMMIT", [
       "Fix the repo, then run cycle end again"
     ]);
@@ -10433,7 +10483,7 @@ var init_outage = __esm({
 });
 
 // src/opsbot-core/runtime.ts
-import { appendFileSync as appendFileSync3, readFileSync as readFileSync12 } from "node:fs";
+import { appendFileSync as appendFileSync3, readFileSync as readFileSync13 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
 import { join as join20 } from "node:path";
 function normStatus(s) {
@@ -10496,7 +10546,7 @@ ${r.stdout}`) };
 function fakeAdapter(file) {
   const state = () => {
     try {
-      return JSON.parse(readFileSync12(file, "utf8"));
+      return JSON.parse(readFileSync13(file, "utf8"));
     } catch {
       return {};
     }
@@ -10555,7 +10605,7 @@ ${r.stdout}`) };
 });
 
 // src/opsbot-core/commands/liveness.ts
-import { existsSync as existsSync16, readFileSync as readFileSync13, writeFileSync as writeFileSync8 } from "node:fs";
+import { existsSync as existsSync16, readFileSync as readFileSync14, writeFileSync as writeFileSync9 } from "node:fs";
 function watchdogCommand(args) {
   const { flags } = parseArgs(args, { bool: ["dry-run"] }, "watchdog [--dry-run]");
   const dry = flags["dry-run"] === true;
@@ -10590,7 +10640,7 @@ function watchdogCommand(args) {
     return { watchdog: `alive \xB7 last cycle ${last}, ${Math.floor(gap / 6e4)} min ago` };
   }
   const started = last ?? "never";
-  if (existsSync16(told) && readFileSync13(told, "utf8").split("\n")[0] === started) {
+  if (existsSync16(told) && readFileSync14(told, "utf8").split("\n")[0] === started) {
     return { watchdog: `stopped since ${started} \xB7 the operator already told` };
   }
   const seen = [];
@@ -10623,7 +10673,7 @@ function watchdogCommand(args) {
     setExit(1);
     return { watchdog: `stopped since ${started} \xB7 cannot tell the operator: every escalation script failed`, escalations: results };
   }
-  writeFileSync8(told, `${started}
+  writeFileSync9(told, `${started}
 `);
   if (blocked) {
     return { watchdog: `stopped since ${started} \xB7 the operator told \xB7 outage not recorded while ${blocked}`, escalations: results };
@@ -10694,7 +10744,7 @@ function nudgeCommand(args) {
     return { nudge: `nothing \xB7 last cycle ${last}` };
   }
   if (existsSync16(marker) && !firstWake) {
-    const [prev2, why] = readFileSync13(marker, "utf8").split("\n");
+    const [prev2, why] = readFileSync14(marker, "utf8").split("\n");
     if (prev2 && /^\d+$/.test(prev2) && now - Number(prev2) * 1e3 < cooldown * 6e4) {
       const ago = Math.floor((now - Number(prev2) * 1e3) / 6e4);
       return { nudge: wake2 ? `nothing \xB7 woke ${ago} min ago${why ? ` for: ${why}` : ""}` : `nothing \xB7 nudged ${ago} min ago and no cycle since` };
@@ -10719,11 +10769,11 @@ ${reason}
     writeSleep(root, { ...asleep, woken: { at, reason: `nudge --now${reason ? `: ${reason}` : ""}`, event_at: at, sent: true } });
   }
   if (!r.ok) {
-    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") writeFileSync8(marker, stamp);
+    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") writeFileSync9(marker, stamp);
     setExit(1);
     return { nudge: `cannot \xB7 ${rt.name} prompt ${agent}: ${r.code}: ${r.message}` };
   }
-  writeFileSync8(marker, stamp);
+  writeFileSync9(marker, stamp);
   return { nudge: `${wake2 ? `woke ${agent}${reason ? ` for: ${reason}` : ""}` : `nudged ${agent}: ${line}`}${via}`, at: nowIso() };
 }
 var init_liveness = __esm({
@@ -10743,7 +10793,7 @@ var init_liveness = __esm({
 });
 
 // src/opsbot-core/commands/infra.ts
-import { existsSync as existsSync17, mkdirSync as mkdirSync6, readFileSync as readFileSync14, readdirSync as readdirSync5, rmSync as rmSync7, writeFileSync as writeFileSync9 } from "node:fs";
+import { existsSync as existsSync17, mkdirSync as mkdirSync6, readFileSync as readFileSync15, readdirSync as readdirSync5, rmSync as rmSync8, writeFileSync as writeFileSync10 } from "node:fs";
 import { homedir as homedir11 } from "node:os";
 import { join as join21 } from "node:path";
 function unitDir() {
@@ -10762,7 +10812,7 @@ function template(name) {
       "Reinstall the skill: npx skills add JarvusInnovations/opsbots --skill opsbot-core"
     ]);
   }
-  return readFileSync14(p, "utf8");
+  return readFileSync15(p, "utf8");
 }
 function fill(t, vars) {
   return t.replace(/@([A-Z_]+)@/g, (m, k) => k in vars ? vars[k] : m);
@@ -10845,7 +10895,7 @@ function infraCommand(args) {
     const want = new Set(units.map((u) => u.file));
     const rows = units.map((u) => {
       const p = join21(dir, u.file);
-      const state = !existsSync17(p) ? "missing" : samePathless(readFileSync14(p, "utf8"), u.content) ? "current" : "stale";
+      const state = !existsSync17(p) ? "missing" : samePathless(readFileSync15(p, "utf8"), u.content) ? "current" : "stale";
       let active = "-";
       if (u.enable && state !== "missing") {
         const r = systemctl(["is-active", u.file]);
@@ -10889,9 +10939,9 @@ function infraCommand(args) {
     mkdirSync6(dir, { recursive: true });
     if (stale.length) {
       systemctl(["disable", "--now", ...stale]);
-      for (const f of stale) rmSync7(join21(dir, f), { force: true });
+      for (const f of stale) rmSync8(join21(dir, f), { force: true });
     }
-    for (const u of units) writeFileSync9(join21(dir, u.file), u.content);
+    for (const u of units) writeFileSync10(join21(dir, u.file), u.content);
     const steps = [];
     const reload2 = systemctl(["daemon-reload"]);
     steps.push({ step: "daemon-reload", ok: reload2.ok, detail: firstLine(reload2.out) });
@@ -10908,7 +10958,7 @@ function infraCommand(args) {
   if (files.length === 0) return { infra: `no ${prefix(settings)}* units installed (no-op)` };
   if (dry) return { infra: `would disable and remove ${files.length} units from ${dir}`, units: files };
   const dis = systemctl(["disable", "--now", ...files]);
-  for (const f of files) rmSync7(join21(dir, f), { force: true });
+  for (const f of files) rmSync8(join21(dir, f), { force: true });
   const reload = systemctl(["daemon-reload"]);
   if (!reload.ok) setExit(1);
   return {
@@ -10936,7 +10986,7 @@ var init_infra = __esm({
 });
 
 // src/opsbot-core/commands/hook.ts
-import { existsSync as existsSync18, mkdirSync as mkdirSync7, readFileSync as readFileSync15, writeFileSync as writeFileSync10 } from "node:fs";
+import { existsSync as existsSync18, mkdirSync as mkdirSync7, readFileSync as readFileSync16, writeFileSync as writeFileSync11 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
 import { dirname as dirname11, join as join22, relative as relative4 } from "node:path";
 function settingsPath(scope, dir) {
@@ -10954,14 +11004,14 @@ function hookBase(scope, dir) {
 function readSettings(p) {
   if (!existsSync18(p)) return {};
   try {
-    return JSON.parse(readFileSync15(p, "utf8"));
+    return JSON.parse(readFileSync16(p, "utf8"));
   } catch {
     throw new AxiError(`${p} is not valid JSON; not touching it`, "CANNOT_RUN", ["Fix the file by hand, then run hook install again"]);
   }
 }
 function writeSettings(p, s) {
   mkdirSync7(dirname11(p), { recursive: true });
-  writeFileSync10(p, `${JSON.stringify(s, null, 2)}
+  writeFileSync11(p, `${JSON.stringify(s, null, 2)}
 `);
 }
 function upsertPreTool(settings, command) {
@@ -11084,7 +11134,7 @@ function cheapReason(root, s, st, now) {
   const op = ptr ? lastOperatorAt(readEvents(ptr.transcript_path), s.loop.prompt, st.decided_at) : null;
   if (op) return { reason: "the operator wrote to the session", event_at: op };
   for (const [file, base] of Object.entries(st.wake_lines)) {
-    const n = lineCount(file);
+    const n = lineCount2(file);
     if (n > base || n < base && n > 0) return { reason: `a new line in ${basename8(file)}`, event_at: mtime(file) ?? iso(now) };
   }
   const by = wakeBy(s, st);
@@ -11243,7 +11293,7 @@ var init_sleep2 = __esm({
 });
 
 // src/opsbot-core/commands/memory.ts
-import { copyFileSync, existsSync as existsSync19, mkdirSync as mkdirSync8, readdirSync as readdirSync6, readFileSync as readFileSync16, statSync as statSync8, writeFileSync as writeFileSync11 } from "node:fs";
+import { copyFileSync, existsSync as existsSync19, mkdirSync as mkdirSync8, readdirSync as readdirSync6, readFileSync as readFileSync17, statSync as statSync8, writeFileSync as writeFileSync12 } from "node:fs";
 import { dirname as dirname12, join as join23, resolve as resolve9 } from "node:path";
 function settingsFor(root) {
   try {
@@ -11297,7 +11347,7 @@ function protocolLines() {
   if (!file) return [`(the protocol is in ${join23(skillDir(), GUIDE)})`];
   const items = [];
   let cur = null;
-  const body = readFileSync16(file, "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "").replace(/^#\s+.+\n+/m, "");
+  const body = readFileSync17(file, "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "").replace(/^#\s+.+\n+/m, "");
   for (const line of body.split("\n")) {
     const t = line.trim();
     if (!t) {
@@ -11391,17 +11441,17 @@ function planImport(src, dest) {
     }
     const to = join23(dest, e.name);
     if (!existsSync19(to)) plan.copy.push(e.name);
-    else if (statSync8(to).isFile() && readFileSync16(to).equals(readFileSync16(join23(src, e.name)))) plan.same.push(e.name);
+    else if (statSync8(to).isFile() && readFileSync17(to).equals(readFileSync17(join23(src, e.name)))) plan.same.push(e.name);
     else plan.clashes.push(e.name);
   }
   const srcIdx = join23(src, MEMORY_INDEX);
   if (existsSync19(srcIdx)) {
     const destIdx = join23(dest, MEMORY_INDEX);
-    const have = existsSync19(destIdx) ? readFileSync16(destIdx, "utf8").split("\n") : [];
+    const have = existsSync19(destIdx) ? readFileSync17(destIdx, "utf8").split("\n") : [];
     const haveLines = new Set(have.map((l) => l.trim()).filter(Boolean));
     const haveTargets = new Set(have.map(indexTarget).filter((t) => t !== null));
     const clash = new Set(plan.clashes);
-    for (const raw of readFileSync16(srcIdx, "utf8").split("\n")) {
+    for (const raw of readFileSync17(srcIdx, "utf8").split("\n")) {
       const l = raw.trimEnd();
       if (!l.trim()) continue;
       const t = indexTarget(l);
@@ -11440,9 +11490,9 @@ function importCommand(args) {
     for (const f of plan.copy) copyFileSync(join23(src, f), join23(dest, f));
     if (plan.indexAdd.length) {
       const destIdx = join23(dest, MEMORY_INDEX);
-      const cur = existsSync19(destIdx) ? readFileSync16(destIdx, "utf8") : "";
+      const cur = existsSync19(destIdx) ? readFileSync17(destIdx, "utf8") : "";
       mkdirSync8(dirname12(destIdx), { recursive: true });
-      writeFileSync11(destIdx, `${cur}${cur && !cur.endsWith("\n") ? "\n" : ""}${plan.indexAdd.join("\n")}
+      writeFileSync12(destIdx, `${cur}${cur && !cur.endsWith("\n") ? "\n" : ""}${plan.indexAdd.join("\n")}
 `);
     }
   }
@@ -11744,7 +11794,7 @@ var init_routines2 = __esm({
 });
 
 // src/opsbot-core/commands/simple.ts
-import { existsSync as existsSync20, readFileSync as readFileSync17 } from "node:fs";
+import { existsSync as existsSync20, readFileSync as readFileSync18 } from "node:fs";
 import { join as join24 } from "node:path";
 function nextDelayCommand(args) {
   parseArgs(args, {}, "next-delay");
@@ -11879,7 +11929,7 @@ function settingsCommand(args) {
     where = `${SETTINGS_FILE} at HEAD`;
   } else {
     const p = join24(root, SETTINGS_FILE);
-    text = existsSync20(p) ? readFileSync17(p, "utf8") : null;
+    text = existsSync20(p) ? readFileSync18(p, "utf8") : null;
     where = SETTINGS_FILE;
   }
   if (text === null) {
@@ -11891,7 +11941,7 @@ function settingsCommand(args) {
   const claude = join24(root, ".claude", "settings.json");
   if (raw && existsSync20(claude)) {
     try {
-      const cs = JSON.parse(readFileSync17(claude, "utf8"));
+      const cs = JSON.parse(readFileSync18(claude, "utf8"));
       const loop = raw.loop ?? {};
       for (const k of ["autoMemoryEnabled", "autoMemoryDirectory"]) {
         if (cs && cs[k] !== void 0) {

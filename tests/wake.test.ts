@@ -1,10 +1,24 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { spawn } from "node:child_process";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BASE_SETTINGS, cli, makeBot, writeStream, type Bot } from "./helpers";
+import { BASE_SETTINGS, cli, makeBot, setSettings, writeStream, type Bot } from "./helpers";
 import { lastMonitorCall, readEvents, turnEnded } from "../src/opsbot-core/transcript";
-import { monitorCommand, monitorTimeout, wakeStates } from "../src/opsbot-core/wake";
+import {
+  WAKE_BASE_NAME,
+  lineCount,
+  monitorCommand,
+  monitorTimeout,
+  readWakeBase,
+  scheduleCommand,
+  scheduleSeconds,
+  scheduleState,
+  wakeStates,
+} from "../src/opsbot-core/wake";
+
+// Some tests run the CLI several times; a loaded runner needs more than the 5 s default.
+setDefaultTimeout(30000);
 
 let bot: Bot;
 afterEach(() => bot?.cleanup());
@@ -180,5 +194,133 @@ describe("the live wake in the pack and the cycle", () => {
     const r = cli(bot, ["settings", "validate"], { now: T0 });
     expect(r.code).not.toBe(0);
     expect(r.out).toContain("wake.files must be an array of file paths");
+  });
+});
+
+// ------------------------------------------------------------- armed from where the last check read to
+
+/** Run a generated command in bash; resolve with its stdout and how long it took. */
+function runShell(cmd: string, limitMs: number): Promise<{ out: string; code: number | null; ms: number }> {
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+    const p = spawn("bash", ["-c", cmd]);
+    let out = "";
+    p.stdout.on("data", (d) => (out += d));
+    const kill = setTimeout(() => p.kill("SIGKILL"), limitMs);
+    p.on("close", (code) => {
+      clearTimeout(kill);
+      resolve({ out, code, ms: Date.now() - t0 });
+    });
+  });
+}
+
+/** The monitor command as the kit printed it before counts were recorded: a running session may hold it. */
+const OLD_MONITOR = (file: string) =>
+  `f=${JSON.stringify(file)}; c() { [ -f "$f" ] && wc -l < "$f" || echo 0; }; n=$(c); ` +
+  `while sleep 2; do m=$(c); if [ "$m" -lt "$n" ]; then n=$m; fi; ` +
+  `if [ "$m" -gt "$n" ]; then tail -n $((m-n)) "$f" | cut -c1-300; exit 0; fi; done`;
+const OLD_SCHEDULE = (file: string, seconds: number) =>
+  `end=$(( $(date +%s) + ${seconds} )); c() { [ -f "$1" ] && wc -l < "$1" || echo 0; }; f0='${file}'; n0=$(c "$f0"); ` +
+  `while sleep 2; do h=0; m=$(c "$f0"); if [ "$m" -lt "$n0" ]; then n0=$m; fi; if [ "$m" -gt "$n0" ]; then tail -n $((m-n0)) "$f0" | cut -c1-300 | while IFS= read -r l; do printf '%s: %s\\n' 'events.jsonl' "$l"; done; n0=$m; h=1; fi; if [ "$h" = 1 ]; then exit 0; fi; if [ "$(date +%s)" -ge "$end" ]; then echo 'cycle due'; exit 0; fi; done`;
+
+describe("the monitor is armed from where the last check read to", () => {
+  const tmpDir = () => mkdtempSync(join(tmpdir(), "opsbot-wake-base-"));
+
+  test("a line appended after the check recorded N lines is printed at once when the poller starts", async () => {
+    const dir = tmpDir();
+    try {
+      const f = join(dir, "events.jsonl");
+      writeFileSync(f, "one\ntwo\n");
+      const n = lineCount(f);
+      expect(n).toBe(2);
+      appendFileSync(f, "arrived mid-cycle\n");
+      const r = await runShell(monitorCommand(f, n), 10_000);
+      expect(r.code).toBe(0);
+      expect(r.out).toBe("arrived mid-cycle\n");
+      expect(r.ms).toBeLessThan(1_500); // no poll interval first
+      const s = await runShell(scheduleCommand([f], 30, [n]), 10_000);
+      expect(s.code).toBe(0);
+      expect(s.out).toBe("events.jsonl: arrived mid-cycle\n");
+      expect(s.ms).toBeLessThan(1_500);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  test("with no recorded count the poller starts at the end of the file and waits, as before", async () => {
+    const dir = tmpDir();
+    try {
+      const f = join(dir, "events.jsonl");
+      writeFileSync(f, "one\ntwo\n");
+      expect(monitorCommand(f)).toContain("n=$(c);");
+      const r = await runShell(monitorCommand(f), 3_000);
+      expect(r.code).toBeNull(); // still waiting when killed
+      expect(r.out).toBe("");
+      const p = runShell(monitorCommand(f, null), 10_000);
+      setTimeout(() => appendFileSync(f, "later\n"), 1_000);
+      expect((await p).out).toBe("later\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  test("a file shorter than its recorded count (truncated or rotated) is delivered from its start", async () => {
+    const dir = tmpDir();
+    try {
+      const f = join(dir, "events.jsonl");
+      writeFileSync(f, "fresh one\nfresh two\n");
+      const r = await runShell(monitorCommand(f, 9), 10_000);
+      expect(r.out).toBe("fresh one\nfresh two\n");
+      const s = await runShell(scheduleCommand([f], 30, [9]), 10_000);
+      expect(s.out).toBe("events.jsonl: fresh one\nevents.jsonl: fresh two\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  test("old-form commands a running session may hold are still recognised", () => {
+    bot = makeBot();
+    const logWith = (name: string, at: string, input: Record<string, unknown>) => {
+      const p = join(bot.root, name);
+      writeFileSync(p, [
+        ev({ type: "user", timestamp: "2026-03-02T14:40:00Z", message: { content: "/loop testbot cycle" } }),
+        ev({ type: "assistant", timestamp: at, message: { content: [{ type: "tool_use", id: "m1", name: "Monitor", input }] } }),
+      ].join("\n") + "\n");
+      return readEvents(p);
+    };
+    const evs = logWith("old-wake.jsonl", "2026-03-02T14:40:07Z", { command: OLD_MONITOR(WAKE_FILE), description: `testbot wake: new lines in ${WAKE_FILE}`, timeout_ms: 600_000 });
+    const sched = logWith("old-schedule.jsonl", "2026-03-02T14:40:08Z", { command: OLD_SCHEDULE(WAKE_FILE, 600), description: "testbot schedule", timeout_ms: 660_000 });
+    expect(wakeStates(evs, [WAKE_FILE], Date.parse("2026-03-02T14:45:00Z"))[0]!.armed).toEqual({ at: "2026-03-02T14:40:07Z", until: "2026-03-02T14:50:07Z" });
+    expect(scheduleSeconds(OLD_SCHEDULE(WAKE_FILE, 600))).toBe(600);
+    expect(scheduleState(sched, "testbot", Date.parse("2026-03-02T14:45:00Z"))).toEqual({ at: "2026-03-02T14:40:08Z", until: "2026-03-02T14:50:08Z" });
+    // and the new forms carry the same markers
+    expect(monitorCommand(WAKE_FILE, 7)).toContain(JSON.stringify(WAKE_FILE));
+    expect(scheduleSeconds(scheduleCommand([WAKE_FILE], 600, [7]))).toBe(600);
+  });
+
+  test("cycle begin records each wake file's count as its check starts, and every arm call after it starts there", () => {
+    bot = makeBot({ settings: SETTINGS });
+    const f = join(bot.home, "wake", "events.jsonl");
+    mkdirSync(join(bot.home, "wake"), { recursive: true });
+    writeFileSync(f, "a\nb\nc\n");
+    setSettings(bot, { wake: { files: [f] } });
+    // before any check: no record, the call measures at start
+    expect(cli(bot, ["cold-start"], { now: T0 }).out).toContain("n=$(c);");
+    writeStream(bot, [{ key: "k:1", at: T0, conv: "c", kind: "dm", from: "p", text: "x" }]);
+    const b = cli(bot, ["cycle", "begin"], { now: T0 });
+    expect(b.code).toBe(10);
+    const rec = JSON.parse(readFileSync(join(bot.root, ".git", WAKE_BASE_NAME), "utf8"));
+    expect(rec.lines).toEqual({ [f]: 3 });
+    expect(readWakeBase(bot.root)).toEqual({ [f]: 3 });
+    expect(b.out).toContain("n=3;");
+    appendFileSync(f, "d\n"); // lands mid-cycle
+    const e = cli(bot, ["cycle", "end", "--records", "1"], { now: "2026-03-02T15:01:00Z" });
+    expect(e.code).toBe(0);
+    expect(e.out).toContain("n=3;"); // from the check, not from now
+    expect(cli(bot, ["cold-start"], { now: "2026-03-02T15:02:00Z" }).out).toContain("n=3;");
+    // the monitor schedule's call starts there too
+    setSettings(bot, { loop: { prompt: "testbot cycle: follow the opsbot-core skill, start with cycle begin", autocompact: "300k", schedule: "monitor" } });
+    const s = cli(bot, ["cycle", "begin"], { now: "2026-03-02T15:10:00Z" });
+    expect(s.out).toContain("n0=4;");
   });
 });
