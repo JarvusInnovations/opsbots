@@ -26,15 +26,17 @@ choose to link with a phone number, and type the code. The daemon now holds the 
 as a user service, so it keeps running after you log out.
 
 Keep the phone switched on and online now and then: WhatsApp logs out a linked device whose
-phone has been away for about two weeks. `whatsapp-axi doctor` warns as that nears.
+phone has been away for about two weeks. `whatsapp-axi doctor` reports the phone's last contact in its `phone` check.
 
 ## 2. Who the bot answers to
 
 Add yourself as an operator, by your own number in E.164 form:
 
 ```sh
-whatsapp-axi operators add +15550100001 --account <account>
+whatsapp-axi operators add +15550100001 --confirm --account <account>
 ```
+
+Adding an operator widens who the bot obeys, so whatsapp-axi asks for `--confirm`.
 
 ## 3. What the bot can see
 
@@ -82,7 +84,16 @@ The bot's session normally wakes itself on the wake file. The waker gives it 20 
 (`wake_grace_seconds`) to start, and only then types a prompt into the session as a backstop.
 Its log, `journalctl --user -u opsbot-<bot>-monitor-20-whatsapp-waker`, says `woken by monitor`
 or `nudged after <n>s` for each wake, and `nudged after cycle` when a line landed during a cycle that
-did not pick it up. Frequent nudges mean the session's own monitor is not armed.
+did not pick it up. Frequent nudges mean the session's own monitor is not armed. A line
+`mark failed: <reason>` means the blue ticks could not be sent; the waker tries three more times.
+
+Every post the bot tries is a line in `logs/whatsapp-posts.jsonl`: never the text, only its hash,
+the class, the screen's verdict, `posted` and the `send_id`. A refused send carries whatsapp-axi's
+error `code`. The ones you will see: `NOT_CONNECTED` (the phone link is down: run
+`whatsapp-axi doctor --account <account>`), `DAEMON_NOT_RUNNING`, `FIRST_CONTACT` (the bot never
+starts a chat with someone new), `RATE_LIMITED`, `DUPLICATE_TEXT`, `UPSTREAM_ERROR` (WhatsApp
+refused it) and `INTERNAL_ERROR`. `posted: "unknown"` with `OUTCOME_UNKNOWN` means the send may
+have gone out; the bot retries it only with the same `send_id`, which cannot send twice.
 
 ## 5. The trusted circle
 

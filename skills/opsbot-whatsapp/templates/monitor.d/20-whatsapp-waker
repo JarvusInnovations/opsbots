@@ -16,7 +16,9 @@
 //   3. with mark_read "seen" (the default), waits for the key to appear in logs/intake/seen,
 //      which the core writes when the check reports the item to the model, then runs
 //      `whatsapp-axi mark-read <chat>/<id>`. So the blue ticks mean the session has the item,
-//      by construction. Only messages are marked, and never one the reader would drop (the
+//      by construction; `read` is logged only when the answer's `failed` is 0 and a message was
+//      marked or already marked, else `mark failed: <reason>`, retried at the next seen-check at
+//      most three times. Only messages are marked, and never one the reader would drop (the
 //      account's own, a sender listen_to "operators" or "trusted" leaves out, a peer outside
 //      its chats).
 // It logs a line per wake line (seq, kind, key, what it will do) and one when it marks or gives
@@ -189,13 +191,15 @@ for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => process.exit(0));
  * The one helper that runs whatsapp-axi: `<args> --account <account> --json-out=<fresh file>`,
  * stdout ignored, the response body read from the file and the file removed. Never logged.
  */
-async function axi(args) {
+async function axi(args, { bodyOnExit = false } = {}) {
   const file = join(outDir, `${++outN}.json`);
   const r = await run(bin, [...args, "--account", account, `--json-out=${file}`]);
   let json;
   try { json = JSON.parse(readFileSync(file, "utf8")); } catch { json = undefined; }
   rmSync(file, { force: true });
   if (json && json.error) return { error: `${json.error.code}: ${json.error.message}` };
+  // mark-read exits 1 with a 200 body when something asked for was not marked: the body decides
+  if (bodyOnExit && json && typeof json === "object") return { json };
   if (!r.ok) return { error: r.err.killed ? "timed out" : r.err.code === "ENOENT" ? "whatsapp-axi is not on PATH" : `exit ${r.err.code}` };
   if (json === undefined) return { error: "no --json-out file" };
   return { json };
@@ -239,14 +243,32 @@ const waker = makeWaker({
   asleep: () => existsSync(sleepFile),
 });
 
+/**
+ * `mark-read`: {chat, marked, already_marked, failed, reason?, read_receipts}, answered with HTTP
+ * 200 even when nothing could be sent (the CLI then exits 1, the body still in the file). Marked
+ * only when failed is 0 and at least one message was marked or already marked; else the reason.
+ * Pure.
+ */
+export function markOutcome(j) {
+  if (!j || typeof j !== "object" || !Number.isInteger(j.failed) || !Number.isInteger(j.already_marked)) return { ok: false, reason: "the mark answer had no failed or already_marked count" };
+  const done = (Number.isInteger(j.marked) ? j.marked : 0) + j.already_marked;
+  if (j.failed === 0 && done >= 1) return { ok: true };
+  const reason = typeof j.reason === "string" && j.reason ? j.reason : j.failed ? `${j.failed} not marked` : "nothing was marked";
+  return { ok: false, reason };
+}
+const MARK_RETRIES = 3;
+
 async function markWhenSeen(seq, key, ref) {
   const until = Date.now() + ackTimeoutMs;
+  let retries = 0;
   while (Date.now() < until) {
     if (isSeen(key)) {
-      const r = await axi(["mark-read", ref]);
-      if (r.error) log("!", "mark-read failed for seq", seq, key, r.error);
-      else log("read:", key);
-      return;
+      const r = await axi(["mark-read", ref], { bodyOnExit: true });
+      const m = r.error ? { ok: false, reason: r.error } : markOutcome(r.json);
+      if (m.ok) { log("read:", key); return; }
+      log("!", `mark failed: ${m.reason}`, "seq", seq, key);
+      if (retries >= MARK_RETRIES) { log("!", "gave up marking after", MARK_RETRIES, "retries:", key); return; }
+      retries++;
     }
     await sleep(2 * tick);
   }

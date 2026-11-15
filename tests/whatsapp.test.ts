@@ -46,20 +46,29 @@ afterEach(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true
 type Answer = { code: number; out: unknown; nofile?: boolean };
 const err = (code: string, message: string, extra: Record<string, unknown> = {}): Answer => ({ code: 1, out: { error: { code, message, ...extra } } });
 const ok = (out: unknown): Answer => ({ code: 0, out });
+/** A `doctor --account <a> --json-out` file: the given checks for the account, the rest ok, the hooks row (all). */
+const doctorFile = (rows: [string, string, string][], account = ACCOUNT) => {
+  const names = ["files", "service", "lingering", "binary", "daemon", "versions", "link", "state", "phone", "wake_file"];
+  const given = new Map(rows.map(([c, st, d]) => [c, { status: st, detail: d }]));
+  const checks = names.map((check) => ({ account, check, ...(given.get(check) ?? { status: "ok", detail: "ok" }) }));
+  checks.push({ account: "(all)", check: "hooks", status: "fail", detail: "no session hook installed" }); // never this bot's
+  const failed = checks.filter((c) => c.status === "fail").length;
+  return { account, summary: failed ? `${failed} failed` : "all checks passed", checks };
+};
 const chatView = (id: string, type: "group" | "direct", participants: unknown[], name = "Chat") => ok({ chat: { id, name, type, scope: "tagged", participants } });
 
 /** The default canned answers, by command line without --account and --json. */
 function fixtures(): Record<string, Answer> {
   return {
-    [`daemon status ${ACCOUNT}`]: ok({ service: { unit: `whatsapp-axi@${ACCOUNT}.service`, installed: true, enabled: "enabled", active: "active", sub: "running" }, daemon: { state: "connected", since: "2030-01-05T14:00:00Z", reason: "", version: "0.2.0" } }),
+    [`daemon status ${ACCOUNT}`]: ok({ account: ACCOUNT, service: { unit: `whatsapp-axi@${ACCOUNT}.service`, installed: true, enabled: "enabled", active: "active", sub: "running" }, daemon: { state: "connected", since: "2030-01-05T14:00:00Z", version: "0.2.0" } }),
     "settings show": ok({ settings: { scope: "tagged", dm_from: "operators", chats: { [G_PEER]: "full" }, operators: [OPER.pn], wake_file: "WAKE", read_receipts: "on-read" }, effective_retain_days: 90 }),
-    doctor: ok({ doctor: [{ account: ACCOUNT, check: "state", result: "ok", detail: "connected" }], result: "all checks passed" }),
+    doctor: ok(doctorFile([["state", "ok", "connected"]])),
     groups: ok({ groups: [{ id: G_INT, name: "Ops", scope: "tagged", members: 3 }, { id: G_PEER, name: "Bots", scope: "full", members: 3 }] }),
     [`chat view ${G_INT}`]: chatView(G_INT, "group", [BOT, OPER, ANN], "Ops"),
     [`chat view ${G_EXT}`]: chatView(G_EXT, "group", [BOT, OPER, EXT], "Mixed"),
     [`chat view ${G_PEER}`]: chatView(G_PEER, "group", [BOT, OPER, PEER], "Bots"),
     [`chat view ${G_HID}`]: chatView(G_HID, "group", [BOT, OPER, HIDDEN], "Hidden"),
-    [`chat view ${G_DOWN}`]: err("not_connected", "The account is not connected to WhatsApp.", { state: "connecting" }),
+    [`chat view ${G_DOWN}`]: err("NOT_CONNECTED", "The account is not connected to WhatsApp.", { state: "connecting" }),
     [`chat view ${DM_OPER}`]: chatView(DM_OPER, "direct", [OPER], "Sam"),
     [`chat view ${OPER.pn}`]: chatView(DM_OPER, "direct", [OPER], "Sam"),
     [`chat view ${DM_ANN}`]: chatView(DM_ANN, "direct", [BOT, ANN], "Ann"),
@@ -104,13 +113,19 @@ if (args[0] === "events") {
 }
 if (args[0] === "send" || args[0] === "send-file") {
   if (existsSync(dir + "/send-error.json")) say({ code: 1, out: JSON.parse(readFileSync(dir + "/send-error.json", "utf8")) });
+  if (existsSync(dir + "/send-answer.json")) say({ code: 0, out: JSON.parse(readFileSync(dir + "/send-answer.json", "utf8")) });
   say({ code: 0, out: { id: "3EB0SENT0000000000001", chat: args[1], t: "2030-01-05T14:05:00Z", ...(args[0] === "send-file" ? { media: { type: "document", mime: "application/pdf", name: "report.pdf", size: 17 } } : {}) } });
 }
-if (args[0] === "mark-read") say({ code: 0, out: { chat: args[1].split("/")[0], marked: 1, already_marked: 0, read_receipts: "on-read" } });
+if (args[0] === "mark-read") {
+  // mark-fail holds a count: that many answers report failed 1 (HTTP 200, CLI exit 1), then they mark
+  const left = existsSync(dir + "/mark-fail") ? Number(readFileSync(dir + "/mark-fail", "utf8")) : 0;
+  if (left > 0) { writeFileSync(dir + "/mark-fail", String(left - 1)); say({ code: 1, out: { chat: args[1].split("/")[0], marked: 0, already_marked: 0, failed: 1, reason: "not connected", read_receipts: "on-read" } }); }
+  say({ code: 0, out: { chat: args[1].split("/")[0], marked: 1, already_marked: 0, failed: 0, read_receipts: "on-read" } });
+}
 const key = args[0] === "read" ? args.slice(0, 2).join(" ") : args.join(" ");
 if (fx[key]) say(fx[key]);
-if (args[0] === "message" && args[1] === "view") say({ code: 1, out: { error: { code: "not_found", message: "No such message." } } });
-say({ code: 1, out: { error: { code: "bad_request", message: "no canned answer for " + key } } });
+if (args[0] === "message" && args[1] === "view") say({ code: 1, out: { error: { code: "NOT_FOUND", message: "No such message." } } });
+say({ code: 2, out: { error: { code: "VALIDATION_ERROR", message: "no canned answer for " + key } } });
 `;
 
 /** A throwaway bot repo with the stand-ins; whatsapp settings merged over SETTINGS. */
@@ -278,7 +293,7 @@ describe("heartbeat.d/25-whatsapp-events", () => {
     b.setEvents([msg(1, C_DM, "3EB0AAAA0000000001", OPER, "hi")]);
     expect(b.reader().code).toBe(0);
     expect(b.cursor()).toBe("1");
-    writeFileSync(join(b.dir, "events-error.json"), JSON.stringify({ error: { code: "daemon_not_running", message: "The daemon is not running." } }));
+    writeFileSync(join(b.dir, "events-error.json"), JSON.stringify({ error: { code: "DAEMON_NOT_RUNNING", message: "The daemon is not running." } }));
     b.setEvents([msg(1, C_DM, "3EB0AAAA0000000001", OPER, "hi"), msg(2, C_DM, "3EB0AAAA0000000002", OPER, "again")]);
     const r = b.reader();
     expect(r.code).toBe(1);
@@ -433,16 +448,22 @@ describe("classify: the destination from WhatsApp's participant list", () => {
 // ----------------------------------------------------------------------------------- post
 
 describe("opsbot-whatsapp post", () => {
-  const sends = (b: ReturnType<typeof bot>) => b.calls().filter((c) => c.argv[0] === "send" || c.argv[0] === "send-file");
+  /** The send calls, each --id value checked (32 uppercase hex) and written as "ID". */
+  const sends = (b: ReturnType<typeof bot>) => b.calls().filter((c) => c.argv[0] === "send" || c.argv[0] === "send-file").map((c) => {
+    const i = c.argv.indexOf("--id");
+    expect(c.argv[i + 1]).toMatch(/^[0-9A-F]{32}$/);
+    return { ...c, argv: c.argv.map((a, j) => (j === i + 1 ? "ID" : a)) };
+  });
 
   test("exit 0: posted through whatsapp-axi send, the text on stdin, the reply as a ref, one decision line", () => {
     const b = bot();
     const r = b.run(["post", G_INT, "--reply", "3EB0AAAA0000000001", `on it ${MARKER}`]);
     expect(r.code).toBe(0);
-    expect(r.json).toEqual({ posted: true, chat: G_INT, class: "trusted", why: "all 2 other participants are operators, trusted or peers", id: "3EB0SENT0000000000001", screen: "skipped" });
-    expect(sends(b)).toEqual([{ argv: ["send", G_INT, "-", "--reply", `${G_INT}/3EB0AAAA0000000001`, "--account", ACCOUNT, "--json-out"], stdin: `on it ${MARKER}` }]);
+    const sendId = b.calls().find((c) => c.argv[0] === "send")!.argv[6];
+    expect(r.json).toEqual({ posted: true, chat: G_INT, class: "trusted", why: "all 2 other participants are operators, trusted or peers", id: "3EB0SENT0000000000001", send_id: sendId, screen: "skipped" });
+    expect(sends(b)).toEqual([{ argv: ["send", G_INT, "-", "--reply", `${G_INT}/3EB0AAAA0000000001`, "--id", "ID", "--account", ACCOUNT, "--json-out"], stdin: `on it ${MARKER}` }]);
     const [line] = b.log();
-    expect(Object.keys(line).sort()).toEqual(["at", "chat", "class", "draft_sha256", "id", "posted", "reply_to", "screen", "why"]);
+    expect(Object.keys(line).sort()).toEqual(["at", "chat", "class", "draft_sha256", "id", "posted", "reply_to", "screen", "send_id", "why"]);
     expect(line).toMatchObject({ chat: G_INT, reply_to: "3EB0AAAA0000000001", posted: true, id: "3EB0SENT0000000000001" });
     expect(readFileSync(join(b.root, "logs/whatsapp-posts.jsonl"), "utf8")).not.toContain(MARKER);
     expect(readFileSync(join(b.dir, "cache", "whatsapp-classes.json"), "utf8")).not.toContain(MARKER);
@@ -468,16 +489,63 @@ describe("opsbot-whatsapp post", () => {
 
   test("exit 1: whatsapp-axi refusing the send passes its error code through", () => {
     const b = bot();
-    for (const code of ["first_contact", "rate_limited", "duplicate_text", "not_connected"]) {
-      writeFileSync(join(b.dir, "send-error.json"), JSON.stringify({ error: { code, message: `stand-in ${code}`, ...(code === "rate_limited" ? { retry_after_seconds: 40 } : {}) } }));
+    for (const code of ["FIRST_CONTACT", "RATE_LIMITED", "DUPLICATE_TEXT", "NOT_CONNECTED", "UPSTREAM_ERROR", "INTERNAL_ERROR"]) {
+      writeFileSync(join(b.dir, "send-error.json"), JSON.stringify({ error: { code, message: `stand-in ${code}`, ...(code === "RATE_LIMITED" ? { retry_after_seconds: 40 } : {}) } }));
       const r = b.run(["post", DM_OPER, "hello"]);
       expect(r.code).toBe(1);
       expect(r.json).toMatchObject({ posted: false, code, error: `whatsapp-axi send: stand-in ${code}` });
-      if (code === "rate_limited") expect(r.json.retry_after_seconds).toBe(40);
+      if (code === "RATE_LIMITED") expect(r.json.retry_after_seconds).toBe(40);
       expect(b.log().pop()).toMatchObject({ posted: false, code });
     }
     // never sends with --first-contact
     expect(sends(b).every((c) => !c.argv.includes("--first-contact"))).toBe(true);
+  });
+
+  describe("the idempotent send", () => {
+    test("each attempt gets its own 32-hex send id, passed as --id and logged as send_id", () => {
+      const b = bot();
+      b.run(["post", DM_OPER, "one"]);
+      b.run(["post", DM_OPER, "two"]);
+      const ids = b.calls().filter((c) => c.argv[0] === "send").map((c) => c.argv[c.argv.indexOf("--id") + 1]);
+      expect(ids).toHaveLength(2);
+      for (const id of ids) expect(id).toMatch(/^[0-9A-F]{32}$/);
+      expect(ids[0]).not.toBe(ids[1]);
+      expect(b.log().map((l) => l.send_id)).toEqual(ids);
+    });
+
+    test("OUTCOME_UNKNOWN: posted \"unknown\", exit 1, the error names the id, and the exact --retry-id command", () => {
+      const b = bot();
+      writeFileSync(join(b.dir, "send-error.json"), JSON.stringify({ error: { code: "OUTCOME_UNKNOWN", message: "The send timed out; it may have gone out.", id: "FFFF0000FFFF0000" } }));
+      const r = b.run(["post", G_INT, "--reply", "3EB0AAAA0000000001", `it's ${MARKER}`]);
+      expect(r.code).toBe(1);
+      const id = b.calls().find((c) => c.argv[0] === "send")!.argv.at(-4)!;
+      expect(id).toMatch(/^[0-9A-F]{32}$/);
+      expect(r.json).toMatchObject({ posted: "unknown", code: "OUTCOME_UNKNOWN", send_id: id });
+      expect(r.json.error).toContain(id);
+      expect(r.json.retry).toBe(`opsbot-whatsapp post ${G_INT} --reply 3EB0AAAA0000000001 --retry-id ${id} 'it'\\''s ${MARKER}'`);
+      const line = b.log().pop();
+      expect(line).toMatchObject({ posted: "unknown", code: "OUTCOME_UNKNOWN", send_id: id });
+      expect(readFileSync(join(b.root, "logs/whatsapp-posts.jsonl"), "utf8")).not.toContain(MARKER);
+      // from stdin, the retry says - and to send the same text again
+      const s = b.run(["post", DM_OPER, "-"], { input: "x" });
+      expect(s.json.retry).toMatch(new RegExp(`^opsbot-whatsapp post ${DM_OPER.replace(/[.@]/g, "\\$&")} --retry-id [0-9A-F]{32} -$`));
+      expect(s.json.next).toContain("same text on stdin");
+    });
+
+    test("--retry-id passes that id through; already_sent answers posted true, replayed true, the warning kept", () => {
+      const b = bot();
+      writeFileSync(join(b.dir, "send-answer.json"), JSON.stringify({ id: "3EB0SENT0000000000001", chat: DM_OPER, t: "2030-01-05T14:05:00Z", already_sent: true, warning: "already sent at 2030-01-05T14:05:00Z; nothing sent now" }));
+      const r = b.run(["post", DM_OPER, "--retry-id", "ABCDEF0123456789ABCDEF0123456789", "hello"]);
+      expect(r.code).toBe(0);
+      expect(r.json).toMatchObject({ posted: true, replayed: true, id: "3EB0SENT0000000000001", send_id: "ABCDEF0123456789ABCDEF0123456789", warning: "already sent at 2030-01-05T14:05:00Z; nothing sent now" });
+      const call = b.calls().find((c) => c.argv[0] === "send")!;
+      expect(call.argv.slice(call.argv.indexOf("--id"), call.argv.indexOf("--id") + 2)).toEqual(["--id", "ABCDEF0123456789ABCDEF0123456789"]);
+      expect(b.log().pop()).toMatchObject({ posted: true, replayed: true, retry: true, send_id: "ABCDEF0123456789ABCDEF0123456789" });
+      // a bad id is usage, nothing sent
+      expect(b.run(["post", DM_OPER, "--retry-id", "abc123", "x"]).code).toBe(2);
+      expect(b.run(["post", DM_OPER, "--retry-id"]).code).toBe(2);
+      expect(b.calls().filter((c) => c.argv[0] === "send")).toHaveLength(1);
+    });
   });
 
   test("--dry-run classifies and screens, sends nothing, logs the attempt", () => {
@@ -568,12 +636,12 @@ describe("opsbot-whatsapp post", () => {
       writeFileSync(join(b.root, "report.pdf"), "%PDF-1.4 stand-in");
       const r = b.run(["post", G_INT, "--file", "report.pdf", "the report"]);
       expect(r.code).toBe(0);
-      expect(sends(b)[0]?.argv).toEqual(["send-file", G_INT, join(b.root, "report.pdf"), "--caption", "the report", "--account", ACCOUNT, "--json-out"]);
+      expect(sends(b)[0]?.argv).toEqual(["send-file", G_INT, join(b.root, "report.pdf"), "--caption", "the report", "--id", "ID", "--account", ACCOUNT, "--json-out"]);
       expect(b.screens()).toEqual([{ draft: "the report", destination_class: "trusted", policy: "- no personal information" }]);
       expect(b.log()[0].file).toEqual({ name: "report.pdf", size: 17 });
       // no caption: nothing to screen, and stdin is not read
       expect(b.run(["post", G_INT, "--file", "report.pdf"]).code).toBe(0);
-      expect(sends(b)[1]?.argv).toEqual(["send-file", G_INT, join(b.root, "report.pdf"), "--account", ACCOUNT, "--json-out"]);
+      expect(sends(b)[1]?.argv).toEqual(["send-file", G_INT, join(b.root, "report.pdf"), "--id", "ID", "--account", ACCOUNT, "--json-out"]);
       expect(b.screens()).toHaveLength(1);
     });
 
@@ -647,11 +715,11 @@ describe("opsbot-whatsapp post", () => {
     });
 
     test("refuses when the chat cannot be read; a chat no peer is listed for is not guarded", () => {
-      const b = bot(PEERS, { fixtures: { [`read ${G_PEER}`]: err("not_found", "No such chat.") } });
+      const b = bot(PEERS, { fixtures: { [`read ${G_PEER}`]: err("NOT_FOUND", "No such chat.") } });
       const r = b.run(["post", G_PEER, "x"]);
       expect(r.code).toBe(6);
       expect(r.json.peer_guard).toBe("unreadable");
-      expect(r.json.error).toContain("not_found");
+      expect(r.json.error).toContain("NOT_FOUND");
       expect(b.run(["post", G_INT, "x"]).code).toBe(0);
       expect(b.calls().filter((c) => c.argv[0] === "read")).toHaveLength(1);
     });
@@ -710,6 +778,35 @@ describe("monitor.d/20-whatsapp-waker", () => {
     expect(w.out()).toContain("dropped by the reader, not marked");
     expect(w.out()).not.toContain(MARKER);
     expect(w.err()).not.toContain(MARKER);
+  });
+
+  test("mark-read: read only when failed is 0; else `mark failed: <reason>`, retried at the next seen-check, at most three times", async () => {
+    const b = bot({ wake_grace_seconds: 0 });
+    b.setEvents([msg(1, C_DM, "3EB0AAAA0000000001", OPER, `x ${MARKER}`)]);
+    writeFileSync(join(b.dir, "mark-fail"), "2"); // fails twice, then marks
+    const w = startWaker(b);
+    await sleep(300);
+    w.wakeLine(1);
+    w.seen(`whatsapp:${DM_OPER}:3EB0AAAA0000000001:msg`);
+    await sleep(1000);
+    expect(w.marks()).toHaveLength(3);
+    expect(w.out().match(/mark failed: not connected/g)).toHaveLength(2);
+    expect(w.out()).toContain(`read: whatsapp:${DM_OPER}:3EB0AAAA0000000001:msg`);
+    await w.stop();
+
+    const c = bot({ wake_grace_seconds: 0 });
+    c.setEvents([msg(1, C_DM, "3EB0AAAA0000000001", OPER, "x")]);
+    writeFileSync(join(c.dir, "mark-fail"), "99"); // never marks
+    const v = startWaker(c);
+    await sleep(300);
+    v.wakeLine(1);
+    v.seen(`whatsapp:${DM_OPER}:3EB0AAAA0000000001:msg`);
+    await sleep(1200);
+    expect(v.marks()).toHaveLength(4); // the first try and three retries
+    expect(v.out()).not.toMatch(/^\S+ read:/m);
+    expect(v.out()).toContain("gave up marking after 3 retries");
+    expect(v.out()).not.toContain(MARKER);
+    await v.stop();
   });
 
   test("keeps nudging while busy, until the key is seen; own messages and mark_read off mark nothing", async () => {
@@ -929,10 +1026,10 @@ describe("escalate.d/20-whatsapp-dm", () => {
 
   test("exit 1 with one line when it cannot send, or when a setting or the message is missing", () => {
     const b = bot();
-    writeFileSync(join(b.dir, "send-error.json"), JSON.stringify({ error: { code: "not_connected", message: "The account is not connected to WhatsApp." } }));
+    writeFileSync(join(b.dir, "send-error.json"), JSON.stringify({ error: { code: "NOT_CONNECTED", message: "The account is not connected to WhatsApp." } }));
     const r = sink(b, "x");
     expect(r.status).toBe(1);
-    expect(r.stderr.trim()).toBe("whatsapp-axi send failed: not_connected: The account is not connected to WhatsApp.");
+    expect(r.stderr.trim()).toBe("whatsapp-axi send failed: NOT_CONNECTED: The account is not connected to WhatsApp.");
     expect(sink(bot({ escalate_chat: "" }), "x").status).toBe(1);
     expect(sink(bot({ account: "" }), "x").status).toBe(1);
     const e = sink(bot(), "   ");
@@ -1020,8 +1117,8 @@ describe("scripts/opsbot-whatsapp install and status", () => {
     const b = bot({ operators: [OPER.pn, "+15550100005"], escalate_chat: DM_EXT, wake_grace_seconds: -5, peers: [{ name: "otherbot", user: PEER.pn, chats: ["120363000000000077@g.us"] }] }, {
       escalate: false, noWakeFiles: true,
       fixtures: {
-        [`daemon status ${ACCOUNT}`]: ok({ service: { installed: true, active: "active", sub: "running" }, daemon: { state: "logged_out", reason: "removed on the phone" } }),
-        doctor: { code: 1, out: { doctor: [{ account: ACCOUNT, check: "state", result: "fail", detail: "logged_out since 2030-01-05" }], result: "1 failed, 0 warnings", help: [`${ACCOUNT} state: Run \`whatsapp-axi auth link --phone <number> --account ${ACCOUNT}\``] } },
+        [`daemon status ${ACCOUNT}`]: ok({ account: ACCOUNT, service: { unit: `whatsapp-axi@${ACCOUNT}.service`, installed: true, enabled: "enabled", active: "active", sub: "running" }, daemon: { state: "logged_out", reason: "removed on the phone", version: "0.2.0", since: "2030-01-05T14:00:00Z" } }),
+        doctor: { code: 1, out: doctorFile([["state", "fail", "logged_out since 2030-01-05"], ["phone", "skipped", "not linked"]]) },
         "settings show": ok({ settings: { scope: "full", dm_from: "anyone", chats: {}, operators: [OPER.pn, "100000000000008@lid"], wake_file: "/elsewhere/wake.jsonl", read_receipts: "off" } }),
       },
     });
@@ -1030,7 +1127,11 @@ describe("scripts/opsbot-whatsapp install and status", () => {
     const row = (piece: string) => r.out.split("\n").find((l) => l.split(/\s+/)[1] === piece) || "";
     const fixOf = (piece: string) => { const ls = r.out.split("\n"); const i = ls.findIndex((l) => l.split(/\s+/)[1] === piece); return ls[i + 1] || ""; };
     expect(row("wake.files")).toMatch(/^missing/);
-    expect(row("daemon")).toMatch(/^differs .*logged_out \(removed on the phone\), not connected; doctor: state: logged_out since 2030-01-05; Run `whatsapp-axi auth link/);
+    expect(row("daemon")).toMatch(/^differs .*logged_out \(removed on the phone\), not connected; doctor: state: logged_out since 2030-01-05$/);
+    expect(row("doctor:state")).toMatch(/^differs\s+doctor:state\s+logged_out since 2030-01-05$/);
+    expect(fixOf("doctor:state")).toContain(`fix: run \`whatsapp-axi doctor --account ${ACCOUNT}\``);
+    expect(r.out).not.toMatch(/doctor:(phone|hooks)/); // skipped rows and the (all) hooks row are not this bot's
+    expect(fixOf("operators")).toContain(`whatsapp-axi operators add +15550100005 --confirm --account ${ACCOUNT}`);
     expect(row("wake_file")).toMatch(/^differs .*\/elsewhere\/wake.jsonl/);
     expect(fixOf("wake_file")).toContain(`whatsapp-axi settings set wake_file ${b.wake} --account ${ACCOUNT}`);
     expect(row("operators")).toContain("not the account's: +15550100005");
@@ -1049,9 +1150,12 @@ describe("scripts/opsbot-whatsapp install and status", () => {
     writeFileSync(join(old.dir, "version"), "0.1.0");
     const o = old.run(["status"]);
     expect(o.code).toBe(1);
-    expect(o.out).toMatch(/missing\s+whatsapp-axi\s+0\.1\.0 wrote no --json-out file for doctor \(exit 2 \(usage\)\): too old/);
+    expect(o.out).toMatch(/missing\s+whatsapp-axi\s+0\.1\.0 wrote no --json-out file for doctor \(exit 2 \(usage\)\): too old for these scripts, which need a whatsapp-axi build with specs\/conventions\.md/);
+    // a build from before specs/conventions.md wrote {doctor: […], result}: no checks list is too old too
+    const prior = bot({}, { escalate: false, fixtures: { doctor: ok({ doctor: [{ account: ACCOUNT, check: "state", result: "ok", detail: "connected" }], result: "all checks passed" }) } });
+    expect(prior.run(["status"]).out).toMatch(/missing\s+whatsapp-axi\s+0\.2\.0 wrote a doctor file with no checks list: too old/);
     expect(o.out).not.toMatch(/^\S+\s+account\s/m);
-    const none = bot({ account: "otheracct" }, { escalate: false, fixtures: { doctor: { code: 1, out: { doctor: [{ account: "otheracct", check: "files", result: "fail", detail: "no such account" }], result: "1 problem" } } } });
+    const none = bot({ account: "otheracct" }, { escalate: false, fixtures: { doctor: { code: 1, out: { account: "otheracct", summary: "1 failed", checks: [{ account: "otheracct", check: "files", status: "fail", detail: "no such account" }, ...["service", "daemon", "state"].map((check) => ({ account: "otheracct", check, status: "skipped", detail: "no such account" }))] } } } });
     const n = none.run(["status"]);
     expect(n.out).toMatch(/missing\s+account\s+no account otheracct/);
     expect(n.out).toContain("whatsapp-axi account add otheracct");

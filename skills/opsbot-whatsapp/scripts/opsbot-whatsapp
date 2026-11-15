@@ -6,7 +6,7 @@
 #                                                  whatsapp-axi command to run (never writes
 #                                                  opsbot.json, never changes the account)
 #   opsbot-whatsapp status                         one row per piece: ok, missing or differs
-#   opsbot-whatsapp post <chat> [--reply <id>] [--file <path>] [--dry-run] [<text> | -]
+#   opsbot-whatsapp post <chat> [--reply <id>] [--file <path>] [--retry-id <send id>] [--dry-run] [<text> | -]
 #                                                  the only way the bot posts: classify the
 #                                                  destination, guard a peer chat, screen the
 #                                                  draft when configured, send, log the decision
@@ -34,14 +34,16 @@ commands:
   status                         check whatsapp-axi, the account, its daemon and settings, the
                                  scripts, opsbot.json and the waker's unit; exit 0 all ok,
                                  1 something to fix
-  post <chat> [--reply <id>] [--file <path>] [--dry-run] [<text> | -]
+  post <chat> [--reply <id>] [--file <path>] [--retry-id <send id>] [--dry-run] [<text> | -]
                                  the only way the bot posts. The first arguments are an item's
                                  reply column, whole; the text is the last argument, or stdin
                                  (a file's caption, with --file). Classifies the destination,
                                  runs the loop guard in a peer's chat, screens the draft when
                                  streams.whatsapp.screen names a policy for its class, sends,
                                  logs the decision. Exit 0 posted, 1 whatsapp-axi refused or
-                                 failed it, 2 bad usage or setting, 3 blocked, 4 the screen
+                                 failed it (posted "unknown" with OUTCOME_UNKNOWN: run the
+                                 printed retry, which adds --retry-id <send id> so it cannot
+                                 send twice), 2 bad usage or setting, 3 blocked, 4 the screen
                                  failed, 6 the loop guard refused it
   classify <chat>                the destination's class: operator-dm, internal, external or
                                  unknown, and why

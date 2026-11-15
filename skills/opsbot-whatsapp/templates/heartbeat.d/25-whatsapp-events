@@ -87,10 +87,10 @@ function axi(args) {
   let json;
   try { json = JSON.parse(readFileSync(file, "utf8")); } catch { json = undefined; }
   rmSync(file, { force: true });
-  if (r.error) return { error: { code: r.error.code === "ENOENT" ? "not_installed" : "spawn_failed", message: r.error.code === "ENOENT" ? "whatsapp-axi is not on PATH" : r.error.message.split("\n")[0] } };
+  if (r.error) return { error: { code: r.error.code === "ENOENT" ? "NOT_INSTALLED" : "SPAWN_FAILED", message: r.error.code === "ENOENT" ? "whatsapp-axi is not on PATH" : r.error.message.split("\n")[0] } };
   if (json && json.error && typeof json.error === "object") return { error: { code: String(json.error.code || "error"), message: String(json.error.message || "no message"), state: json.error.state } };
-  if (r.status !== 0) return { error: { code: `exit_${r.status ?? r.signal}`, message: `exit ${r.status ?? r.signal}` } };
-  if (json === undefined) return { error: { code: "no_json_out", message: "whatsapp-axi wrote no --json-out file" } };
+  if (r.status !== 0) return { error: { code: `EXIT_${r.status ?? r.signal}`, message: `exit ${r.status ?? r.signal}` } };
+  if (json === undefined) return { error: { code: "NO_JSON_OUT", message: "whatsapp-axi wrote no --json-out file" } };
   return { json };
 }
 
@@ -108,7 +108,7 @@ function messageOf(j) {
 }
 
 const fail = (why) => { console.error(why); process.exitCode = 1; };
-const notRunning = (e) => (e.code === "daemon_not_running" ? `the whatsapp-axi daemon for ${account} is not running (whatsapp-axi daemon start ${account})` : `whatsapp-axi events: ${e.code}: ${e.message}`);
+const notRunning = (e) => (e.code === "DAEMON_NOT_RUNNING" ? `the whatsapp-axi daemon for ${account} is not running (whatsapp-axi daemon start ${account})` : `whatsapp-axi events: ${e.code}: ${e.message}`);
 
 let cursor = null;
 try {
@@ -169,7 +169,7 @@ function isOwn(chat, id) {
   const r = axi(["message", "view", ref]);
   let v = false;
   if (r.error) {
-    if (r.error.code !== "not_found") { lookupFailed = true; fail(`whatsapp-axi message view ${ref}: ${r.error.code}: ${r.error.message}`); }
+    if (r.error.code !== "NOT_FOUND") { lookupFailed = true; fail(`whatsapp-axi message view ${ref}: ${r.error.code}: ${r.error.message}`); }
   } else {
     try { v = messageOf(r.json).from.me === true; } catch (e) { lookupFailed = true; fail(`whatsapp-axi message view ${ref}: ${e.message}`); }
   }

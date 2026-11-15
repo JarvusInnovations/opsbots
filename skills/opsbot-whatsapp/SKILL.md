@@ -42,7 +42,7 @@ Run as the bot's user, from the bot's repo checkout. The person-facing walk-thro
 1. **The account.** `whatsapp-axi account add <account>`, `whatsapp-axi daemon install <account>`,
    then link it to the bot's phone with `whatsapp-axi auth link --phone <number> --account <account>`.
 2. **Who it answers to and what it keeps.** The operator sets these in whatsapp-axi:
-   `whatsapp-axi operators add <+number>`, and the scope with `whatsapp-axi scope set`. This skill
+   `whatsapp-axi operators add <+number> --confirm --account <account>`, and the scope with `whatsapp-axi scope set`. This skill
    never changes them.
 3. **The scripts.** `scripts/opsbot-whatsapp install`. It copies the three scripts and prints the
    `streams.whatsapp` block, the `wake.files` entry, and the `whatsapp-axi settings set wake_file`
@@ -78,7 +78,10 @@ account is in and discards the rest without writing it.
   session: `woken by monitor`, `nudged after <n>s` or `nudged after cycle`;
 - with `mark_read: seen`, waits for the key in `logs/intake/seen` and then runs
   `whatsapp-axi mark-read <chat>/<id>`. The core writes that file when the check reports the item
-  to the model, so the blue ticks mean the session has it.
+  to the model, so the blue ticks mean the session has it. It logs `read` only when the answer's
+  `failed` is 0 and a message was `marked` or `already_marked` (an exit 0 alone is not a mark);
+  otherwise `mark failed: <reason>`, and it tries again at the next seen-check, at most three
+  times.
 
 It marks only messages, and never one the reader would drop: the account's own, one from a sender
 `listen_to` leaves out, or a peer's outside its chats. It logs a line per wake line and one when it
@@ -139,6 +142,7 @@ The bot posts with this command and nothing else. Not `whatsapp-axi send`.
 .agents/skills/opsbot-whatsapp/scripts/opsbot-whatsapp post <reply> "<text>"
 .agents/skills/opsbot-whatsapp/scripts/opsbot-whatsapp post <chat> - < reply.txt        # text on stdin
 .agents/skills/opsbot-whatsapp/scripts/opsbot-whatsapp post <chat> --file out.pdf "the report"
+.agents/skills/opsbot-whatsapp/scripts/opsbot-whatsapp post <chat> --retry-id <send id> "<text>"   # only as an unknown outcome's `retry` says
 ```
 
 It classifies the chat, runs the loop guard in a peer's chat, screens the draft when the settings
@@ -147,12 +151,18 @@ own light formatting passes through and nothing is converted.
 
 | Exit | Means | What to do |
 | --- | --- | --- |
-| 0 | posted: `{posted: true, chat, id, class, screen}` | nothing |
-| 1 | whatsapp-axi refused or failed the send; `code` is its error code (`first_contact`, `rate_limited`, `duplicate_text`, `not_connected`, …) | say so; never retry another way |
+| 0 | posted: `{posted: true, chat, id, send_id, class, screen}`; with `replayed: true` (and maybe `warning`) a `--retry-id` found it already sent, and nothing was sent again | nothing |
+| 1 | whatsapp-axi refused or failed the send; `code` is its error code (`FIRST_CONTACT`, `RATE_LIMITED` with `retry_after_seconds`, `DUPLICATE_TEXT`, `NOT_CONNECTED`, `DAEMON_NOT_RUNNING`, `UPSTREAM_ERROR`, `INTERNAL_ERROR`, …) | say so; never retry another way |
+| 1 | `{posted: "unknown", code: "OUTCOME_UNKNOWN", send_id, error, retry, next}`: the send may have gone out | run `retry` exactly (the same post with `--retry-id <send_id>`; from stdin, the same text again): with the same id it cannot send twice. Never post it again without `--retry-id` |
 | 2 | bad usage, or a setting it cannot use | fix the call or `opsbot.json` |
 | 3 | blocked: `{screen: "block", passage, reason}`, or a file to an outside chat | rewrite without the passage, send without the file, or ask the operator |
 | 4 | the screen failed; the operator was told once | wait for it, or ask the operator; nothing was posted |
 | 6 | the loop guard: `{peer_guard: "turns" \| "hourly" \| "unreadable", error, next}` | stop answering the peer; do what `next` says |
+
+Every send carries a send id: 32 uppercase hex characters from the CSPRNG, new for each post
+attempt and passed as `whatsapp-axi send --id`, so a replay of that id sends nothing. The
+decision log line has it as `send_id`, with `retry: true` on a `--retry-id` post, `replayed: true`
+when whatsapp-axi answered `already_sent`, and `posted` `true`, `false` or `"unknown"`.
 
 There is no exit 5: the daemon holds one account, so there is no other identity to post as.
 `--dry-run` classifies, guards and screens, and sends nothing. `opsbot-whatsapp classify <chat>`
@@ -252,8 +262,8 @@ when it is settled. After two disagreements, ask the operator in the same chat w
 | Command | Does | Exit |
 | --- | --- | --- |
 | `install [--dry-run] [--force]` | copies the three scripts into `opsbot.d/`, executable; a file that differs is left unless `--force`. Prints the `streams.whatsapp` block, the `wake.files` entry and the `whatsapp-axi settings set wake_file` command. Never writes `opsbot.json` and never changes the account | 0 · 2 |
-| `status` | one row each, `ok`, `missing` or `differs`, with the fix: `streams.whatsapp`, the wake file in `wake.files`, whatsapp-axi present and new enough to write `--json-out`, the account, its daemon installed, running and connected (else the state and what `doctor` says), the account's `wake_file`, its operators against `operators`, `read_receipts` `on-read` when `mark_read` is `seen`, the account scope and each per-chat override, `escalate_chat` an operator's direct chat; with `screen`, the command and policies; with `peers`, each peer and the bot's membership of each listed group; each script against its template; the waker's unit | 0 all ok · 1 something to fix · 2 |
-| `post <chat> [--reply <id>] [--file <path>] [--dry-run] [<text> \| -]` | Posting, above | 0 · 1 · 2 · 3 · 4 · 6 |
+| `status` | one row each, `ok`, `missing` or `differs`, with the fix: `streams.whatsapp`, the wake file in `wake.files`, whatsapp-axi present and new enough (its `doctor --json-out` file has a `checks` array: a build with whatsapp-axi's `specs/conventions.md`; no release has it yet), the account, its daemon installed, running and connected (else the state and the first failing `doctor` check), one `doctor:<check>` row, `differs`, per failing doctor check for the account (skipped checks and the `(all)` hooks row ignored), fixed by running `whatsapp-axi doctor --account <account>`, the account's `wake_file`, its operators against `operators`, `read_receipts` `on-read` when `mark_read` is `seen`, the account scope and each per-chat override, `escalate_chat` an operator's direct chat; with `screen`, the command and policies; with `peers`, each peer and the bot's membership of each listed group; each script against its template; the waker's unit | 0 all ok · 1 something to fix · 2 |
+| `post <chat> [--reply <id>] [--file <path>] [--retry-id <send id>] [--dry-run] [<text> \| -]` | Posting, above | 0 · 1 · 2 · 3 · 4 · 6 |
 | `classify <chat>` | `{chat, class, why, cached}` | 0 · 2 |
 
 ## Rules

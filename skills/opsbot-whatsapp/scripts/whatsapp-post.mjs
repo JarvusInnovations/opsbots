@@ -2,7 +2,7 @@
 // The one path a bot posts to WhatsApp through, run by `opsbot-whatsapp post` and
 // `opsbot-whatsapp classify`. Node 22, no dependencies.
 //
-//   post <chat> [--reply <id>] [--file <path>] [--dry-run] [<text> | -]
+//   post <chat> [--reply <id>] [--file <path>] [--retry-id <send id>] [--dry-run] [<text> | -]
 //   classify <chat>
 //   screen-check                        (for `opsbot-whatsapp status`: one row on stdout)
 //   status-rows                         (for `opsbot-whatsapp status`: every row that asks whatsapp-axi)
@@ -12,11 +12,13 @@
 // refuse a file to an external or unknown chat unless screen.files_external is true; when
 // streams.whatsapp.screen names a policy for the class, hand the draft (a file's caption) to the
 // bot's own screen command and post only on {"verdict": "pass"}; post through `whatsapp-axi send`
-// or `send-file`; append one line to the decision log (a hash of the draft, never the draft).
+// or `send-file` with `--id <send id>` (one per attempt, or --retry-id's); append one line to the
+// decision log (a hash of the draft and the send id, never the draft).
 // Prints one JSON object.
 //
-// Exit 0 posted (or would be, with --dry-run) · 1 whatsapp-axi refused or failed the send, its
-// error code passed through · 2 bad usage or an unusable setting · 3 blocked: the screen, or a
+// Exit 0 posted (or would be, with --dry-run; `replayed: true` when --retry-id found it already
+// sent) · 1 whatsapp-axi refused or failed the send, its error code passed through; with
+// OUTCOME_UNKNOWN, `posted: "unknown"` and the exact --retry-id command · 2 bad usage or an unusable setting · 3 blocked: the screen, or a
 // file to an outside chat · 4 the screen failed; nothing posted, the operator told once per
 // outage through opsbot.d/escalate.d/ · 6 the loop guard refused it. There is no exit 5: the
 // daemon holds one account, so there is no other identity to post as.
@@ -27,7 +29,7 @@
 // whatsapp-axi's output is fixed in one place.
 // OPSBOT_WHATSAPP_AXI names another whatsapp-axi binary (a pinned copy, a test double).
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { accessSync, appendFileSync, chmodSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -36,6 +38,8 @@ const EXIT = { ok: 0, whatsapp: 1, usage: 2, blocked: 3, screenFailed: 4, peerGu
 const CHAT_RE = /^(\+\d{6,15}|\d{6,32}(-\d+)?@(g\.us|lid|s\.whatsapp\.net))$/;
 const ID_RE = /^[A-Za-z0-9]{6,64}$/;
 const UPGRADE = "npm install -g whatsapp-axi@latest";
+/** The oldest whatsapp-axi these scripts work with. No release has it yet. */
+const MIN_AXI = "a whatsapp-axi build with specs/conventions.md (UPPER_SNAKE codes, doctor checks[])";
 
 const root = process.env.OPSBOT_ROOT || process.cwd();
 const configPath = process.env.OPSBOT_CONFIG || join(root, "opsbot.json");
@@ -46,7 +50,7 @@ function emit(obj, code) {
 }
 function usage(msg) {
   console.error(`error: ${msg}`);
-  console.error("usage: opsbot-whatsapp post <chat> [--reply <id>] [--file <path>] [--dry-run] [<text> | -]");
+  console.error("usage: opsbot-whatsapp post <chat> [--reply <id>] [--file <path>] [--retry-id <send id>] [--dry-run] [<text> | -]");
   console.error("       opsbot-whatsapp classify <chat>");
   process.exit(EXIT.usage);
 }
@@ -147,14 +151,14 @@ function axi(args, { input, withAccount = true, timeout = 30000 } = {}) {
   try { json = JSON.parse(readFileSync(file, "utf8")); } catch { json = undefined; }
   rmSync(file, { force: true });
   if (r.error) {
-    const code = r.error.code === "ENOENT" ? "not_installed" : r.error.code === "ETIMEDOUT" ? "timeout" : "spawn_failed";
-    return { error: { code, message: code === "not_installed" ? "whatsapp-axi is not on PATH" : code === "timeout" ? `timed out after ${timeout / 1000} s` : r.error.message.split("\n")[0] } };
+    const code = r.error.code === "ENOENT" ? "NOT_INSTALLED" : r.error.code === "ETIMEDOUT" ? "TIMEOUT" : "SPAWN_FAILED";
+    return { error: { code, message: code === "NOT_INSTALLED" ? "whatsapp-axi is not on PATH" : code === "TIMEOUT" ? `timed out after ${timeout / 1000} s` : r.error.message.split("\n")[0] } };
   }
   if (json && typeof json === "object" && json.error && typeof json.error === "object") {
     return { error: { ...json.error, code: String(json.error.code || "error"), message: String(json.error.message || "no message") } };
   }
-  if (r.status !== 0) return { error: { code: `exit_${r.status ?? r.signal}`, message: `exit ${r.status ?? r.signal}${r.status === 2 ? " (usage)" : ""}` }, json };
-  if (json === undefined) return { error: { code: "no_json_out", message: `whatsapp-axi ${args.slice(0, 2).join(" ")} wrote no --json-out file` } };
+  if (r.status !== 0) return { error: { code: `EXIT_${r.status ?? r.signal}`, message: `exit ${r.status ?? r.signal}${r.status === 2 ? " (usage)" : ""}` }, json };
+  if (json === undefined) return { error: { code: "NO_JSON_OUT", message: `whatsapp-axi ${args.slice(0, 2).join(" ")} wrote no --json-out file` } };
   return { json };
 }
 const axiError = (cmd, e) => `whatsapp-axi ${cmd}: ${e.code}: ${e.message}`;
@@ -175,8 +179,16 @@ function messagesOf(j) {
   if (!m) throw new Error("read printed no messages list");
   return m;
 }
-/** `send` and `send-file`: {id, chat, t} (send-file adds media). */
-const sentIdOf = (j) => (j && typeof j.id === "string" ? j.id : null);
+/**
+ * `send` and `send-file`: {id, chat, t, already_sent?, warning?} (send-file adds media). `id` is
+ * the WhatsApp message id; `already_sent: true` means the --id was sent before and nothing was
+ * sent now.
+ */
+const sentOf = (j) => ({
+  id: j && typeof j.id === "string" ? j.id : null,
+  replayed: !!(j && j.already_sent === true),
+  warning: j && typeof j.warning === "string" && j.warning ? j.warning : undefined,
+});
 /** `settings show`: {settings: {scope, dm_from, chats, operators, wake_file, read_receipts, …}, effective_retain_days}. */
 function settingsOf(j) {
   const s = j && typeof j === "object" ? j.settings : undefined;
@@ -189,23 +201,31 @@ function groupsOf(j) {
   if (!Array.isArray(g)) throw new Error("groups printed no list");
   return g.filter((x) => x && typeof x.id === "string");
 }
-/** `daemon status <name>`: {service: {unit, installed, enabled, active, …}, daemon: {state, since, reason, version}, help}. */
+/**
+ * `daemon status <name>`: {account, service: {unit, installed, enabled, active, sub, since?, pid?},
+ * daemon: {state, reason?, version, since}}, or daemon: {state: "unavailable (<CODE>: msg)"}. Null
+ * values are omitted, so an absent reason is "".
+ */
 function daemonOf(j) {
   if (!j || typeof j !== "object") throw new Error("daemon status printed nothing");
   const s = j.service && typeof j.service === "object" ? j.service : {};
   const d = j.daemon && typeof j.daemon === "object" ? j.daemon : {};
   return { installed: s.installed, active: typeof s.active === "string" ? s.active : undefined, state: typeof d.state === "string" ? d.state : undefined, reason: typeof d.reason === "string" ? d.reason : "" };
 }
-/** `doctor --account <name>`: {doctor: [{account, check, result, detail}], …}. Whether the account exists. */
-const doctorHasAccount = (j) => !(j && Array.isArray(j.doctor) && j.doctor.some((r) => r && r.check === "files" && r.detail === "no such account"));
-/** `doctor --account <name>`: the first failing row, with its fix when `help` names one. */
-function doctorFirstFailure(j) {
-  const rows = j && Array.isArray(j.doctor) ? j.doctor : [];
-  const bad = rows.find((r) => r && r.result === "fail") || rows.find((r) => r && r.result === "warn");
-  if (!bad) return null;
-  const help = j && Array.isArray(j.help) ? j.help.find((h) => typeof h === "string" && h.includes(` ${bad.check}: `)) : undefined;
-  return `${bad.check}: ${bad.detail || bad.result}${help ? `; ${help.slice(help.indexOf(`${bad.check}: `) + bad.check.length + 2)}` : ""}`;
-}
+/**
+ * `doctor --account <name>`: {account?, account_lock?, summary, checks: [{account, check, status,
+ * detail}]}, status ok|fail|skipped. The rows, or null when the file has no `checks` array (a
+ * whatsapp-axi older than its specs/conventions.md, which wrote {doctor: […]}).
+ */
+const doctorChecksOf = (j) => (j && typeof j === "object" && Array.isArray(j.checks) ? j.checks.filter((r) => r && typeof r === "object" && typeof r.check === "string") : null);
+/** Whether the account exists: an unknown one is `<name>,files,fail,no such account`. */
+const doctorHasAccount = (checks) => !checks.some((r) => r.check === "files" && r.status === "fail" && r.detail === "no such account");
+/**
+ * The failing rows that concern this bot: its account's, the `-` rows (accounts, default) and a
+ * pin's. `skipped` rows are ignored, and so is the `(all)` hooks row: agent session hooks are not
+ * this bot's.
+ */
+const doctorFailures = (checks) => checks.filter((r) => r.status === "fail" && r.account !== "(all)");
 /** `--version` prints the bare version on stdout. */
 const versionOf = (out) => (String(out || "").match(/\d+\.\d+\.\d+[^\s]*/) || [])[0] || null;
 
@@ -253,7 +273,7 @@ function classify(chat) {
 function decide(chat) {
   const r = axi(["chat", "view", chat]);
   if (r.error) {
-    if (r.error.code === "not_connected") throw new Error(`the daemon is not connected${r.error.state ? ` (${r.error.state})` : ""}`);
+    if (r.error.code === "NOT_CONNECTED") throw new Error(`the daemon is not connected${r.error.state ? ` (${r.error.state})` : ""}`);
     throw new Error(axiError("chat view", r.error));
   }
   const view = chatOf(r.json);
@@ -302,8 +322,8 @@ function postsLastHour(chat) {
   const since = Date.now() - 3600000;
   let n = 0;
   for (const line of text.split("\n")) {
-    if (!line.includes('"posted":true')) continue;
-    try { const l = JSON.parse(line); if (l.chat === chat && l.posted === true && Date.parse(l.at) > since) n++; } catch { /* skip */ }
+    if (!line.includes('"posted":true') && !line.includes('"posted":"unknown"')) continue;
+    try { const l = JSON.parse(line); if (l.chat === chat && (l.posted === true || l.posted === "unknown") && Date.parse(l.at) > since) n++; } catch { /* skip */ }
   }
   return n;
 }
@@ -424,18 +444,25 @@ function screenAnswered() {
 
 // ------------------------------------------------------------------------------- posting
 
-/** Post through whatsapp-axi: {id} or {error, code, retry_after_seconds?}. The text goes on stdin, never in argv. */
-function send(chat, reply, text, file) {
+/**
+ * Post through whatsapp-axi with `--id <sendId>`, so a replay of the same id sends nothing:
+ * {id, replayed, warning?} or {error, code, retry_after_seconds?}. The text goes on stdin, never in argv.
+ */
+function send(chat, reply, text, file, sendId) {
   const ref = reply ? ["--reply", `${chat}/${reply}`] : [];
   const r = file
-    ? axi(["send-file", chat, file.path, ...(text.trim() ? ["--caption", text] : []), ...ref])
-    : axi(["send", chat, "-", ...ref], { input: text });
+    ? axi(["send-file", chat, file.path, ...(text.trim() ? ["--caption", text] : []), ...ref, "--id", sendId])
+    : axi(["send", chat, "-", ...ref, "--id", sendId], { input: text });
   if (r.error) {
     const { code, message, retry_after_seconds: retry } = r.error;
     return { error: `whatsapp-axi ${file ? "send-file" : "send"}: ${message}`, code, ...(retry ? { retry_after_seconds: retry } : {}) };
   }
-  return { id: sentIdOf(r.json) };
+  return sentOf(r.json);
 }
+/** A send id: 32 uppercase hex characters from the CSPRNG (whatsapp-axi takes 16 to 48 of 0-9A-F). */
+const newSendId = () => randomBytes(16).toString("hex").toUpperCase();
+const SEND_ID_RE = /^[0-9A-F]{16,48}$/;
+const shellQuote = (s) => (/^[\w@%+=:,./-]+$/.test(s) ? s : `'${String(s).replace(/'/g, `'\\''`)}'`);
 
 function logDecision(line) {
   const p = inRepo(wa.post_log || "logs/whatsapp-posts.jsonl");
@@ -453,12 +480,13 @@ function needAccount() {
 }
 
 function cmdPost(args) {
-  let reply, filePath, dry = false;
+  let reply, filePath, retryId, dry = false;
   const pos = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--reply") { reply = args[++i]; if (reply === undefined) usage("--reply needs a message id"); }
     else if (a === "--file") { filePath = args[++i]; if (filePath === undefined) usage("--file needs a path"); }
+    else if (a === "--retry-id") { retryId = args[++i]; if (retryId === undefined) usage("--retry-id needs the send id a post with an unknown outcome printed"); }
     else if (a === "--dry-run") dry = true;
     else if (a === "-h" || a === "--help") usage("help");
     else if (a.startsWith("--")) usage(`unknown flag for post: ${a}`);
@@ -468,6 +496,7 @@ function cmdPost(args) {
   if (!chat || !CHAT_RE.test(chat)) usage(`not a chat id: ${chat ?? "(none)"}`);
   if (reply !== undefined && !ID_RE.test(reply)) usage(`not a WhatsApp message id: ${reply}`);
   if (extra !== undefined) usage("one text only; quote it, or pass - and send it on stdin");
+  if (retryId !== undefined && !SEND_ID_RE.test(retryId)) usage(`not a send id (16 to 48 characters of 0-9A-F): ${retryId}`);
   let file;
   if (filePath !== undefined) {
     const abs = resolve(process.cwd(), filePath);
@@ -527,13 +556,28 @@ function cmdPost(args) {
     logDecision({ ...base, screen: verdict, posted: false });
     emit({ posted: false, dry_run: true, would_post: true, ...out, screen: verdict, ...(guard ? { peer: guard.peer } : {}) }, EXIT.ok);
   }
-  const sent = send(chat, reply, text, file);
+  // One send id per post attempt; --retry-id reuses an unknown outcome's, so a retry cannot send twice.
+  const sendId = retryId ?? newSendId();
+  base.send_id = sendId;
+  if (retryId) base.retry = true;
+  const sent = send(chat, reply, text, file, sendId);
+  if (sent.error && sent.code === "OUTCOME_UNKNOWN") {
+    const textArg = given === "-" || (given === undefined && !file) ? "-" : given ? shellQuote(given) : "";
+    const retry = ["opsbot-whatsapp", "post", chat, ...(reply ? ["--reply", reply] : []), ...(file ? ["--file", shellQuote(file.path)] : []), "--retry-id", sendId, ...(textArg ? [textArg] : [])].join(" ");
+    logDecision({ ...base, screen: verdict, error: sent.error, code: sent.code, posted: "unknown" });
+    emit({
+      posted: "unknown", ...out, screen: verdict, code: sent.code, send_id: sendId,
+      error: `the outcome of send ${sendId} is unknown: it may have gone out (${sent.error})`,
+      retry, next: `run retry${textArg === "-" ? " with the same text on stdin" : ""}; with the same send id it cannot send twice. Never post it again without --retry-id`,
+    }, EXIT.whatsapp);
+  }
   if (sent.error) {
     logDecision({ ...base, screen: verdict, error: sent.error, code: sent.code, posted: false });
-    emit({ posted: false, ...out, screen: verdict, error: sent.error, code: sent.code, ...(sent.retry_after_seconds ? { retry_after_seconds: sent.retry_after_seconds } : {}) }, EXIT.whatsapp);
+    emit({ posted: false, ...out, screen: verdict, error: sent.error, code: sent.code, send_id: sendId, ...(sent.retry_after_seconds ? { retry_after_seconds: sent.retry_after_seconds } : {}) }, EXIT.whatsapp);
   }
-  logDecision({ ...base, screen: verdict, posted: true, ...(sent.id ? { id: sent.id } : {}) });
-  emit({ posted: true, ...out, ...(sent.id ? { id: sent.id } : {}), screen: verdict, ...(guard ? { peer: guard.peer } : {}) }, EXIT.ok);
+  const extras = { ...(sent.id ? { id: sent.id } : {}), ...(sent.replayed ? { replayed: true } : {}), ...(sent.warning ? { warning: sent.warning } : {}) };
+  logDecision({ ...base, screen: verdict, posted: true, ...extras });
+  emit({ posted: true, ...out, ...extras, send_id: sendId, screen: verdict, ...(guard ? { peer: guard.peer } : {}) }, EXIT.ok);
 }
 
 function cmdClassify(args) {
@@ -613,7 +657,8 @@ function cmdStatusRows() {
   if (wakeFiles.some((f) => home(f) === wakeAbs)) row("ok", "wake.files", `names ${wakeCfg}`);
   else row("missing", "wake.files", `does not name ${wakeCfg}`, `add "${wakeCfg}" to wake.files in opsbot.json`);
 
-  // whatsapp-axi present, and new enough to write --json-out (doctor does, and says whether the account exists)
+  // whatsapp-axi present, and new enough: `doctor --json-out` writes a file with a `checks` array
+  // (a build with specs/conventions.md), and says whether the account exists
   const vr = spawnSync(process.env.OPSBOT_WHATSAPP_AXI || "whatsapp-axi", ["--version"], { encoding: "utf8", timeout: 10000 });
   if (vr.error) {
     row("missing", "whatsapp-axi", vr.error.code === "ENOENT" ? "not on PATH" : `could not run it: ${vr.error.message.split("\n")[0]}`, UPGRADE);
@@ -622,18 +667,22 @@ function cmdStatusRows() {
   const version = versionOf(vr.stdout) || "(no version)";
   if (!account) { row("ok", "whatsapp-axi", version); finish(rows); }
   const doc = axi(["doctor"]);
-  if (!doc.json || doc.json.error) {
-    row("missing", "whatsapp-axi", `${version} wrote no --json-out file for doctor${doc.error ? ` (${doc.error.message})` : ""}: too old for these scripts`, UPGRADE);
+  const checks = doctorChecksOf(doc.json);
+  if (!checks) {
+    const why = doc.json === undefined ? `wrote no --json-out file for doctor${doc.error ? ` (${doc.error.message})` : ""}` : "wrote a doctor file with no checks list";
+    row("missing", "whatsapp-axi", `${version} ${why}: too old for these scripts, which need ${MIN_AXI}`, UPGRADE);
     finish(rows);
   }
-  row("ok", "whatsapp-axi", `${version}, with --json-out`);
+  row("ok", "whatsapp-axi", `${version}, doctor with checks`);
 
   // the account exists
-  if (!doctorHasAccount(doc.json)) {
+  if (!doctorHasAccount(checks)) {
     row("missing", "account", `no account ${account}`, `whatsapp-axi account add ${account}`);
     finish(rows);
   }
   row("ok", "account", account);
+  const failures = doctorFailures(checks);
+  const doctorFix = `run \`whatsapp-axi doctor --account ${account}\``;
 
   // the daemon: installed, running, connected
   const d = axi(["daemon", "status", account], { withAccount: false });
@@ -641,19 +690,19 @@ function cmdStatusRows() {
   if (d.error) row("missing", "daemon", `could not read its status: ${d.error.message}`, `whatsapp-axi daemon status ${account}`);
   else {
     const ds = daemonOf(d.json);
-    const doctor = () => {
-      const f = doctorFirstFailure(doc.json);
-      return f ? `; doctor: ${f}` : `; run whatsapp-axi doctor${acctFlag}`;
-    };
+    const doctor = () => (failures.length ? `; doctor: ${failures[0].check}: ${failures[0].detail || "fail"}` : `; run whatsapp-axi doctor${acctFlag}`);
     if (ds.installed === false) row("missing", "daemon", "not installed as a service", `whatsapp-axi daemon install ${account}`);
     else if (ds.state === "connected") { running = true; row("ok", "daemon", `installed, ${ds.active || "running"}, connected`); }
-    else if (!ds.state || ds.state === "not running" || ds.active === "inactive" || ds.active === "failed") {
-      row("missing", "daemon", `not running (${ds.active || ds.state || "unknown"})${doctor()}`, `whatsapp-axi daemon start ${account}`);
+    else if (!ds.state || ds.state === "not running" || /^unavailable\b/.test(ds.state) || ds.active === "inactive" || ds.active === "failed") {
+      row("missing", "daemon", `not running (${ds.active && ds.active !== "active" ? ds.active : ds.state || "unknown"})${doctor()}`, `whatsapp-axi daemon start ${account}`);
     } else {
       running = true;
       row("differs", "daemon", `${ds.state}${ds.reason ? ` (${ds.reason})` : ""}, not connected${doctor()}`, `whatsapp-axi doctor${acctFlag}`);
     }
   }
+
+  // each failing doctor check for this account (skipped rows and the (all) hooks row ignored)
+  for (const f of failures) row("differs", `doctor:${f.check}`, `${f.account && f.account !== account ? `${f.account} ` : ""}${f.detail || "fail"}`, doctorFix);
 
   // the account's settings: wake_file, operators, read_receipts, scopes
   let s = null;
@@ -678,7 +727,7 @@ function cmdStatusRows() {
       if (missingOps.length) parts.push(`not the account's: ${missingOps.join(", ")}`);
       if (extraOps.length) parts.push(`the account's, not in the setting: ${extraOps.join(", ")}`);
       if (notNumbers.length) parts.push(`the account's, by hidden id: ${notNumbers.join(", ")}`);
-      row("differs", "operators", parts.join("; "), missingOps.length ? `whatsapp-axi operators add ${missingOps[0]}${acctFlag}   (the operator decides)` : "make streams.whatsapp.operators and whatsapp-axi operators list name the same numbers");
+      row("differs", "operators", parts.join("; "), missingOps.length ? `whatsapp-axi operators add ${missingOps[0]} --confirm${acctFlag}   (the operator decides)` : "make streams.whatsapp.operators and whatsapp-axi operators list name the same numbers");
     }
 
     if ((wa.mark_read ?? "seen") === "seen") {
