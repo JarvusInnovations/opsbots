@@ -78,6 +78,11 @@ opsbot-core infra install
 
 Fix each row that is not `ok`; each one prints its fix. Then message the bot.
 
+The bot's session normally wakes itself on the wake file. The waker gives it 20 seconds
+(`wake_grace_seconds`) to start, and only then types a prompt into the session as a backstop.
+Its log, `journalctl --user -u opsbot-<bot>-monitor-20-whatsapp-waker`, says `woken by monitor`
+or `nudged after <n>s` for each wake. Frequent nudges mean the session's own monitor is not armed.
+
 ## 5. The trusted circle
 
 By default the bot hears anyone whose message the daemon kept. To have it hear only you and the

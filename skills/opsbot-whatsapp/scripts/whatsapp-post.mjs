@@ -604,6 +604,8 @@ function cmdStatusRows() {
     if (wa.trusted !== undefined && (!Array.isArray(wa.trusted) || badTrusted.length)) row("differs", "trusted", `trusted must be a list of numbers in E.164 form${badTrusted.length ? `: ${badTrusted.join(", ")}` : ""}`, "write each trusted person as +<country code><number>");
     const mr = wa.mark_read;
     if (mr !== undefined && mr !== "seen" && mr !== "off") row("differs", "mark_read", `${JSON.stringify(mr)} is neither "seen" nor "off"`, "set streams.whatsapp.mark_read to seen or off");
+    const wg = wa.wake_grace_seconds;
+    if (wg !== undefined && !(typeof wg === "number" && Number.isInteger(wg) && wg >= 0)) row("differs", "wake_grace_seconds", `${JSON.stringify(wg)} is not a whole number of seconds, 0 or more; the waker uses 20`, "set streams.whatsapp.wake_grace_seconds to a whole number, or 0 to nudge at once");
   }
 
   // wake.files names the wake file

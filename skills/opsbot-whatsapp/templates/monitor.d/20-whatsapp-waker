@@ -6,8 +6,11 @@
 // that survives the session. For each new line it:
 //   1. resolves the line's seq to the event's key with `whatsapp-axi events --after <seq-1>
 //      --limit 1`, reading only the chat, the id and the sender's marks, never the text;
-//   2. runs `$OPSBOT_CORE nudge --now --reason whatsapp`, again every 10 s while the nudge does
-//      not report a wake, until it wakes, the key is seen, or ack_timeout_minutes (30) pass;
+//   2. waits wake_grace_seconds (20) for the session's own monitor, and stops without a nudge
+//      once the key is seen or a cycle has begun since the line (no wait while asleep); only
+//      then runs `$OPSBOT_CORE nudge --now --reason whatsapp`, again every 10 s while the nudge
+//      does not report a wake, until it wakes, the key is seen, or ack_timeout_minutes (30)
+//      pass. Lines arriving together share one pending wake;
 //   3. with mark_read "seen" (the default), waits for the key to appear in logs/intake/seen,
 //      which the core writes when the check reports the item to the model, then runs
 //      `whatsapp-axi mark-read <chat>/<id>`. So the blue ticks mean the session has the item,
@@ -19,9 +22,9 @@
 // it is missing, and exits non-zero, so the unit restarts, when the file cannot be read.
 // No model is called anywhere here; the cycle answers.
 // OPSBOT_WHATSAPP_AXI names another whatsapp-axi binary. OPSBOT_WHATSAPP_TICK_MS (1000) is the
-// file poll; the seen poll is 2 ticks and the nudge repeat 10, so tests can run it fast.
-import { execFile } from "node:child_process";
-import { chmodSync, closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, statSync } from "node:fs";
+// file poll; the seen poll is 2 ticks, the nudge repeat 10 and a grace second 1, so tests can run it fast.
+import { execFile, execFileSync } from "node:child_process";
+import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -49,6 +52,94 @@ const listenTo = wa.listen_to === "operators" || wa.listen_to === "trusted" ? wa
 
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ------------------------------------------------------------------ the wake: monitor first, nudge second
+// The same block is in both kit listeners (opsbot-slack's 10-slack-listener, opsbot-whatsapp's
+// 20-whatsapp-waker); keep them in step.
+
+/** wake_grace_seconds: a whole number 0 or more, else null (the caller uses 20 and status says differs). Pure. */
+export const graceSeconds = (v) => (v === undefined ? 20 : typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null);
+
+/** A path in the git dir (worktree-aware), as the core resolves it; <root>/.git/<name> when git cannot say. */
+function gitPath(root, name) {
+  try {
+    return execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-path", name], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || join(root, ".git", name);
+  } catch { return join(root, ".git", name); }
+}
+
+/**
+ * Whether a cycle has begun since `t` (ms): the core's cycle lock (<git dir>/opsbot-cycle.lock)
+ * holds the checkout, or the last line of logs/cycle.jsonl (every `cycle begin` writes one) is
+ * newer than `t`. Reads the log's tail only.
+ */
+export function cycleBegunSince(root, lockFile, t) {
+  if (existsSync(lockFile)) return true;
+  let fd;
+  try {
+    const file = join(root, "logs/cycle.jsonl");
+    const size = statSync(file).size;
+    const n = Math.min(size, 65536);
+    const buf = Buffer.alloc(n);
+    fd = openSync(file, "r");
+    readSync(fd, buf, 0, n, size - n);
+    const last = buf.toString("utf8").trim().split("\n").pop();
+    const at = Date.parse(JSON.parse(last).at);
+    return Number.isFinite(at) && at > t;
+  } catch { return false; } finally { if (fd !== undefined) closeSync(fd); }
+}
+
+/**
+ * One pending wake at a time. `add(key, reason)` after an event is recorded: the first event
+ * starts a wake, later ones join it. The session's own monitor gets the first chance: the wake
+ * waits graceS ticks (none while asleep), checking each tick, and stops with no nudge once every
+ * key is seen or a cycle has begun since the newest event. Else it runs `nudge` every 10 ticks
+ * while it reports busy, until it wakes, every key is seen, or ackTimeoutMs pass. One journal
+ * line says which path woke it. Events that joined after the deciding check start a new wake.
+ */
+export function makeWaker({ graceS, tick, ackTimeoutMs, nudge, isSeen, begunSince, asleep, log }) {
+  let batch = null;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const keysSeen = (evs) => evs.some((e) => e.key) && evs.every((e) => !e.key || isSeen(e.key));
+  async function run(b) {
+    const t0 = b.events[0].at;
+    const done = () => b.events.length;
+    let decided = 0;
+    try {
+      const answered = () => { decided = done(); const evs = b.events.slice(0, decided); return keysSeen(evs) || begunSince(evs[evs.length - 1].at); };
+      if (graceS > 0 && asleep()) log("asleep: nudging at once");
+      else if (graceS > 0) {
+        for (let i = 0; ; i++) {
+          if (answered()) { log("woken by monitor"); return; }
+          if (i >= graceS) break;
+          await sleep(tick);
+        }
+      }
+      const until = Date.now() + ackTimeoutMs;
+      while (Date.now() < until) {
+        decided = done();
+        const line = await nudge(b.reason);
+        if (/woke/.test(line)) { log(`nudged after ${Math.round((Date.now() - t0) / 1000)}s`); return; }
+        if (keysSeen(b.events.slice(0, decided))) { log("woken by monitor"); return; }
+        log("nudge pending:", line.slice(0, 120));
+        await sleep(10 * tick);
+      }
+      decided = done();
+      log("!", "wake timed out for", b.events.map((e) => e.key || "-").join(" "));
+    } finally {
+      const late = b.events.slice(decided);
+      batch = null;
+      if (late.length) { batch = { events: late, reason: late[0].reason }; run(batch).catch((e) => log("!", "wake:", e.message)); }
+    }
+  }
+  return {
+    add(key, reason) {
+      const ev = { key, reason, at: Date.now() };
+      if (batch) { batch.events.push(ev); return; }
+      batch = { events: [ev], reason };
+      run(batch).catch((e) => log("!", "wake:", e.message));
+    },
+  };
+}
 
 /** The reader's rule (heartbeat.d/25-whatsapp-events), kept in step: would this sender's event be an item? */
 function heard(user, chat) {
@@ -115,16 +206,15 @@ async function resolveSeq(seq) {
 
 const isSeen = (key) => { try { return readFileSync(seenFile, "utf8").split("\n").includes(key); } catch { return false; } };
 
-async function wake(seq, key) {
-  const until = Date.now() + ackTimeoutMs;
-  while (Date.now() < until) {
-    const r = await run(core, ["nudge", "--now", "--reason", "whatsapp"]);
-    if (/woke/.test(r.out.split("\n")[0] || "")) return;
-    if (key && isSeen(key)) return;
-    await sleep(10 * tick);
-  }
-  log("!", "wake timed out for seq", seq);
-}
+const graceS = graceSeconds(wa.wake_grace_seconds) ?? 20;
+const lockFile = gitPath(root, "opsbot-cycle.lock");
+const sleepFile = gitPath(root, "opsbot-sleep");
+const waker = makeWaker({
+  graceS, tick, ackTimeoutMs, isSeen, log,
+  nudge: async (reason) => (await run(core, ["nudge", "--now", "--reason", reason])).out.split("\n")[0] || "",
+  begunSince: (t) => cycleBegunSince(root, lockFile, t),
+  asleep: () => existsSync(sleepFile),
+});
 
 async function markWhenSeen(seq, key, ref) {
   const until = Date.now() + ackTimeoutMs;
@@ -147,9 +237,8 @@ async function handle(line) {
   if (w.account && account && w.account !== account) { log("!", "wake line for another account, seq", w.seq); return; }
   const r = await resolveSeq(w.seq);
   log("wake seq", w.seq, w.kind || "-", r.key || "-", r.why);
-  const jobs = [wake(w.seq, r.key)];
-  if (r.ref) jobs.push(markWhenSeen(w.seq, r.key, r.ref));
-  await Promise.all(jobs);
+  waker.add(r.key, "whatsapp");
+  if (r.ref) await markWhenSeen(w.seq, r.key, r.ref);
 }
 
 function main() {

@@ -683,7 +683,7 @@ describe("monitor.d/20-whatsapp-waker", () => {
   }
 
   test("nudges per wake line, marks read only after the key is seen, never for a dropped event, logs no text", async () => {
-    const b = bot({ listen_to: "operators" });
+    const b = bot({ listen_to: "operators", wake_grace_seconds: 0 });
     mkdirSync(join(b.dir, "cache"), { recursive: true });
     writeFileSync(b.wake, JSON.stringify({ account: ACCOUNT, seq: 99, kind: "message" }) + "\n"); // before start: not replayed
     b.setEvents([
@@ -695,7 +695,9 @@ describe("monitor.d/20-whatsapp-waker", () => {
     await sleep(300);
     w.wakeLine(1); w.wakeLine(2); w.wakeLine(3, "reaction");
     await sleep(800);
-    expect(w.nudges()).toEqual(["nudge --now --reason whatsapp", "nudge --now --reason whatsapp", "nudge --now --reason whatsapp"]);
+    // one pending wake at a time: lines that join a wake in flight do not nudge again
+    expect(w.nudges().length).toBeGreaterThanOrEqual(1);
+    expect(new Set(w.nudges())).toEqual(new Set(["nudge --now --reason whatsapp"]));
     expect(w.marks()).toEqual([]); // nothing seen yet
     const resolves = b.calls().filter((c) => c.argv[0] === "events").map((c) => c.argv.slice(0, 5)).sort((x, y) => Number(x[2]) - Number(y[2]));
     expect(resolves).toEqual([["events", "--after", "0", "--limit", "1"], ["events", "--after", "1", "--limit", "1"], ["events", "--after", "2", "--limit", "1"]]);
@@ -711,7 +713,7 @@ describe("monitor.d/20-whatsapp-waker", () => {
   });
 
   test("keeps nudging while busy, until the key is seen; own messages and mark_read off mark nothing", async () => {
-    const b = bot({ mark_read: "off" });
+    const b = bot({ mark_read: "off", wake_grace_seconds: 0 });
     b.setEvents([msg(1, C_DM, "3EB0AAAA0000000001", OPER, "x")]);
     const w = startWaker(b, { woke: false });
     await sleep(300);
@@ -726,7 +728,7 @@ describe("monitor.d/20-whatsapp-waker", () => {
     expect(w.out()).toContain("mark_read off");
     await w.stop();
 
-    const own = bot();
+    const own = bot({ wake_grace_seconds: 0 });
     own.setEvents([msg(1, C_DM, "3EB0AAAA0000000001", BOT, "mine")]);
     const o = startWaker(own);
     await sleep(300);
@@ -736,6 +738,102 @@ describe("monitor.d/20-whatsapp-waker", () => {
     expect(o.marks()).toEqual([]);
     expect(o.out()).toContain("own message, not marked");
     await o.stop();
+  });
+
+  // A 50 ms tick, so wake_grace_seconds 10 is half a second here.
+  const KEY1 = `whatsapp:${DM_OPER}:3EB0AAAA0000000001:msg`;
+  const one = (whatsapp: Record<string, unknown>) => { const b = bot(whatsapp); b.setEvents([msg(1, C_DM, "3EB0AAAA0000000001", OPER, "x"), msg(2, C_DM, "3EB0AAAA0000000002", OPER, "y"), msg(3, C_DM, "3EB0AAAA0000000003", OPER, "z")]); return b; };
+  /** Wait until the waker has opened the wake file (its start line), then a beat. */
+  const ready = async (w: { out: () => string }) => { for (let i = 0; i < 200 && !w.out().includes("waking for"); i++) await sleep(25); await sleep(100); };
+  const gitFile = (b: ReturnType<typeof bot>, name: string) => writeFileSync(join(b.root, ".git", name), "{}");
+
+  test("key seen during the grace: no nudge, still marked read, one line says the monitor woke it", async () => {
+    const b = one({ wake_grace_seconds: 10 });
+    const w = startWaker(b);
+    await ready(w);
+    w.wakeLine(1);
+    await sleep(150);
+    w.seen(KEY1);
+    await sleep(900);
+    expect(w.nudges()).toEqual([]);
+    expect(w.marks()).toEqual([`${DM_OPER}/3EB0AAAA0000000001`]);
+    expect(w.out().match(/woken by monitor/g)).toHaveLength(1);
+    await w.stop();
+  });
+
+  test("a cycle begun during the grace (the lock, or a newer cycle-log line): no nudge", async () => {
+    const b = one({ wake_grace_seconds: 10 });
+    const w = startWaker(b);
+    await ready(w);
+    w.wakeLine(1);
+    await sleep(150);
+    gitFile(b, "opsbot-cycle.lock");
+    await sleep(900);
+    expect(w.nudges()).toEqual([]);
+    await w.stop();
+
+    const c = one({ wake_grace_seconds: 10 });
+    const v = startWaker(c);
+    await ready(v);
+    v.wakeLine(1);
+    await sleep(150);
+    mkdirSync(join(c.root, "logs"), { recursive: true });
+    writeFileSync(join(c.root, "logs/cycle.jsonl"), JSON.stringify({ at: new Date(Date.now() + 60000).toISOString().slice(0, 19) + "Z", outcome: "new" }) + "\n");
+    await sleep(900);
+    expect(v.nudges()).toEqual([]);
+    expect(v.out()).toContain("woken by monitor");
+    await v.stop();
+  });
+
+  test("the grace expires with neither: the nudge loop runs as before", async () => {
+    const b = one({ wake_grace_seconds: 4 });
+    const w = startWaker(b, { woke: false });
+    await ready(w);
+    w.wakeLine(1);
+    await sleep(150);
+    expect(w.nudges()).toEqual([]); // still in the grace
+    await sleep(1200); // then a nudge every 10 ticks while busy
+    expect(w.nudges().length).toBeGreaterThanOrEqual(2);
+    w.seen(KEY1);
+    await sleep(800);
+    const n = w.nudges().length;
+    await sleep(800);
+    expect(w.nudges().length).toBe(n);
+    await w.stop();
+  });
+
+  test("asleep: nudges at once, however long the grace", async () => {
+    const b = one({ wake_grace_seconds: 600 });
+    gitFile(b, "opsbot-sleep");
+    const w = startWaker(b);
+    await ready(w);
+    w.wakeLine(1);
+    await sleep(500);
+    expect(w.nudges()).toEqual(["nudge --now --reason whatsapp"]);
+    expect(w.out()).toContain("asleep: nudging at once");
+    expect(w.out()).toMatch(/nudged after \d+s/);
+    await w.stop();
+  });
+
+  test("wake_grace_seconds 0 nudges at once", async () => {
+    const b = one({ wake_grace_seconds: 0 });
+    const w = startWaker(b);
+    await ready(w);
+    w.wakeLine(1);
+    await sleep(400);
+    expect(w.nudges()).toHaveLength(1);
+    await w.stop();
+  });
+
+  test("a burst of three wake lines: one pending wake, at most one nudge", async () => {
+    const b = one({ wake_grace_seconds: 10 });
+    const w = startWaker(b);
+    await ready(w);
+    w.wakeLine(1); w.wakeLine(2); w.wakeLine(3);
+    await sleep(1500);
+    expect(w.nudges()).toHaveLength(1);
+    expect(w.out().match(/nudged after/g)).toHaveLength(1);
+    await w.stop();
   });
 
   test("exits non-zero when the wake file cannot be read", async () => {
@@ -860,7 +958,7 @@ describe("scripts/opsbot-whatsapp install and status", () => {
   });
 
   test("status: each problem is a row with its fix", () => {
-    const b = bot({ operators: [OPER.pn, "+15550100005"], escalate_chat: DM_EXT, peers: [{ name: "otherbot", user: PEER.pn, chats: ["120363000000000077@g.us"] }] }, {
+    const b = bot({ operators: [OPER.pn, "+15550100005"], escalate_chat: DM_EXT, wake_grace_seconds: -5, peers: [{ name: "otherbot", user: PEER.pn, chats: ["120363000000000077@g.us"] }] }, {
       escalate: false, noWakeFiles: true,
       fixtures: {
         [`daemon status ${ACCOUNT}`]: ok({ service: { installed: true, active: "active", sub: "running" }, daemon: { state: "logged_out", reason: "removed on the phone" } }),
@@ -884,6 +982,7 @@ describe("scripts/opsbot-whatsapp install and status", () => {
     expect(row("peer-chats")).toMatch(/^differs .*not a member of 120363000000000077@g.us/);
     for (const p of PIECES) expect(row(p)).toMatch(/^missing/);
     expect(row("waker")).toMatch(/^missing/);
+    expect(row("wake_grace_seconds")).toMatch(/^differs\s+wake_grace_seconds\s+-5 is not a whole number/);
   });
 
   test("status: whatsapp-axi missing, too old, or the account absent stops the rows that need it", () => {

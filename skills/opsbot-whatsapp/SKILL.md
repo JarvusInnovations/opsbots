@@ -66,8 +66,15 @@ account is in and discards the rest without writing it.
 
 - resolves the `seq` to the item's key with `whatsapp-axi events --after <seq-1> --limit 1`,
   reading only the chat, the id and the sender's marks;
-- runs `$OPSBOT_CORE nudge --now --reason whatsapp`, and again every 10 seconds until the nudge
-  reports a wake, the key is in `logs/intake/seen`, or `ack_timeout_minutes` (30) pass;
+- gives the session's own monitor the first chance: waits `wake_grace_seconds` (20), checking
+  each second, and stops without nudging once the key is in `logs/intake/seen` or a cycle has
+  begun since the line (the cycle lock exists, or `logs/cycle.jsonl` has a newer line). While the
+  bot is asleep (`.git/opsbot-sleep`) it skips the wait. Lines that arrive together share one
+  pending wake, so a burst is at most one nudge;
+- only when the grace runs out, runs `$OPSBOT_CORE nudge --now --reason whatsapp`, and again
+  every 10 seconds until the nudge reports a wake, the key is in `logs/intake/seen`, or
+  `ack_timeout_minutes` (30) pass. One journal line says which path woke the session:
+  `woken by monitor` or `nudged after <n>s`;
 - with `mark_read: seen`, waits for the key in `logs/intake/seen` and then runs
   `whatsapp-axi mark-read <chat>/<id>`. The core writes that file when the check reports the item
   to the model, so the blue ticks mean the session has it.
@@ -235,6 +242,7 @@ when it is settled. After two disagreements, ask the operator in the same chat w
 | `post_log` | the decision log, a repo path | `logs/whatsapp-posts.jsonl` |
 | `lookback` | how many events before the cursor the reader re-reads | `200` |
 | `ack_timeout_minutes` | how long the waker keeps nudging and waiting for the seen key | `30` |
+| `wake_grace_seconds` | how long the waker waits for the session's own monitor before it nudges; `0` nudges at once (`status` says `differs` for anything but a whole number 0 or more) | `20` |
 
 `OPSBOT_WHATSAPP_AXI` in the environment names another whatsapp-axi binary for every piece.
 

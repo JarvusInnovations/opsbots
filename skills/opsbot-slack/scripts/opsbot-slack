@@ -116,7 +116,7 @@ Merge into opsbot.json yourself (this command never writes it), then commit:
   },
   "wake": { "files": ["~/.cache/$name/slack-events.jsonl"] }
 
-Optional keys under streams.slack: receipt_emoji, ack_emoji, ack_timeout_minutes,
+Optional keys under streams.slack: receipt_emoji, ack_emoji, ack_timeout_minutes, wake_grace_seconds,
 lookback_minutes, bot_name, team, sender_lookup, operators, screen, listen_to, intercept,
 intercept_emoji, intercept_failed_emoji, files, peers, peer_receipt_emoji, peer_turns,
 peer_posts_per_hour (see the skill's SKILL.md).
