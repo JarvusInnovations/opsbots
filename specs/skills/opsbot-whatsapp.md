@@ -60,6 +60,7 @@ In the repo:
 | `peer_turns`, `peer_posts_per_hour` | the loop guard's limits, as in opsbot-slack | `6`, `20` |
 | `screen` | the screen, same keys and contract as opsbot-slack | unset: nothing is screened |
 | `post_log` | the post command's decision log | `logs/whatsapp-posts.jsonl` |
+| `wake_grace_seconds` | how long the waker waits for the session's own monitor before it nudges; `0` nudges at once | `20` |
 | `lookback` | how many events before the cursor the reader re-reads | `200` |
 
 `OPSBOT_WHATSAPP_AXI` in the environment names another whatsapp-axi binary for every piece.
@@ -73,7 +74,9 @@ messages; in a `full` group, everything; direct messages from operators, or from
 the operator set that. The README states this, and that the daemon receives every message of a
 group it is in and discards the rest unwritten.
 
-**`monitor.d/20-whatsapp-waker`.** Follows the wake file. For each new line it runs
+**`monitor.d/20-whatsapp-waker`.** Follows the wake file. For each new line it gives the session's own
+monitor the first chance, exactly as the Slack listener does (`wake_grace_seconds`, default 20;
+no wait while the bot is asleep), and then runs
 `$OPSBOT_CORE nudge --now --reason whatsapp`, again every 10 seconds while the nudge reports
 the agent busy, until it wakes or `ack_timeout_minutes` (30) pass. With `mark_read: seen` it
 then waits for the event's key to appear in `logs/intake/seen` and runs `whatsapp-axi mark-read`

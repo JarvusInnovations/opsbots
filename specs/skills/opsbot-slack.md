@@ -59,6 +59,7 @@ In the repo:
 | `receipt_emoji` | the listener's reaction on arrival | `eyes` |
 | `ack_emoji` | the reaction once the check reported the item | `gear` |
 | `ack_timeout_minutes` | how long the listener keeps nudging and waiting for the read | `30` |
+| `wake_grace_seconds` | how long the listener waits for the session's own monitor to start a cycle before it nudges; `0` nudges at once | `20` |
 | `lookback_minutes` | extra reader window before `OPSBOT_SINCE` | `30` |
 | `bot_name` | the name the bot posts under, to find its last message in a thread | the bot's `name` |
 | `team` | the workspace id passed to slack-axi as `--team` | slack-axi's default |
@@ -114,7 +115,11 @@ Each recorded event is one line in `events_file`:
 from_peer?, recorded_at}`, keyed `slack:<conv>:<ts>:msg`, `slack:<conv>:<ts>:<emoji>:<user>` or
 `slack:team_join:<user>`. `files` appears only on a message that carries files; `from_peer`
 only on a peer's message. On a message it reacts `receipt_emoji`, or `peer_receipt_emoji` on
-a peer's. It runs `$OPSBOT_CORE nudge --now --reason …`, again every
+a peer's. It gives the session's own monitor the first chance: it waits
+`wake_grace_seconds` (default 20), and nudges only if by then the key is not in
+`logs/intake/seen` and no cycle has begun since the event (the cycle lock, or a cycle log line
+newer than the event). When the bot is asleep (`.git/opsbot-sleep` exists) there is no monitor
+to wait for, so it nudges at once. The nudge is `$OPSBOT_CORE nudge --now --reason …`, again every
 10 seconds while the nudge reports the agent busy, until it wakes, the key is seen, or
 `ack_timeout_minutes` pass. It reacts `ack_emoji` only once the key is in `logs/intake/seen`.
 It logs one line for every event it receives, kept or not. It reconnects with backoff (5 s,
