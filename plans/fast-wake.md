@@ -1,11 +1,13 @@
 ---
-status: planned
+status: done
+done: 2026-11-15
 depends: [monitor-schedule, sleep-and-wake]
 specs:
   - specs/skills/opsbot-core.md
   - specs/skills/opsbot-slack.md
   - specs/skills/opsbot-whatsapp.md
 issues: [106]
+pr: 108
 ---
 
 # Plan: a wake that costs what it needs
@@ -40,15 +42,15 @@ new command and state, the `check` setting, the `cycle begin` and `cycle end` ro
 
 ## Validation
 
-- [ ] `wake wait` delivers a line appended after the recorded count at once, waits otherwise, prints `cycle due` at its time, refuses a time more than 1 800 seconds ahead; its output matches the old poller's
-- [ ] The arm call is the short form, and a session log holding either old form is still read as armed until the right time
-- [ ] A wake from a file that names its inputs runs only those inputs, leaves the watermark, marks the log line `fast`, and a later full check reports nothing twice and misses nothing (an item that arrived for a skipped input during fast cycles is reported by the next full check)
-- [ ] Each condition that forces a full check does: no named inputs, a full check older than `check.full_minutes`, a failed input, `--full`, `cycle due`, `check.full_minutes: 0`
-- [ ] `cycle.d/begin/` scripts run on a fast cycle only when named `.fast`
-- [ ] `cycle end` prints `arrived` and `next 0 arrived` with no `wake` field when a wake file grew since the check, and the usual fields otherwise
-- [ ] The watchdog and `next-delay` treat a fast cycle as a cycle; a run of fast cycles does not postpone a full check past `check.full_minutes`
-- [ ] Both skills' `install` print the object form; both listeners log a mid-turn refusal once per wake
-- [ ] Every existing test passes
+- [x] `wake wait` delivers a line appended after the recorded count at once, waits otherwise, prints `cycle due` at its time, refuses a time more than 1 800 seconds ahead; its output matches the old poller's
+- [x] The arm call is the short form, and a session log holding either old form is still read as armed until the right time
+- [x] A wake from a file that names its inputs runs only those inputs, leaves the watermark, marks the log line `fast`, and a later full check reports nothing twice and misses nothing (an item that arrived for a skipped input during fast cycles is reported by the next full check)
+- [x] Each condition that forces a full check does: no named inputs, a full check older than `check.full_minutes`, a failed input, `--full`, `cycle due`, `check.full_minutes: 0`
+- [x] `cycle.d/begin/` scripts run on a fast cycle only when named `.fast`
+- [x] `cycle end` prints `arrived` and `next 0 arrived` with no `wake` field when a wake file grew since the check, and the usual fields otherwise
+- [x] The watchdog and `next-delay` treat a fast cycle as a cycle; a run of fast cycles does not postpone a full check past `check.full_minutes`
+- [x] Both skills' `install` print the object form; both listeners log a mid-turn refusal once per wake
+- [x] Every existing test passes
 
 ## Risks
 
@@ -58,5 +60,20 @@ new command and state, the `check` setting, the `cycle begin` and `cycle end` ro
   on it per cycle keeps it un-suffixed and gets it on every full check.
 
 ## Notes
+
+Built in PR 108. The tests for each Validation box are in `tests/fast.test.ts`:
+- `wake wait`: "delivers a line appended after the recorded count at once… its output is the old poller's", "waits otherwise…", "prints `cycle due` at its time", "refuses a time more than 1800 seconds ahead"
+- The short arm call and all three forms read from the session log: "the arm call is the short form…"
+- The fast check, skipped input caught by the next full check, nothing reported twice: "runs only the named inputs with the last full check's window…"
+- Each forcing condition: "each condition that forces a full check does" (this also checks that a run of fast cycles does not postpone the full check)
+- `.fast` begin scripts: asserted inside the first fast-check test
+- `arrived`: "cycle end reports what arrived…" (also covers the case where a sleep would be decided, and a failed begin that must not loop)
+- Watchdog, outage record and `next-delay`: "count a fast cycle as a cycle"
+- `install` object form and the once-per-wake pending line: `tests/slack.test.ts` and `tests/whatsapp.test.ts`
+
+Deviations within the spec's latitude:
+- The digest's extra line renders as `fast: "<inputs>; full check due HH:MMZ"`, because TOON keys it as `fast`.
+- `since` and `check` are added only to the check lines a cycle writes. A plain `check` line keeps its byte-compatible shape.
+- A fast check's `OPSBOT_SINCE` is the `since` recorded on the last full check's line. For older lines it falls back to the watermark less the margin.
 
 ## Follow-ups
