@@ -81,7 +81,9 @@ no wait while the bot is asleep), and then runs
 the agent busy, until it wakes or `ack_timeout_minutes` (30) pass. With `mark_read: seen` it
 then waits for the event's key to appear in `logs/intake/seen` and runs `whatsapp-axi mark-read`
 for that message: the blue ticks mean the session has the item, by construction, as the second
-reaction does in Slack. It never reads message content: it resolves a wake line's `seq` to a key
+reaction does in Slack. It logs `read` only when the answer's `failed` is 0 and at least one
+message was `marked` or `already_marked`: an exit 0 alone is not a mark. Otherwise it logs
+`mark failed: <reason>`, never text, and tries again at the next seen-check, at most three times. It never reads message content: it resolves a wake line's `seq` to a key
 with `whatsapp-axi events --after <seq-1> --limit 1`, using only the chat, id and sender marks.
 It marks nothing for an event the reader would drop (`listen_to`, a peer rule). It logs one
 line per wake line, never text. It exits non-zero, so the unit restarts, when the wake file
@@ -157,7 +159,8 @@ through once per run. Only kept messages are counted, which is all the bot can s
 
 ## Posting (`opsbot-whatsapp post`)
 
-`opsbot-whatsapp post <chat> [--reply <id>] [--file <path>] [<text> | -]` is the only way a bot
+`opsbot-whatsapp post <chat> [--reply <id>] [--file <path>] [--retry-id <send id>] [--dry-run]
+[<text> | -]` is the only way a bot
 posts to WhatsApp. Its first arguments are the reader's `reply` column, whole. In order, it:
 
 1. refuses bad usage: no chat, an empty text with no file;
@@ -166,7 +169,11 @@ posts to WhatsApp. Its first arguments are the reader's `reply` column, whole. I
 4. screens the draft when the settings name a policy for that class. A file's caption is the
    draft; the file itself is not screened, and a file to an `external` or `unknown` class is
    refused unless `screen.files_external` is `true`;
-5. posts through `whatsapp-axi send` or `send-file`;
+5. posts through `whatsapp-axi send` or `send-file` with `--id <send id>`. The send id is 32
+   uppercase hex characters from the system's random source, new for each post attempt. With
+   `--retry-id <id>` (16 to 48 characters of `0-9A-F`, else exit 2) that id is used instead, so
+   a retry cannot send twice. When whatsapp-axi answers `already_sent: true`, the post reports
+   `posted: true, replayed: true` and any `warning`, and nothing is sent again;
 6. appends one line to `post_log`, whatever happened at 2 to 5;
 7. prints one JSON object on stdout and exits with its code.
 
@@ -196,23 +203,31 @@ model or the text.
   at a different one.
 - The class is cached per chat for `screen.cache_seconds`; `unknown` is never cached.
 - The screen's contract, outcomes, told-once marker and exit codes 3 and 4 are opsbot-slack's,
-  unchanged. Exit 1 is whatsapp-axi refusing or failing the send, with its error code passed
-  through (`first_contact`, `rate_limited`, `duplicate_text`, `not_connected`). Exit 6 is the
+  unchanged. Exit 1 is whatsapp-axi refusing or failing the send, with its
+  error code passed through (`FIRST_CONTACT`, `RATE_LIMITED`, `DUPLICATE_TEXT`, `NOT_CONNECTED`,
+  `DAEMON_NOT_RUNNING`, `UPSTREAM_ERROR`, `INTERNAL_ERROR`). **An unknown outcome is its own
+  result**, still exit 1: `{posted: "unknown", code: "OUTCOME_UNKNOWN", send_id, error, retry,
+  next}`. The message may have gone out. `retry` is the exact same post with
+  `--retry-id <send_id>`; when the text came on stdin it ends in `-`, and `next` says to send
+  the same text again. A bot never posts it again without `--retry-id`. The loop guard's hourly
+  count includes `"unknown"` posts. Exit 6 is the
   loop guard. There is no exit 5: the daemon holds one account, so there is no second identity
   to post as.
 
 ### The decision log
 
-One line per attempt: `{at, chat, reply_to?, class, why, screen, reason?, error?, peer?,
-peer_guard?, draft_sha256, file?, posted, id?, dry_run?}`. `file` is the base name and size.
-Never the draft, never the passage.
+One line per attempt: `{at, chat, reply_to?, class, why, screen, reason?, error?, code?, peer?,
+peer_guard?, draft_sha256, file?, send_id?, retry?, posted, id?, replayed?, warning?,
+dry_run?}`. `posted` is `true`, `false` or `"unknown"`. `send_id` is on every line that reached
+the send; `retry: true` marks a `--retry-id` post. `file` is the base name and size. Never the
+draft, never the passage.
 
 ## Commands (`scripts/opsbot-whatsapp`)
 
 | Command | Does | Exit |
 | --- | --- | --- |
 | `install [--dry-run] [--force]` | copies the three scripts into `opsbot.d/`, as opsbot-slack's install does; prints the `streams.whatsapp` block, the `wake.files` entry and the `whatsapp-axi settings set wake_file` command to run. Never writes `opsbot.json` and never changes the account's scope or operators | 0 · 2 |
-| `status` | one row each with `ok`, `missing` or `differs` and the fix: whatsapp-axi present and new enough; the account exists; its daemon installed, running and `connected` (else the state and what `doctor` says); the account's `wake_file` equals the setting and is in `wake.files`; the account's operators equal `operators`; `read_receipts` is `on-read` when `mark_read` is `seen`; the account scope and each per-chat override, printed so the operator sees what the bot can read; each script present and matching its template; the waker unit active; `escalate_chat` set and an operator's direct chat; with `screen`, the command and policies usable; with `peers`, each peer usable and the bot a member of each listed chat | 0 · 1 |
+| `status` | one row each with `ok`, `missing` or `differs` and the fix: whatsapp-axi present and new enough (its `doctor --json-out` file has a `checks` array); the account exists; its daemon installed, running and `connected` (else the state and the first failing check); one `differs` row per failing `doctor` check, with `whatsapp-axi doctor --account <account>` as the fix (skipped checks and the all-accounts hooks row are ignored); the account's `wake_file` equals the setting and is in `wake.files`; the account's operators equal `operators`; `read_receipts` is `on-read` when `mark_read` is `seen`; the account scope and each per-chat override, printed so the operator sees what the bot can read; each script present and matching its template; the waker unit active; `escalate_chat` set and an operator's direct chat; with `screen`, the command and policies usable; with `peers`, each peer usable and the bot a member of each listed chat | 0 · 1 |
 | `post …` | [Posting](#posting-opsbot-whatsapp-post) | 0 · 1 · 2 · 3 · 4 · 6 |
 | `classify <chat>` | `{chat, class, why, cached}` | 0 · 2 |
 
