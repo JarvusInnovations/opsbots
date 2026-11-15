@@ -1,0 +1,188 @@
+#!/usr/bin/env node
+// monitor.d: the WhatsApp waker, installed by the opsbot-whatsapp skill. `opsbot-core infra
+// install` runs it as a user service. The account's whatsapp-axi daemon does the listening: it
+// appends one line per kept event to its wake file ({account, seq, kind}, no content), and that
+// file is in wake.files, so the session's own bounded monitor wakes on it. This is the backstop
+// that survives the session. For each new line it:
+//   1. resolves the line's seq to the event's key with `whatsapp-axi events --after <seq-1>
+//      --limit 1`, reading only the chat, the id and the sender's marks, never the text;
+//   2. runs `$OPSBOT_CORE nudge --now --reason whatsapp`, again every 10 s while the nudge does
+//      not report a wake, until it wakes, the key is seen, or ack_timeout_minutes (30) pass;
+//   3. with mark_read "seen" (the default), waits for the key to appear in logs/intake/seen,
+//      which the core writes when the check reports the item to the model, then runs
+//      `whatsapp-axi mark-read <chat>/<id>`. So the blue ticks mean the session has the item,
+//      by construction. Only messages are marked, and never one the reader would drop (the
+//      account's own, a sender listen_to "operators" or "trusted" leaves out, a peer outside
+//      its chats).
+// It logs a line per wake line (seq, kind, key, what it will do) and one when it marks or gives
+// up: ids only, never text. It starts at the end of the wake file, creating it (mode 600) when
+// it is missing, and exits non-zero, so the unit restarts, when the file cannot be read.
+// No model is called anywhere here; the cycle answers.
+// OPSBOT_WHATSAPP_AXI names another whatsapp-axi binary. OPSBOT_WHATSAPP_TICK_MS (1000) is the
+// file poll; the seen poll is 2 ticks and the nudge repeat 10, so tests can run it fast.
+import { execFile } from "node:child_process";
+import { chmodSync, closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, statSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+
+const root = process.env.OPSBOT_ROOT || process.cwd();
+const cfg = JSON.parse(readFileSync(process.env.OPSBOT_CONFIG || join(root, "opsbot.json"), "utf8"));
+const wa = (cfg.streams && cfg.streams.whatsapp) || {};
+const home = (p) => (typeof p === "string" && p.startsWith("~") ? join(homedir(), p.slice(1)) : p);
+const wakeFile = home(typeof wa.wake_file === "string" && wa.wake_file ? wa.wake_file : `~/.cache/${cfg.name}/whatsapp-wake.jsonl`);
+const account = typeof wa.account === "string" ? wa.account : "";
+const markRead = wa.mark_read !== "off";
+const ackTimeoutMs = (Number(wa.ack_timeout_minutes) || 30) * 60000;
+const tick = Number(process.env.OPSBOT_WHATSAPP_TICK_MS) > 0 ? Number(process.env.OPSBOT_WHATSAPP_TICK_MS) : 1000;
+const seenFile = join(root, "logs/intake/seen");
+const core = process.env.OPSBOT_CORE || join(root, ".agents/skills/opsbot-core/scripts/opsbot-core");
+const bin = process.env.OPSBOT_WHATSAPP_AXI || "whatsapp-axi";
+
+const phone = (v) => (typeof v === "string" && /^\+?\d{6,15}$/.test(v.trim()) ? `+${v.trim().replace(/^\+/, "")}` : null);
+const pnOf = (u) => (u && typeof u === "object" ? phone(u.pn) : null);
+const operators = new Set((Array.isArray(wa.operators) ? wa.operators : []).map(phone).filter(Boolean));
+const peers = (Array.isArray(wa.peers) ? wa.peers : [])
+  .filter((p) => p && typeof p === "object" && phone(p.user))
+  .map((p) => ({ user: phone(p.user), chats: Array.isArray(p.chats) ? p.chats.map(String) : [] }));
+const trusted = new Set((Array.isArray(wa.trusted) ? wa.trusted : []).map(phone).filter(Boolean));
+const listenTo = wa.listen_to === "operators" || wa.listen_to === "trusted" ? wa.listen_to : "anyone";
+
+const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** The reader's rule (heartbeat.d/25-whatsapp-events), kept in step: would this sender's event be an item? */
+function heard(user, chat) {
+  const pn = pnOf(user);
+  const peer = pn ? peers.find((p) => p.user === pn) : undefined;
+  if (peer) return peer.chats.includes(chat);
+  const operator = user?.operator === true || operators.has(pn);
+  if (listenTo === "operators") return operator;
+  if (listenTo === "trusted") return operator || trusted.has(pn);
+  return true;
+}
+
+const run = (file, args, timeout = 30000) => new Promise((done) => {
+  execFile(file, args, { timeout, killSignal: "SIGKILL", maxBuffer: 16 << 20 }, (err, stdout) => done({ ok: !err, out: String(stdout || "").trim(), err }));
+});
+/** The private directory the --json-out files go in (0700), removed when the waker exits. */
+const outDir = mkdtempSync(join(tmpdir(), "opsbot-whatsapp-"));
+chmodSync(outDir, 0o700);
+let outN = 0;
+const cleanup = () => { try { rmSync(outDir, { recursive: true, force: true }); } catch { /* best effort */ } };
+process.on("exit", cleanup);
+for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => process.exit(0));
+
+/**
+ * The one helper that runs whatsapp-axi: `<args> --account <account> --json-out=<fresh file>`,
+ * stdout ignored, the response body read from the file and the file removed. Never logged.
+ */
+async function axi(args) {
+  const file = join(outDir, `${++outN}.json`);
+  const r = await run(bin, [...args, "--account", account, `--json-out=${file}`]);
+  let json;
+  try { json = JSON.parse(readFileSync(file, "utf8")); } catch { json = undefined; }
+  rmSync(file, { force: true });
+  if (json && json.error) return { error: `${json.error.code}: ${json.error.message}` };
+  if (!r.ok) return { error: r.err.killed ? "timed out" : r.err.code === "ENOENT" ? "whatsapp-axi is not on PATH" : `exit ${r.err.code}` };
+  if (json === undefined) return { error: "no --json-out file" };
+  return { json };
+}
+
+/**
+ * The key and the mark decision for one wake line's seq: {key, ref?, why} where ref is set only
+ * for a message the reader would print. Reads chat, ids and marks only.
+ */
+async function resolveSeq(seq) {
+  const r = await axi(["events", "--after", String(seq - 1), "--limit", "1"]);
+  if (r.error) return { why: `could not read event ${seq}: ${r.error}` };
+  const list = Array.isArray(r.json?.events) ? r.json.events : null; // {events: [event], latest_seq, after}
+  const ev = list ? list.find((e) => e && e.seq === seq) : undefined;
+  if (!ev) return { why: `event ${seq} not found` };
+  const chat = ev.chat?.id;
+  if (!chat) return { why: `event ${seq} has no chat` };
+  if (ev.kind === "message" && ev.message?.id) {
+    const key = `whatsapp:${chat}:${ev.message.id}:msg`;
+    if (ev.message.from?.me === true) return { key, why: "own message, not marked" };
+    if (!heard(ev.message.from, chat)) return { key, why: "dropped by the reader, not marked" };
+    if (!markRead) return { key, why: "mark_read off" };
+    return { key, ref: `${chat}/${ev.message.id}`, why: "marks read once seen" };
+  }
+  if (ev.kind === "reaction" && ev.target && ev.emoji) {
+    return { key: `whatsapp:${chat}:${ev.target}:${ev.emoji}:${ev.from?.id || pnOf(ev.from) || "unknown"}`, why: "a reaction, not marked" };
+  }
+  return { why: `${ev.kind}, not an item` };
+}
+
+const isSeen = (key) => { try { return readFileSync(seenFile, "utf8").split("\n").includes(key); } catch { return false; } };
+
+async function wake(seq, key) {
+  const until = Date.now() + ackTimeoutMs;
+  while (Date.now() < until) {
+    const r = await run(core, ["nudge", "--now", "--reason", "whatsapp"]);
+    if (/woke/.test(r.out.split("\n")[0] || "")) return;
+    if (key && isSeen(key)) return;
+    await sleep(10 * tick);
+  }
+  log("!", "wake timed out for seq", seq);
+}
+
+async function markWhenSeen(seq, key, ref) {
+  const until = Date.now() + ackTimeoutMs;
+  while (Date.now() < until) {
+    if (isSeen(key)) {
+      const r = await axi(["mark-read", ref]);
+      if (r.error) log("!", "mark-read failed for seq", seq, key, r.error);
+      else log("read:", key);
+      return;
+    }
+    await sleep(2 * tick);
+  }
+  log("!", "never seen within the timeout:", key);
+}
+
+async function handle(line) {
+  let w;
+  try { w = JSON.parse(line); } catch { log("!", "unreadable wake line"); return; }
+  if (!w || !Number.isInteger(w.seq)) { log("!", "wake line with no seq"); return; }
+  if (w.account && account && w.account !== account) { log("!", "wake line for another account, seq", w.seq); return; }
+  const r = await resolveSeq(w.seq);
+  log("wake seq", w.seq, w.kind || "-", r.key || "-", r.why);
+  const jobs = [wake(w.seq, r.key)];
+  if (r.ref) jobs.push(markWhenSeen(w.seq, r.key, r.ref));
+  await Promise.all(jobs);
+}
+
+function main() {
+  if (!account) { console.error("streams.whatsapp.account is not set in opsbot.json"); process.exit(1); }
+  try {
+    mkdirSync(dirname(wakeFile), { recursive: true });
+    closeSync(openSync(wakeFile, "a", 0o600));
+  } catch (e) { console.error(`cannot open the wake file ${wakeFile}: ${e.code || e.message}`); process.exit(1); }
+  let offset;
+  try { offset = statSync(wakeFile).size; } catch (e) { console.error(`cannot read the wake file ${wakeFile}: ${e.code || e.message}`); process.exit(1); }
+  let partial = "";
+  log(`waking for ${cfg.name} on ${wakeFile}; account ${account}; mark read: ${markRead ? "once seen" : "off"}`);
+  const poll = () => {
+    let size;
+    try { size = statSync(wakeFile).size; } catch (e) { console.error(`cannot read the wake file ${wakeFile}: ${e.code || e.message}`); process.exit(1); }
+    if (size < offset) { log("wake file truncated; reading from its start"); offset = 0; partial = ""; }
+    if (size > offset) {
+      let fd;
+      try {
+        fd = openSync(wakeFile, "r");
+        const buf = Buffer.alloc(size - offset);
+        const n = readSync(fd, buf, 0, buf.length, offset);
+        offset += n;
+        partial += buf.subarray(0, n).toString("utf8");
+      } catch (e) { console.error(`cannot read the wake file ${wakeFile}: ${e.code || e.message}`); process.exit(1); }
+      finally { if (fd !== undefined) closeSync(fd); }
+      const lines = partial.split("\n");
+      partial = lines.pop() || "";
+      for (const l of lines) if (l.trim()) handle(l).catch((e) => log("!", "wake:", e.message));
+    }
+    setTimeout(poll, tick);
+  };
+  poll();
+}
+
+main();
