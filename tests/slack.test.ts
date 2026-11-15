@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -870,19 +870,75 @@ describe("the wake: the monitor first, the nudge second", () => {
     expect(r.out.match(/woken by monitor/g)).toHaveLength(1);
   });
 
-  test("a cycle begun during the grace (the lock, or a newer cycle-log line): no nudge", () => {
-    const locked = runListener({ wake_grace_seconds: 10 }, [dm(1)], { tickMs: 50, settleMs: 1200, setup: (repo) => gitFile(repo, "opsbot-cycle.lock", "{}") });
-    expect(locked.nudges).toEqual([]);
+  const future = () => new Date(Date.now() + 60000).toISOString().slice(0, 19) + "Z";
+  const checkLine = (at: string, outcome = "new") => JSON.stringify({ at, outcome }) + "\n";
+  /** In the background while the listener runs: `ms` after the event is recorded, a shell command in the repo. */
+  const later = (repo: string, ms: number, cmd: string) =>
+    spawn("sh", ["-c", `i=0; until [ -s ../slack-events.jsonl ] || [ $i -ge 400 ]; do sleep 0.05; i=$((i+1)); done; sleep ${ms / 1000}; ${cmd}`], { cwd: repo, detached: true, stdio: "ignore" }).unref();
+
+  test("a check begun after the event (a newer check line): no nudge; a newer finish line does not count", () => {
     const logged = runListener({ wake_grace_seconds: 10 }, [dm(1)], {
       tickMs: 50, settleMs: 1200,
       setup: (repo) => {
         mkdirSync(join(repo, "logs"), { recursive: true });
-        // an older line, then one newer than the event
-        writeFileSync(join(repo, "logs/cycle.jsonl"), [{ at: "2020-01-01T00:00:00Z", outcome: "finished" }, { at: new Date(Date.now() + 60000).toISOString().slice(0, 19) + "Z", outcome: "new" }].map((l) => JSON.stringify(l)).join("\n") + "\n");
+        // an older line, then a check newer than the event
+        writeFileSync(join(repo, "logs/cycle.jsonl"), checkLine("2020-01-01T00:00:00Z", "finished") + checkLine(future()));
       },
     });
     expect(logged.nudges).toEqual([]);
     expect(logged.out).toContain("woken by monitor");
+    const finished = runListener({ wake_grace_seconds: 4 }, [dm(1)], {
+      tickMs: 50, settleMs: 1200,
+      setup: (repo) => {
+        mkdirSync(join(repo, "logs"), { recursive: true });
+        writeFileSync(join(repo, "logs/cycle.jsonl"), checkLine("2020-01-01T00:00:00Z") + checkLine(future(), "finished"));
+      },
+    });
+    expect(finished.nudges).toHaveLength(1);
+  });
+
+  test("an event that lands while a cycle holds the lock is not woken by it: no nudge while the lock is held", () => {
+    const r = runListener({ wake_grace_seconds: 4 }, [dm(1)], { tickMs: 50, settleMs: 1200, setup: (repo) => gitFile(repo, "opsbot-cycle.lock", "{}") });
+    expect(r.nudges).toEqual([]);
+    expect(r.out).not.toContain("woken by monitor");
+    expect(r.out).toContain("a cycle is running: waiting for it to end");
+  });
+
+  test("the lock clears with the key unseen and no newer check: nudges at once, after the cycle", () => {
+    // the grace is long; the wait for the cycle does not count against it, and the nudge follows the release at once
+    const r = runListener({ wake_grace_seconds: 600 }, [dm(1)], {
+      tickMs: 50, settleMs: 1500,
+      setup: (repo) => { gitFile(repo, "opsbot-cycle.lock", "{}"); later(repo, 500, "rm -f .git/opsbot-cycle.lock"); },
+    });
+    expect(r.nudges).toHaveLength(1);
+    expect(r.out).toContain("a cycle is running: waiting for it to end");
+    expect(r.out).toContain("nudged after cycle");
+    expect(r.out).not.toContain("woken by monitor");
+  });
+
+  test("the lock clears with the key seen, or a newer check line: no nudge", () => {
+    const seenAfter = runListener({ wake_grace_seconds: 600 }, [dm(1)], {
+      tickMs: 50, settleMs: 1500,
+      setup: (repo) => {
+        gitFile(repo, "opsbot-cycle.lock", "{}");
+        mkdirSync(join(repo, "logs/intake"), { recursive: true });
+        later(repo, 500, `printf '%s\\n' '${key(1)}' > logs/intake/seen; rm -f .git/opsbot-cycle.lock`);
+      },
+    });
+    expect(seenAfter.nudges).toEqual([]);
+    expect(seenAfter.out).toContain("a cycle is running: waiting for it to end");
+    expect(seenAfter.out).toContain("woken by monitor");
+    const checked = runListener({ wake_grace_seconds: 600 }, [dm(1)], {
+      tickMs: 50, settleMs: 1500,
+      setup: (repo) => {
+        gitFile(repo, "opsbot-cycle.lock", "{}");
+        mkdirSync(join(repo, "logs"), { recursive: true });
+        later(repo, 500, `printf '%s' '${checkLine(future())}' >> logs/cycle.jsonl; rm -f .git/opsbot-cycle.lock`);
+      },
+    });
+    expect(checked.nudges).toEqual([]);
+    expect(checked.out).toContain("a cycle is running: waiting for it to end");
+    expect(checked.out).toContain("woken by monitor");
   });
 
   test("the grace expires with neither: the nudge loop runs as before", () => {
