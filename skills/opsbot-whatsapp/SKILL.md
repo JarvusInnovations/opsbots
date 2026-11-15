@@ -67,14 +67,15 @@ account is in and discards the rest without writing it.
 - resolves the `seq` to the item's key with `whatsapp-axi events --after <seq-1> --limit 1`,
   reading only the chat, the id and the sender's marks;
 - gives the session's own monitor the first chance: waits `wake_grace_seconds` (20), checking
-  each second, and stops without nudging once the key is in `logs/intake/seen` or a cycle has
-  begun since the line (the cycle lock exists, or `logs/cycle.jsonl` has a newer line). While the
-  bot is asleep (`.git/opsbot-sleep`) it skips the wait. Lines that arrive together share one
+  each second, and stops without nudging once the key is in `logs/intake/seen` or a check has
+  begun since the line (a check line in `logs/cycle.jsonl` newer than the line). A cycle already
+  running when the line arrived does not count: while it holds the cycle lock the waker waits for
+  it to end, then looks again, and nudges at once if neither. While the bot is asleep (`.git/opsbot-sleep`) it skips the wait. Lines that arrive together share one
   pending wake, so a burst is at most one nudge;
 - only when the grace runs out, runs `$OPSBOT_CORE nudge --now --reason whatsapp`, and again
-  every 10 seconds until the nudge reports a wake, the key is in `logs/intake/seen`, or
-  `ack_timeout_minutes` (30) pass. One journal line says which path woke the session:
-  `woken by monitor` or `nudged after <n>s`;
+  every 10 seconds until the nudge reports a wake, the key is in `logs/intake/seen`, a newer
+  check begins, or `ack_timeout_minutes` (30) pass. One journal line says which path woke the
+  session: `woken by monitor`, `nudged after <n>s` or `nudged after cycle`;
 - with `mark_read: seen`, waits for the key in `logs/intake/seen` and then runs
   `whatsapp-axi mark-read <chat>/<id>`. The core writes that file when the check reports the item
   to the model, so the blue ticks mean the session has it.

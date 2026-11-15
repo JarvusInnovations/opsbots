@@ -9,8 +9,9 @@
  * listener's `nudge --now`, which survives the session and covers a session that never
  * armed. Both read the same files; neither depends on the other.
  */
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { iso, parseIso } from "./repo.js";
+import { gitPath, iso, nowIso, parseIso } from "./repo.js";
 import type { Settings } from "./settings.js";
 import { type Ev, lastMonitorCall } from "./transcript.js";
 
@@ -26,14 +27,83 @@ export function wakeFiles(s: Settings): string[] {
   return s.wake.files.map(expandHome);
 }
 
-/** A poller that prints the new lines once and exits: one notification per arrival, nothing left
- * running, and a shrunken file (rotation) resets the baseline instead of going silent. */
-export function monitorCommand(file: string): string {
+// ---------------------------------------------------------- where the last check read to
+//
+// The monitor is armed from where the last check read to, never from "now". `cycle begin` records
+// each wake file's line count (the unit the poller counts in) just before its check runs, in
+// <git dir>/opsbot-wake-base, and every arm call printed after it starts the poller at that count.
+// A line appended after the check started (while the cycle worked, or between its end and the
+// arming) is then delivered the moment the monitor is armed. The file is never committed.
+
+export const WAKE_BASE_NAME = "opsbot-wake-base";
+
+/** The newline count of a file, as `wc -l` gives it; 0 when it cannot be read. */
+export function lineCount(file: string): number {
+  let buf: Buffer;
+  try {
+    buf = readFileSync(file);
+  } catch {
+    return 0;
+  }
+  let n = 0;
+  for (let i = buf.indexOf(10); i !== -1; i = buf.indexOf(10, i + 1)) n++;
+  return n;
+}
+
+/** Record each wake file's line count as a check starts. Never fatal: without the record the arm
+ * calls fall back to the end of the file. */
+export function recordWakeBase(root: string, files: string[]): void {
+  const p = gitPath(root, WAKE_BASE_NAME);
+  try {
+    if (files.length === 0) {
+      rmSync(p, { force: true });
+      return;
+    }
+    const lines: Record<string, number> = {};
+    for (const f of files) lines[f] = lineCount(f);
+    writeFileSync(p, `${JSON.stringify({ at: nowIso(), lines })}\n`);
+  } catch {
+    // a stale record only makes the next monitor deliver more, never less
+  }
+}
+
+/** Each wake file's line count as the last check started, or null when none is recorded. */
+export function readWakeBase(root: string): Record<string, number> | null {
+  try {
+    const v = JSON.parse(readFileSync(gitPath(root, WAKE_BASE_NAME), "utf8"));
+    const lines = v && typeof v === "object" ? v.lines : null;
+    if (!lines || typeof lines !== "object") return null;
+    const out: Record<string, number> = {};
+    for (const [k, n] of Object.entries(lines)) if (Number.isInteger(n) && (n as number) >= 0) out[k] = n as number;
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/** The recorded line count for one file, or null. */
+export function baseFor(base: Record<string, number> | null | undefined, file: string): number | null {
+  const n = base?.[file];
+  return typeof n === "number" ? n : null;
+}
+
+/** At most this many lines in one delivery: the notification is a wake, the check reads the items. */
+export const DELIVER_MAX_LINES = 20;
+
+/**
+ * A poller that prints the lines past its baseline once and exits: one notification per arrival,
+ * nothing left running. `base` is the line count the last check started at; when the file already
+ * has more, the poller prints them and exits at once. With no recorded count (`null`: the first
+ * arm after a start before any check recorded one) the baseline is the file's length when the
+ * poller starts, the behaviour before counts were recorded. A file shorter than its baseline was
+ * truncated or rotated: the baseline drops to 0, so every line in it is delivered, never to "now".
+ */
+export function monitorCommand(file: string, base: number | null = null): string {
   const q = JSON.stringify(file);
   return (
-    `f=${q}; c() { [ -f "$f" ] && wc -l < "$f" || echo 0; }; n=$(c); ` +
-    `while sleep 2; do m=$(c); if [ "$m" -lt "$n" ]; then n=$m; fi; ` +
-    `if [ "$m" -gt "$n" ]; then tail -n $((m-n)) "$f" | cut -c1-300; exit 0; fi; done`
+    `f=${q}; c() { [ -f "$f" ] && wc -l < "$f" || echo 0; }; n=${base === null ? "$(c)" : Math.max(0, Math.floor(base))}; ` +
+    `while :; do m=$(c); if [ "$m" -lt "$n" ]; then n=0; fi; ` +
+    `if [ "$m" -gt "$n" ]; then k=$((m-n)); [ "$k" -gt ${DELIVER_MAX_LINES} ] && k=${DELIVER_MAX_LINES}; tail -n "$k" "$f" | cut -c1-300; exit 0; fi; sleep 2; done`
   );
 }
 
@@ -42,8 +112,8 @@ export function monitorDescription(bot: string, file: string): string {
 }
 
 /** The exact tool call the session makes. */
-export function monitorCall(bot: string, file: string, timeoutMs: number): string {
-  return `Monitor({ command: ${JSON.stringify(monitorCommand(file))}, description: ${JSON.stringify(monitorDescription(bot, file))}, timeout_ms: ${timeoutMs} })`;
+export function monitorCall(bot: string, file: string, timeoutMs: number, base: number | null = null): string {
+  return `Monitor({ command: ${JSON.stringify(monitorCommand(file, base))}, description: ${JSON.stringify(monitorDescription(bot, file))}, timeout_ms: ${timeoutMs} })`;
 }
 
 /** The deadline: the loop's own next wake when that is sooner than the cap, never under a minute. */
@@ -77,7 +147,13 @@ const hhmm = (s: string) => `${s.slice(11, 16)}Z`;
  * at hand), then the exact call to arm. `evs` null means no session log was available, so the
  * state is unknown and the call is printed as the thing to do.
  */
-export function wakeLines(s: Settings, evs: Ev[] | null, now: number, untilNextWakeMs: number | null): string[] {
+export function wakeLines(
+  s: Settings,
+  evs: Ev[] | null,
+  now: number,
+  untilNextWakeMs: number | null,
+  base: Record<string, number> | null = null,
+): string[] {
   const files = wakeFiles(s);
   if (files.length === 0) return [];
   const timeout = monitorTimeout(untilNextWakeMs);
@@ -85,7 +161,7 @@ export function wakeLines(s: Settings, evs: Ev[] | null, now: number, untilNextW
   const out: string[] = [];
   for (const st of states) {
     if (st.armed) out.push(`armed on ${st.file} until ${hhmm(st.armed.until)} (since ${hhmm(st.armed.at)}); nothing to do`);
-    else out.push(`${evs ? "not armed" : "state unknown (no session log)"} on ${st.file} · arm now: ${monitorCall(s.name, st.file, timeout)}`);
+    else out.push(`${evs ? "not armed" : "state unknown (no session log)"} on ${st.file} · arm now: ${monitorCall(s.name, st.file, timeout, baseFor(base, st.file))}`);
   }
   return out;
 }
@@ -93,7 +169,7 @@ export function wakeLines(s: Settings, evs: Ev[] | null, now: number, untilNextW
 /** The standing rules, for the pack. */
 export const WAKE_RULES = [
   "The monitor is the live wake: its notification means a stream has something new, so run `cycle begin` then.",
-  "It exits on the first arrival or at its deadline. Arm it again at the end of every cycle when it is not armed, and when it reports an expiry with nothing delivered; never two on one file, never a longer deadline, never a different command.",
+  "It starts from where the last check read to, so a line that arrived since that check began is delivered the moment it is armed; otherwise it exits on the first arrival or at its deadline. Arm it again at the end of every cycle when it is not armed, and when it reports an expiry with nothing delivered; never two on one file, never a longer deadline, never a different command.",
   "The listener's nudge is the backstop when no monitor is armed; neither path depends on the other.",
 ];
 
@@ -120,26 +196,34 @@ function shq(s: string): string {
 
 const basename = (p: string) => p.replace(/\/+$/, "").split("/").pop() || p;
 
-/** The command: polls every 2 seconds until a wake file grows or `seconds` pass. */
-export function scheduleCommand(files: string[], seconds: number): string {
+/** The command: polls every 2 seconds until a wake file grows past its baseline or `seconds` pass.
+ * `bases` are the line counts the last check started at, one per file, as in monitorCommand: lines
+ * past them are delivered at once; a missing (null) count starts at the file's length; a file
+ * shorter than its baseline resets it to 0. */
+export function scheduleCommand(files: string[], seconds: number, bases: (number | null)[] = []): string {
   const parts = [`end=$(( $(date +%s) + ${Math.max(1, Math.round(seconds))} ))`];
   if (files.length) parts.push(`c() { [ -f "$1" ] && wc -l < "$1" || echo 0; }`);
-  files.forEach((f, i) => parts.push(`f${i}=${shq(f)}; n${i}=$(c "$f${i}")`));
+  files.forEach((f, i) => {
+    const b = bases[i] ?? null;
+    parts.push(`f${i}=${shq(f)}; n${i}=${b === null ? `$(c "$f${i}")` : Math.max(0, Math.floor(b))}`);
+  });
   const body: string[] = [];
   if (files.length) body.push("h=0");
   files.forEach((f, i) => {
     body.push(
-      `m=$(c "$f${i}"); if [ "$m" -lt "$n${i}" ]; then n${i}=$m; fi; ` +
-        `if [ "$m" -gt "$n${i}" ]; then tail -n $((m-n${i})) "$f${i}" | cut -c1-300 | while IFS= read -r l; do printf '%s: %s\\n' ${shq(basename(f))} "$l"; done; n${i}=$m; h=1; fi`,
+      `m=$(c "$f${i}"); if [ "$m" -lt "$n${i}" ]; then n${i}=0; fi; ` +
+        `if [ "$m" -gt "$n${i}" ]; then k=$((m-n${i})); [ "$k" -gt ${DELIVER_MAX_LINES} ] && k=${DELIVER_MAX_LINES}; tail -n "$k" "$f${i}" | cut -c1-300 | while IFS= read -r l; do printf '%s: %s\\n' ${shq(basename(f))} "$l"; done; n${i}=$m; h=1; fi`,
     );
   });
   if (files.length) body.push(`if [ "$h" = 1 ]; then exit 0; fi`);
   body.push(`if [ "$(date +%s)" -ge "$end" ]; then echo ${shq(CYCLE_DUE)}; exit 0; fi`);
-  parts.push(`while sleep 2; do ${body.join("; ")}; done`);
+  parts.push(`while :; do ${body.join("; ")}; sleep 2; done`);
   return parts.join("; ");
 }
 
-/** The seconds baked into a schedule command, or null when it is not one. */
+/** The seconds baked into a schedule command, or null when it is not one. Matches both the form
+ * that measures each file at start and the one that starts at the recorded counts, since a
+ * running session may hold either. */
 export function scheduleSeconds(command: string): number | null {
   const m = command.match(/^end=\$\(\( \$\(date \+%s\) \+ (\d+) \)\)/);
   return m ? Number(m[1]) : null;
@@ -150,8 +234,8 @@ export function scheduleTimeoutMs(seconds: number): number {
 }
 
 /** The exact tool call the session makes at the end of every cycle. */
-export function scheduleCall(bot: string, files: string[], seconds: number): string {
-  return `Monitor({ command: ${JSON.stringify(scheduleCommand(files, seconds))}, description: ${JSON.stringify(scheduleDescription(bot))}, timeout_ms: ${scheduleTimeoutMs(seconds)} })`;
+export function scheduleCall(bot: string, files: string[], seconds: number, bases: (number | null)[] = []): string {
+  return `Monitor({ command: ${JSON.stringify(scheduleCommand(files, seconds, bases))}, description: ${JSON.stringify(scheduleDescription(bot))}, timeout_ms: ${scheduleTimeoutMs(seconds)} })`;
 }
 
 /** What the session log says about the schedule monitor: armed (since, until its own baked
@@ -173,8 +257,15 @@ export function scheduleState(evs: Ev[], bot: string, now: number): { at: string
  * one call to make now. An armed monitor due no later than the next cycle (a minute's slack) needs
  * nothing; one due later (a cycle it did not start) is stopped and replaced, never doubled.
  */
-export function scheduleLines(s: Settings, evs: Ev[] | null, now: number, dueSeconds: number): string[] {
-  const call = scheduleCall(s.name, wakeFiles(s), dueSeconds);
+export function scheduleLines(
+  s: Settings,
+  evs: Ev[] | null,
+  now: number,
+  dueSeconds: number,
+  base: Record<string, number> | null = null,
+): string[] {
+  const files = wakeFiles(s);
+  const call = scheduleCall(s.name, files, dueSeconds, files.map((f) => baseFor(base, f)));
   if (!evs) return [`state unknown (no session log) · arm now: ${call}`];
   const st = scheduleState(evs, s.name, now);
   if (!st) return [`not armed · arm now: ${call}`];
@@ -202,6 +293,7 @@ export const SLEEP_RULES = [
 export const SCHEDULE_RULES = [
   "The monitor is your schedule and your live wake.",
   "When it delivers `cycle due` or an event line, run `cycle begin`.",
+  "It starts from where the last check read to, so a line that arrived since that check began is delivered the moment it is armed.",
   "At the end of every cycle, arm the one monitor `cycle end` prints, exactly as printed.",
   "Never call ScheduleWakeup and never start `/loop`.",
   "Never two monitors, never a longer deadline.",

@@ -761,25 +761,84 @@ describe("monitor.d/20-whatsapp-waker", () => {
     await w.stop();
   });
 
-  test("a cycle begun during the grace (the lock, or a newer cycle-log line): no nudge", async () => {
-    const b = one({ wake_grace_seconds: 10 });
-    const w = startWaker(b);
-    await ready(w);
-    w.wakeLine(1);
-    await sleep(150);
-    gitFile(b, "opsbot-cycle.lock");
-    await sleep(900);
-    expect(w.nudges()).toEqual([]);
-    await w.stop();
+  const future = () => new Date(Date.now() + 60000).toISOString().slice(0, 19) + "Z";
+  const checkLine = (b: ReturnType<typeof bot>, at: string, outcome = "new") => { mkdirSync(join(b.root, "logs"), { recursive: true }); appendFileSync(join(b.root, "logs/cycle.jsonl"), JSON.stringify({ at, outcome }) + "\n"); };
+  const lock = (b: ReturnType<typeof bot>) => join(b.root, ".git", "opsbot-cycle.lock");
 
+  test("a check begun after the line (a newer check line): no nudge; a newer finish line does not count", async () => {
     const c = one({ wake_grace_seconds: 10 });
     const v = startWaker(c);
     await ready(v);
     v.wakeLine(1);
     await sleep(150);
-    mkdirSync(join(c.root, "logs"), { recursive: true });
-    writeFileSync(join(c.root, "logs/cycle.jsonl"), JSON.stringify({ at: new Date(Date.now() + 60000).toISOString().slice(0, 19) + "Z", outcome: "new" }) + "\n");
+    checkLine(c, future());
     await sleep(900);
+    expect(v.nudges()).toEqual([]);
+    expect(v.out()).toContain("woken by monitor");
+    await v.stop();
+
+    const d = one({ wake_grace_seconds: 4 });
+    const u = startWaker(d);
+    await ready(u);
+    u.wakeLine(1);
+    await sleep(150);
+    checkLine(d, future(), "finished");
+    await sleep(900);
+    expect(u.nudges()).toHaveLength(1);
+    await u.stop();
+  });
+
+  test("a line that lands while a cycle holds the lock is not woken by it: no nudge while the lock is held", async () => {
+    const b = one({ wake_grace_seconds: 4 });
+    gitFile(b, "opsbot-cycle.lock");
+    const w = startWaker(b);
+    await ready(w);
+    w.wakeLine(1);
+    await sleep(1200); // well past the grace
+    expect(w.nudges()).toEqual([]);
+    expect(w.out()).not.toContain("woken by monitor");
+    expect(w.out()).toContain("a cycle is running: waiting for it to end");
+    await w.stop();
+  });
+
+  test("the lock clears with the key unseen and no newer check: nudges at once, after the cycle", async () => {
+    const b = one({ wake_grace_seconds: 600 });
+    gitFile(b, "opsbot-cycle.lock");
+    const w = startWaker(b);
+    await ready(w);
+    w.wakeLine(1);
+    await sleep(600);
+    expect(w.nudges()).toEqual([]);
+    rmSync(lock(b));
+    await sleep(400);
+    expect(w.nudges()).toEqual(["nudge --now --reason whatsapp"]);
+    expect(w.out()).toContain("nudged after cycle");
+    await w.stop();
+  });
+
+  test("the lock clears with the key seen, or a newer check line: no nudge", async () => {
+    const b = one({ wake_grace_seconds: 600 });
+    gitFile(b, "opsbot-cycle.lock");
+    const w = startWaker(b);
+    await ready(w);
+    w.wakeLine(1);
+    await sleep(500);
+    w.seen(KEY1);
+    rmSync(lock(b));
+    await sleep(500);
+    expect(w.nudges()).toEqual([]);
+    expect(w.out()).toContain("woken by monitor");
+    await w.stop();
+
+    const c = one({ wake_grace_seconds: 600 });
+    gitFile(c, "opsbot-cycle.lock");
+    const v = startWaker(c);
+    await ready(v);
+    v.wakeLine(1);
+    await sleep(500);
+    checkLine(c, future());
+    rmSync(lock(c));
+    await sleep(500);
     expect(v.nudges()).toEqual([]);
     expect(v.out()).toContain("woken by monitor");
     await v.stop();

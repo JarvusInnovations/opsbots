@@ -168,8 +168,9 @@ usually means the `app_mentions:read` scope or the `app_mention` event is missin
 
 The same log says how each event woke the bot: `woken by monitor` when the session started a
 cycle on its own within `wake_grace_seconds` (20), or `nudged after <n>s` when the listener had
-to type a prompt into the session as a backstop. Frequent nudges mean the session's own monitor
-is not armed.
+to type a prompt into the session as a backstop. `nudged after cycle` means the event landed while
+a cycle was already running and that cycle did not pick it up, so the listener nudged as soon as
+it ended. Frequent nudges mean the session's own monitor is not armed.
 
 To take a token back, revoke it on the app's pages, then delete the file or run
 `slack-axi auth revoke <team>`.

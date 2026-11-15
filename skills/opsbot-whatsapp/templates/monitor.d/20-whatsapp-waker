@@ -7,7 +7,9 @@
 //   1. resolves the line's seq to the event's key with `whatsapp-axi events --after <seq-1>
 //      --limit 1`, reading only the chat, the id and the sender's marks, never the text;
 //   2. waits wake_grace_seconds (20) for the session's own monitor, and stops without a nudge
-//      once the key is seen or a cycle has begun since the line (no wait while asleep); only
+//      once the key is seen or a check has begun since the line (a cycle already running when
+//      the line arrived does not count: it waits for that cycle to end, then looks again; no wait
+//      while asleep); only
 //      then runs `$OPSBOT_CORE nudge --now --reason whatsapp`, again every 10 s while the nudge
 //      does not report a wake, until it wakes, the key is seen, or ack_timeout_minutes (30)
 //      pass. Lines arriving together share one pending wake;
@@ -68,12 +70,14 @@ function gitPath(root, name) {
 }
 
 /**
- * Whether a cycle has begun since `t` (ms): the core's cycle lock (<git dir>/opsbot-cycle.lock)
- * holds the checkout, or the last line of logs/cycle.jsonl (every `cycle begin` writes one) is
- * newer than `t`. Reads the log's tail only.
+ * Whether a check has begun since `t` (ms): a check line (outcome nothing-new, new or degraded)
+ * in logs/cycle.jsonl whose `at` is later than `t`. `at` is whole seconds, the moment the check
+ * started, so a check begun in the same second as the event does not count: it may have read
+ * the stream just before the event landed. A finish line, a sleep line or the cycle lock never
+ * counts: a cycle already running when the event arrived may have checked before it. Reads the
+ * log's tail only.
  */
-export function cycleBegunSince(root, lockFile, t) {
-  if (existsSync(lockFile)) return true;
+export function cycleBegunSince(root, t) {
   let fd;
   try {
     const file = join(root, "logs/cycle.jsonl");
@@ -82,9 +86,15 @@ export function cycleBegunSince(root, lockFile, t) {
     const buf = Buffer.alloc(n);
     fd = openSync(file, "r");
     readSync(fd, buf, 0, n, size - n);
-    const last = buf.toString("utf8").trim().split("\n").pop();
-    const at = Date.parse(JSON.parse(last).at);
-    return Number.isFinite(at) && at > t;
+    const lines = buf.toString("utf8").trim().split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      let l;
+      try { l = JSON.parse(lines[i]); } catch { continue; }
+      if (!l || !["nothing-new", "new", "degraded"].includes(l.outcome)) continue;
+      const at = Date.parse(l.at);
+      return Number.isFinite(at) && at > t;
+    }
+    return false;
   } catch { return false; } finally { if (fd !== undefined) closeSync(fd); }
 }
 
@@ -92,11 +102,15 @@ export function cycleBegunSince(root, lockFile, t) {
  * One pending wake at a time. `add(key, reason)` after an event is recorded: the first event
  * starts a wake, later ones join it. The session's own monitor gets the first chance: the wake
  * waits graceS ticks (none while asleep), checking each tick, and stops with no nudge once every
- * key is seen or a cycle has begun since the newest event. Else it runs `nudge` every 10 ticks
- * while it reports busy, until it wakes, every key is seen, or ackTimeoutMs pass. One journal
- * line says which path woke it. Events that joined after the deciding check start a new wake.
+ * key is seen or a check has begun since the newest event. While a cycle holds the lock
+ * (`cycleRunning`) it waits for the cycle to end, a wait that counts against neither the grace
+ * nor the timeout, since a busy session cannot be nudged and that cycle may have checked before
+ * the event; then it looks again and, if neither, nudges at once. Else, after the grace, it runs
+ * `nudge` every 10 ticks while it reports busy, until it wakes, every key is seen or a newer check
+ * begins, or ackTimeoutMs pass. One journal line says which path woke it. Events that joined
+ * after the deciding check start a new wake.
  */
-export function makeWaker({ graceS, tick, ackTimeoutMs, nudge, isSeen, begunSince, asleep, log }) {
+export function makeWaker({ graceS, tick, ackTimeoutMs, nudge, isSeen, begunSince, cycleRunning = () => false, asleep, log }) {
   let batch = null;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const keysSeen = (evs) => evs.some((e) => e.key) && evs.every((e) => !e.key || isSeen(e.key));
@@ -104,12 +118,20 @@ export function makeWaker({ graceS, tick, ackTimeoutMs, nudge, isSeen, begunSinc
     const t0 = b.events[0].at;
     const done = () => b.events.length;
     let decided = 0;
+    let afterCycle = false;
     try {
       const answered = () => { decided = done(); const evs = b.events.slice(0, decided); return keysSeen(evs) || begunSince(evs[evs.length - 1].at); };
       if (graceS > 0 && asleep()) log("asleep: nudging at once");
       else if (graceS > 0) {
         for (let i = 0; ; i++) {
           if (answered()) { log("woken by monitor"); return; }
+          if (cycleRunning()) {
+            log("a cycle is running: waiting for it to end");
+            while (cycleRunning()) await sleep(tick);
+            if (answered()) { log("woken by monitor"); return; }
+            afterCycle = true;
+            break;
+          }
           if (i >= graceS) break;
           await sleep(tick);
         }
@@ -118,8 +140,8 @@ export function makeWaker({ graceS, tick, ackTimeoutMs, nudge, isSeen, begunSinc
       while (Date.now() < until) {
         decided = done();
         const line = await nudge(b.reason);
-        if (/woke/.test(line)) { log(`nudged after ${Math.round((Date.now() - t0) / 1000)}s`); return; }
-        if (keysSeen(b.events.slice(0, decided))) { log("woken by monitor"); return; }
+        if (/woke/.test(line)) { log(afterCycle ? "nudged after cycle" : `nudged after ${Math.round((Date.now() - t0) / 1000)}s`); return; }
+        if (answered()) { log("woken by monitor"); return; }
         log("nudge pending:", line.slice(0, 120));
         await sleep(10 * tick);
       }
@@ -212,7 +234,8 @@ const sleepFile = gitPath(root, "opsbot-sleep");
 const waker = makeWaker({
   graceS, tick, ackTimeoutMs, isSeen, log,
   nudge: async (reason) => (await run(core, ["nudge", "--now", "--reason", reason])).out.split("\n")[0] || "",
-  begunSince: (t) => cycleBegunSince(root, lockFile, t),
+  begunSince: (t) => cycleBegunSince(root, t),
+  cycleRunning: () => existsSync(lockFile),
   asleep: () => existsSync(sleepFile),
 });
 

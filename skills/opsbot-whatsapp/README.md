@@ -81,7 +81,8 @@ Fix each row that is not `ok`; each one prints its fix. Then message the bot.
 The bot's session normally wakes itself on the wake file. The waker gives it 20 seconds
 (`wake_grace_seconds`) to start, and only then types a prompt into the session as a backstop.
 Its log, `journalctl --user -u opsbot-<bot>-monitor-20-whatsapp-waker`, says `woken by monitor`
-or `nudged after <n>s` for each wake. Frequent nudges mean the session's own monitor is not armed.
+or `nudged after <n>s` for each wake, and `nudged after cycle` when a line landed during a cycle that
+did not pick it up. Frequent nudges mean the session's own monitor is not armed.
 
 ## 5. The trusted circle
 

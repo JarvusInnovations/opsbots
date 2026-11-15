@@ -34,7 +34,7 @@ import { dirname, join, resolve } from "node:path";
 import { parseArgs, setExit, usageError } from "../args.js";
 import { cliInvocation, skillDir } from "../invocation.js";
 import { readEvents, sessionLogSection, sessionLogSectionLib } from "../transcript.js";
-import { SCHEDULE_RULES, SLEEP_RULES, WAKE_RULES, schedulePackLines, wakeFiles, wakeLines } from "../wake.js";
+import { SCHEDULE_RULES, SLEEP_RULES, WAKE_RULES, readWakeBase, schedulePackLines, wakeFiles, wakeLines } from "../wake.js";
 import { gitPath } from "../repo.js";
 import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
 import { findRoot, firstLine, iso, nowIso, nowMs, parseIso, showHead } from "../repo.js";
@@ -257,7 +257,7 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
     kit.push(`═══ 1.${kit.length + 1} The schedule and live wake (arm it before anything else)\n${lines.join("\n")}`);
   } else if (wakeFiles(s).length) {
     const evs = transcript ? readEvents(transcript) : null;
-    const lines = [...wakeLines(s, evs && evs.length ? evs : null, now, null), ...WAKE_RULES];
+    const lines = [...wakeLines(s, evs && evs.length ? evs : null, now, null, readWakeBase(root)), ...WAKE_RULES];
     kit.push(`═══ 1.${kit.length + 1} The live wake (arm it before anything else)\n${lines.join("\n")}`);
   }
 
