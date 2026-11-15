@@ -244,6 +244,12 @@ other, in this order:
    on one file, never a longer deadline, never a different command.
 2. **Out-of-band, the backstop.** The listener's `nudge --now`, which survives the session
    and covers a session that never armed (a fresh start, a compaction that dropped the rule).
+   **The monitor is armed from where the last check read to, never from "now".** `cycle
+   begin` records each wake file's size as its check starts, and the arm call it prints starts
+   the poller at that offset. A line appended after the check started, while the cycle was
+   still working or between its end and the arming, is therefore delivered the moment the
+   monitor is armed. A poller that starts at the end of the file loses exactly the events that
+   arrive while the session is busy.
    A backstop comes second: a listener waits a short grace for the monitor to start the cycle
    and nudges only when it did not, so a healthy session is woken by its own monitor and no
    prompt is typed into it. A prompt typed for every event would hide a monitor that has
