@@ -146,13 +146,26 @@ export function runPeek(root: string): PeekResult {
   return r.peek;
 }
 
-export function runCheck(root: string, opts: { commit: boolean }): CheckResult {
-  const r = sweep(root, { commit: opts.commit, peek: false });
+/**
+ * A fast check (specs/skills/opsbot-core.md, A fast cycle): only the named heartbeat.d inputs,
+ * given the last full check's OPSBOT_SINCE; the watermark is left where it is.
+ */
+export interface FastCheck {
+  inputs: string[];
+  since: string;
+}
+
+export function runCheck(root: string, opts: { commit: boolean; fast?: FastCheck | null; mode?: string }): CheckResult {
+  const r = sweep(root, { commit: opts.commit, peek: false, fast: opts.fast ?? null, mode: opts.mode });
   if (!("check" in r)) throw new Error("unreachable: a check returned a peek");
   return r.check;
 }
 
-function sweep(root: string, opts: { commit: boolean; peek: boolean }): { check: CheckResult } | { peek: PeekResult } {
+function sweep(
+  root: string,
+  opts: { commit: boolean; peek: boolean; fast?: FastCheck | null; mode?: string },
+): { check: CheckResult } | { peek: PeekResult } {
+  const fast = opts.peek ? null : (opts.fast ?? null);
   if (!hasHead(root)) {
     throw new AxiError("no commit at HEAD in this checkout", "CANNOT_RUN", ["Commit opsbot.json first"]);
   }
@@ -173,12 +186,14 @@ function sweep(root: string, opts: { commit: boolean; peek: boolean }): { check:
     wm = null;
     sinceMs = startMs - FIRST_RUN_HOURS * 3_600_000;
   }
-  const SINCE = iso(sinceMs);
+  // a fast check reads the window the last full check read: only a full check moves the watermark
+  const SINCE = fast ? fast.since : iso(sinceMs);
   const seen = readSeen(root);
 
-  // every stream
+  // every stream; a fast check, only the inputs the wake named
   const configPath = configSnapshot(root, text);
-  const { scripts } = discover(root, "heartbeat");
+  const all = discover(root, "heartbeat").scripts;
+  const scripts = fast ? all.filter((s) => fast.inputs.includes(s.name)) : all;
   if (scripts.length === 0) {
     failed("heartbeat.d", "no heartbeat scripts are installed, so no stream can be read");
   }
@@ -224,8 +239,9 @@ function sweep(root: string, opts: { commit: boolean; peek: boolean }): { check:
   }
 
   // the core's own input: one item per due routine occurrence. Listed only when the bot has a
-  // definition or there is something to say, so a bot without routines reads as before.
-  {
+  // definition or there is something to say, so a bot without routines reads as before. A fast
+  // check leaves it for the next full one.
+  if (!fast) {
     let got: Item[] = [];
     let problems: string[] = [];
     let files = 0;
@@ -274,21 +290,28 @@ function sweep(root: string, opts: { commit: boolean; peek: boolean }): { check:
   const oldWm = readWatermark(root);
   const writeState = () => {
     appendSeen(root, recorded);
-    if (outcome === "nothing-new") writeWatermark(root, NOW);
+    if (outcome === "nothing-new" && !fast) writeWatermark(root, NOW);
     const cur = readWatermark(root);
     const inputsObj: Record<string, { ok: boolean; new: number; quiet?: number }> = {};
     for (const i of realInputs()) {
       inputsObj[i.input] = { ok: i.ok, new: i.new };
       if (i.quiet > 0) inputsObj[i.input]!.quiet = i.quiet;
     }
-    appendJsonl(p.log, {
+    const line: Record<string, unknown> = {
       at: NOW,
       outcome,
       inputs: inputsObj,
       new: NEW,
       failed: failedList(),
       watermark: cur ?? null,
-    });
+    };
+    // a check a cycle ran says which kind it was and the window it read, which a fast check reuses
+    if (opts.mode) {
+      line.check = opts.mode;
+      line.since = SINCE;
+    }
+    if (fast) line.fast = true;
+    appendJsonl(p.log, line);
   };
   writeState();
 
@@ -317,7 +340,7 @@ function sweep(root: string, opts: { commit: boolean; peek: boolean }): { check:
   const n = realInputs().length;
   const code: CheckResult["code"] = outcome === "nothing-new" ? 0 : outcome === "new" ? 10 : 20;
   if (outcome === "nothing-new") {
-    const line = `nothing new · ${n} inputs · watermark ${cur}`;
+    const line = `nothing new · ${n} inputs · watermark ${cur ?? "none"}${fast ? " (held: fast check)" : ""}`;
     return { check: { code, outcome, line, output: { check: line } } };
   }
   const fl = failedList();

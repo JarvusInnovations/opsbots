@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "8023ca9" : "dev";
+    VERSION = true ? "6551e94" : "dev";
   }
 });
 
@@ -1835,6 +1835,14 @@ function cliInvocation() {
   cached = `node ${quote(collapseHome(self))}`;
   return cached;
 }
+function selfCommand() {
+  const inv = cliInvocation();
+  const home = homedir2();
+  const abs = (w) => home && (w === "~" || w.startsWith("~/")) ? `${home}${w.slice(1)}` : w;
+  const m = inv.match(/^(node )?"(.*)"$/);
+  if (m) return `${m[1] ?? ""}${quote(abs(m[2]))}`;
+  return inv.split(" ").map(abs).join(" ");
+}
 function absoluteInvocation() {
   const shim = shimPath();
   if (isExecutable(shim) && !shim.endsWith(".ts") && !shim.endsWith(".mjs")) return shim;
@@ -1894,8 +1902,8 @@ var init_reference = __esm({
         group: "The cycle",
         commands: [
           {
-            usage: "cycle begin",
-            summary: "Refuse while another writer holds the checkout (exit 30, `wait \xB7 \u2026 \xB7 next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it. With `loop.schedule: monitor`, on 0 and 30 the `wake` field holds the schedule monitor's state and the one Monitor call to make now. With `sleep` set, a nothing-new begin that finds the loop quiet for `after_minutes` prints a `sleep` field in place of `wake`: arm nothing, end the turn. A begin that finds `.git/opsbot-sleep` removes it and logs the wake."
+            usage: "cycle begin [--full]",
+            summary: "Refuse while another writer holds the checkout (exit 30, `wait \xB7 \u2026 \xB7 next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. A wake from a wake file whose `wake.files` entry names its inputs (`{file, inputs}`) runs a fast check: only those inputs, the last full check's window, the watermark left alone, only `cycle.d/begin/` scripts named `*.fast`, and a `fast` field naming the inputs and when the next full check is due; a quiet deadline, a full check older than `check.full_minutes` (10; 0 turns fast checks off), a failed last check or `--full` runs the full check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it. With `loop.schedule: monitor`, on 0 and 30 the `wake` field holds the schedule monitor's state and the one Monitor call to make now. With `sleep` set, a nothing-new begin that finds the loop quiet for `after_minutes` prints a `sleep` field in place of `wake`: arm nothing, end the turn. A begin that finds `.git/opsbot-sleep` removes it and logs the wake."
           },
           {
             usage: "check [--no-commit]",
@@ -1903,11 +1911,15 @@ var init_reference = __esm({
           },
           {
             usage: "cycle end --records N [--degraded] [--summary TEXT]",
-            summary: "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle. With `sleep` set, a `sleep` field may replace `wake`, as at `cycle begin`. When the memory review is due, one `memory` line says so with the command to run, and a `routines` field names each other due routine; neither blocks the cycle."
+            summary: "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` (or, when a wake file gained lines since this cycle's check, `arrived: <n> on <file>` and `next 0 arrived` with no `wake` field: run `cycle begin` again at once) and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle. With `sleep` set, a `sleep` field may replace `wake`, as at `cycle begin`. When the memory review is due, one `memory` line says so with the command to run, and a `routines` field names each other due routine; neither blocks the cycle."
           },
           {
             usage: "check --peek",
             summary: "Run every heartbeat script and the `routines` input as a check does (each script also gets `OPSBOT_PEEK=1`) and print the count of new items per input. Records, logs and commits nothing; the watermark and seen keys are untouched, so the next check sees the same items. Exit 0 \xB7 10 \xB7 20 \xB7 2 as `check`."
+          },
+          {
+            usage: "wake wait --until <epoch seconds>",
+            summary: "The schedule monitor's poller, run by the one `Monitor` call `cycle begin` and `cycle end` print and by nothing else. From the line counts the last check recorded, polls every 2 s; prints the new lines of any wake file (each prefixed with the file's basename, cut to 300 characters, at most 20) or `cycle due` when the time passes, and exits 0. Refuses a time more than 1800 s ahead (exit 2)."
           },
           { usage: "next-delay", summary: "Seconds until the next cycle and why, from the cycle log and the cadence table. With `loop.schedule: monitor`, never over 1740 (29 min), and the reason says when that cap applied." }
         ]
@@ -2241,6 +2253,28 @@ var init_cadence = __esm({
 // src/opsbot-core/settings.ts
 import { existsSync as existsSync4, readFileSync as readFileSync2 } from "node:fs";
 import { join as join3 } from "node:path";
+function wakeEntry(v) {
+  if (typeof v === "string") return v.trim() ? { entry: { file: v, inputs: null } } : { problem: "wake.files entries must not be empty" };
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return { problem: "wake.files entries must be file paths (strings) or {file, inputs} objects" };
+  const o = v;
+  const extra = Object.keys(o).filter((k) => k !== "file" && k !== "inputs" && k !== "//");
+  if (extra.length) return { problem: `unknown key wake.files[].${extra[0]}` };
+  if (typeof o.file !== "string" || !o.file.trim()) return { problem: "wake.files[].file must be a non-empty file path" };
+  if (o.inputs === void 0) return { entry: { file: o.file, inputs: null } };
+  if (!Array.isArray(o.inputs) || o.inputs.some((i) => typeof i !== "string" || !i.trim() || i.includes("/"))) {
+    return { problem: `wake.files[].inputs for ${o.file} must be an array of heartbeat.d script names` };
+  }
+  return { entry: { file: o.file, inputs: o.inputs.length ? [...new Set(o.inputs)] : null } };
+}
+function wakeEntries(v) {
+  if (!Array.isArray(v)) return [];
+  const out = [];
+  for (const x of v) {
+    const r = wakeEntry(x);
+    if ("entry" in r) out.push(r.entry);
+  }
+  return out;
+}
 function isObj(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -2304,7 +2338,8 @@ function validateSettings(raw) {
     "commit_paths",
     "sleep",
     "memory",
-    "routines"
+    "routines",
+    "check"
   ]);
   str2(raw, "name", "", true, NAME_RE, "must be lowercase letters, digits and dashes, starting with a letter");
   str2(raw, "mark", "", true);
@@ -2393,9 +2428,21 @@ function validateSettings(raw) {
     allow(wake2, "wake.", ["files"]);
     const files = wake2.files;
     if (files !== void 0) {
-      if (!Array.isArray(files) || files.some((f) => typeof f !== "string" || !f.trim())) {
-        problems.push("wake.files must be an array of file paths (strings)");
+      if (!Array.isArray(files)) problems.push("wake.files must be an array of file paths (strings) or {file, inputs} objects");
+      else {
+        for (const f of files) {
+          const r = wakeEntry(f);
+          if ("problem" in r) problems.push(r.problem);
+        }
       }
+    }
+  }
+  const check = obj(raw, "check", "", false);
+  if (check) {
+    allow(check, "check.", ["full_minutes"]);
+    const fm = check.full_minutes;
+    if (fm !== void 0 && (typeof fm !== "number" || !Number.isInteger(fm) || fm < 0)) {
+      problems.push("check.full_minutes must be a whole number of minutes, 0 or more (0 turns fast checks off)");
     }
   }
   if (raw.commit_paths !== void 0) problems.push(...commitPathProblems(raw.commit_paths));
@@ -2468,7 +2515,7 @@ function withDefaults(raw) {
   const rt = raw.runtime ?? {};
   const pick = (v, d) => v === void 0 ? d : v;
   const mode = LOOP_MODES.includes(loop.mode) ? loop.mode : "strategist";
-  const wakeList = Array.isArray(raw.wake?.files) ? raw.wake.files : [];
+  const wakeList = wakeEntries(raw.wake?.files);
   const cadence = {
     hot: pick(cad.hot, DEFAULT_CADENCE.hot),
     warm: pick(cad.warm, DEFAULT_CADENCE.warm),
@@ -2523,7 +2570,8 @@ function withDefaults(raw) {
     runtime: { adapter: "herdr", agent: rt.agent },
     streams,
     repo_sync: pick(raw.repo_sync, "pull-on-clean"),
-    wake: { files: wakeList },
+    wake: { files: wakeList.map((e) => e.file), entries: wakeList },
+    check: { full_minutes: isObj(raw.check) && typeof raw.check.full_minutes === "number" ? raw.check.full_minutes : DEFAULT_CHECK.full_minutes },
     commit_paths: Array.isArray(raw.commit_paths) ? raw.commit_paths : [],
     sleep: isObj(raw.sleep) ? {
       after_minutes: pick(raw.sleep.after_minutes, DEFAULT_SLEEP.after_minutes),
@@ -2577,7 +2625,7 @@ function trySettings(root) {
   const p = join3(root, SETTINGS_FILE);
   return existsSync4(p) ? tryText(readFileSync2(p, "utf8")) : null;
 }
-var SETTINGS_FILE, LOOP_MODES, MODE_AUTOCOMPACT, LOOP_SCHEDULES, MODE_MODEL, DEFAULT_MEMORY, DEFAULT_ROUTINES, DEFAULT_SLEEP, DEFAULT_CADENCE, DEFAULT_LIVENESS, MONITOR_NUDGE_MINUTES, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR;
+var SETTINGS_FILE, LOOP_MODES, MODE_AUTOCOMPACT, LOOP_SCHEDULES, MODE_MODEL, DEFAULT_MEMORY, DEFAULT_ROUTINES, DEFAULT_CHECK, DEFAULT_SLEEP, DEFAULT_CADENCE, DEFAULT_LIVENESS, MONITOR_NUDGE_MINUTES, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR;
 var init_settings = __esm({
   "src/opsbot-core/settings.ts"() {
     "use strict";
@@ -2590,6 +2638,7 @@ var init_settings = __esm({
     MODE_MODEL = { strategist: "fable", dispatcher: "opus" };
     DEFAULT_MEMORY = { dir: "memory", review_days: 7 };
     DEFAULT_ROUTINES = { dir: "routines", runs_dir: "records/routine-runs" };
+    DEFAULT_CHECK = { full_minutes: 10 };
     DEFAULT_SLEEP = { after_minutes: 60, probe_minutes: 10, max_minutes: 480, compact: true };
     DEFAULT_CADENCE = {
       hot: 180,
@@ -8920,6 +8969,9 @@ function expandHome3(p) {
 function wakeFiles(s) {
   return s.wake.files.map(expandHome3);
 }
+function wakeInputs(s) {
+  return new Map(s.wake.entries.map((e) => [expandHome3(e.file), e.inputs]));
+}
 function lineCount(file) {
   let buf;
   try {
@@ -8931,7 +8983,12 @@ function lineCount(file) {
   for (let i = buf.indexOf(10); i !== -1; i = buf.indexOf(10, i + 1)) n++;
   return n;
 }
-function recordWakeBase(root, files) {
+function wakeCounts(files) {
+  const lines = {};
+  for (const f of files) lines[f] = lineCount(f);
+  return lines;
+}
+function recordWakeBase(root, files, counts) {
   const p = gitPath(root, WAKE_BASE_NAME);
   try {
     if (files.length === 0) {
@@ -8939,23 +8996,38 @@ function recordWakeBase(root, files) {
       return;
     }
     const lines = {};
-    for (const f of files) lines[f] = lineCount(f);
+    for (const f of files) lines[f] = counts?.[f] ?? lineCount(f);
     writeFileSync5(p, `${JSON.stringify({ at: nowIso(), lines })}
 `);
   } catch {
   }
 }
-function readWakeBase(root) {
+function readWakeRecord(root) {
   try {
     const v = JSON.parse(readFileSync9(gitPath(root, WAKE_BASE_NAME), "utf8"));
     const lines = v && typeof v === "object" ? v.lines : null;
     if (!lines || typeof lines !== "object") return null;
     const out = {};
     for (const [k, n] of Object.entries(lines)) if (Number.isInteger(n) && n >= 0) out[k] = n;
-    return out;
+    return { at: typeof v.at === "string" ? v.at : null, lines: out };
   } catch {
     return null;
   }
+}
+function readWakeBase(root) {
+  return readWakeRecord(root)?.lines ?? null;
+}
+function grownFiles(files, base, counts) {
+  const out = [];
+  if (!base) return out;
+  for (const f of files) {
+    const b = baseFor(base, f);
+    const m = counts[f] ?? 0;
+    if (b === null) continue;
+    const n = m < b ? m : m - b;
+    if (n > 0) out.push({ file: f, n });
+  }
+  return out;
 }
 function baseFor(base, file) {
   const n = base?.[file];
@@ -9001,37 +9073,57 @@ function wakeLines(s, evs, now, untilNextWakeMs, base = null) {
 function scheduleDescription(bot) {
   return `${bot} schedule`;
 }
-function shq(s) {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
-}
-function scheduleCommand(files, seconds, bases = []) {
-  const parts2 = [`end=$(( $(date +%s) + ${Math.max(1, Math.round(seconds))} ))`];
-  if (files.length) parts2.push(`c() { [ -f "$1" ] && wc -l < "$1" || echo 0; }`);
-  files.forEach((f, i) => {
-    const b = bases[i] ?? null;
-    parts2.push(`f${i}=${shq(f)}; n${i}=${b === null ? `$(c "$f${i}")` : Math.max(0, Math.floor(b))}`);
-  });
-  const body = [];
-  if (files.length) body.push("h=0");
-  files.forEach((f, i) => {
-    body.push(
-      `m=$(c "$f${i}"); if [ "$m" -lt "$n${i}" ]; then n${i}=0; fi; if [ "$m" -gt "$n${i}" ]; then k=$((m-n${i})); [ "$k" -gt ${DELIVER_MAX_LINES} ] && k=${DELIVER_MAX_LINES}; tail -n "$k" "$f${i}" | cut -c1-300 | while IFS= read -r l; do printf '%s: %s\\n' ${shq(basename7(f))} "$l"; done; n${i}=$m; h=1; fi`
-    );
-  });
-  if (files.length) body.push(`if [ "$h" = 1 ]; then exit 0; fi`);
-  body.push(`if [ "$(date +%s)" -ge "$end" ]; then echo ${shq(CYCLE_DUE)}; exit 0; fi`);
-  parts2.push(`while :; do ${body.join("; ")}; sleep 2; done`);
-  return parts2.join("; ");
-}
 function scheduleSeconds(command) {
   const m = command.match(/^end=\$\(\( \$\(date \+%s\) \+ (\d+) \)\)/);
   return m ? Number(m[1]) : null;
 }
+function wakeWaitUntil(command) {
+  const m = command.match(/\bwake wait --until[ =](\d+)\b/);
+  return m ? Number(m[1]) : null;
+}
+function scheduleDue(command, atMs) {
+  const until = wakeWaitUntil(command);
+  if (until !== null) return until * 1e3;
+  const secs = scheduleSeconds(command);
+  return secs !== null ? atMs + secs * 1e3 : null;
+}
 function scheduleTimeoutMs(seconds) {
   return (Math.max(1, Math.round(seconds)) + SCHEDULE_MARGIN_S) * 1e3;
 }
-function scheduleCall(bot, files, seconds, bases = []) {
-  return `Monitor({ command: ${JSON.stringify(scheduleCommand(files, seconds, bases))}, description: ${JSON.stringify(scheduleDescription(bot))}, timeout_ms: ${scheduleTimeoutMs(seconds)} })`;
+function wakeWaitCommand(untilS) {
+  return `${selfCommand()} wake wait --until ${Math.floor(untilS)}`;
+}
+function scheduleCall(bot, seconds, nowMs2) {
+  const secs = Math.max(1, Math.round(seconds));
+  return `Monitor({ command: ${JSON.stringify(wakeWaitCommand(Math.floor(nowMs2 / 1e3) + secs))}, description: ${JSON.stringify(scheduleDescription(bot))}, timeout_ms: ${scheduleTimeoutMs(secs)} })`;
+}
+function newLines(text, from, to, max) {
+  const all = text.split("\n").slice(0, to);
+  return all.slice(Math.max(from, to - max), to);
+}
+async function wakeWait(files, base, deadlineMs, pollMs = WAKE_POLL_MS) {
+  const counts = files.map((f) => baseFor(base, f) ?? lineCount(f));
+  for (; ; ) {
+    const out = [];
+    files.forEach((f, i) => {
+      let text = "";
+      try {
+        text = readFileSync9(f, "utf8");
+      } catch {
+        text = "";
+      }
+      const m = text.length ? text.split("\n").length - 1 : 0;
+      if (m < counts[i]) counts[i] = 0;
+      if (m > counts[i]) {
+        const name = basename7(f);
+        for (const l of newLines(text, counts[i], m, DELIVER_MAX_LINES)) out.push(`${name}: ${cut(l, DELIVER_MAX_CHARS)}`);
+        counts[i] = m;
+      }
+    });
+    if (out.length) return out.join("\n");
+    if (Date.now() >= deadlineMs) return CYCLE_DUE;
+    await new Promise((r) => setTimeout(r, Math.max(10, Math.min(pollMs, deadlineMs - Date.now()))));
+  }
 }
 function scheduleState(evs, bot, now) {
   const desc = scheduleDescription(bot);
@@ -9039,14 +9131,12 @@ function scheduleState(evs, bot, now) {
   if (!m || m.ended) return null;
   const at = parseIso(m.at);
   if (at === null) return null;
-  const secs = scheduleSeconds(m.command);
-  const until = at + (secs !== null ? secs * 1e3 : Math.max(0, m.timeoutMs - SCHEDULE_MARGIN_S * 1e3));
+  const until = scheduleDue(m.command, at) ?? at + Math.max(0, m.timeoutMs - SCHEDULE_MARGIN_S * 1e3);
   if (until <= now) return null;
   return { at: iso(at), until: iso(until) };
 }
-function scheduleLines(s, evs, now, dueSeconds, base = null) {
-  const files = wakeFiles(s);
-  const call = scheduleCall(s.name, files, dueSeconds, files.map((f) => baseFor(base, f)));
+function scheduleLines(s, evs, now, dueSeconds) {
+  const call = scheduleCall(s.name, dueSeconds, now);
   if (!evs) return [`state unknown (no session log) \xB7 arm now: ${call}`];
   const st = scheduleState(evs, s.name, now);
   if (!st) return [`not armed \xB7 arm now: ${call}`];
@@ -9061,10 +9151,11 @@ function schedulePackLines(s, evs, now) {
   if (st) return [`armed until ${hhmm2(st.until)} (since ${hhmm2(st.at)}); nothing to do until it delivers`];
   return [`${evs ? "not armed" : "state unknown (no session log)"} \xB7 run \`cycle begin\` now; it prints the one Monitor call to make`];
 }
-var MONITOR_MAX_MS, MONITOR_MIN_MS, WAKE_BASE_NAME, DELIVER_MAX_LINES, hhmm2, WAKE_RULES, SCHEDULE_MARGIN_S, CYCLE_DUE, basename7, SLEEP_RULES, SCHEDULE_RULES;
+var MONITOR_MAX_MS, MONITOR_MIN_MS, WAKE_BASE_NAME, DELIVER_MAX_LINES, hhmm2, ARRIVED_RULE, CHAIN_RULE, CLOSE_RULE, WAKE_RULES, SCHEDULE_MARGIN_S, CYCLE_DUE, WAKE_WAIT_MAX_S, WAKE_POLL_MS, DELIVER_MAX_CHARS, basename7, cut, SLEEP_RULES, SCHEDULE_RULES;
 var init_wake = __esm({
   "src/opsbot-core/wake.ts"() {
     "use strict";
+    init_invocation();
     init_repo();
     init_transcript();
     MONITOR_MAX_MS = 18e5;
@@ -9072,14 +9163,25 @@ var init_wake = __esm({
     WAKE_BASE_NAME = "opsbot-wake-base";
     DELIVER_MAX_LINES = 20;
     hhmm2 = (s) => `${s.slice(11, 16)}Z`;
+    ARRIVED_RULE = "When `cycle end` prints `arrived` (and `next 0 arrived`), something came in while you worked: run `cycle begin` again in the same turn and arm nothing.";
+    CHAIN_RULE = "When the work of a cycle is one command, chain `cycle end` after it in the same call: `<the command> && <core> cycle end \u2026`.";
+    CLOSE_RULE = "End the turn with one short line at most.";
     WAKE_RULES = [
       "The monitor is the live wake: its notification means a stream has something new, so run `cycle begin` then.",
       "It starts from where the last check read to, so a line that arrived since that check began is delivered the moment it is armed; otherwise it exits on the first arrival or at its deadline. Arm it again at the end of every cycle when it is not armed, and when it reports an expiry with nothing delivered; never two on one file, never a longer deadline, never a different command.",
-      "The listener's nudge is the backstop when no monitor is armed; neither path depends on the other."
+      "The listener's nudge is the backstop when no monitor is armed; neither path depends on the other.",
+      ARRIVED_RULE
     ];
     SCHEDULE_MARGIN_S = 60;
     CYCLE_DUE = "cycle due";
+    WAKE_WAIT_MAX_S = 1800;
+    WAKE_POLL_MS = 2e3;
+    DELIVER_MAX_CHARS = 300;
     basename7 = (p) => p.replace(/\/+$/, "").split("/").pop() || p;
+    cut = (l, n) => {
+      const cs = Array.from(l);
+      return cs.length > n ? cs.slice(0, n).join("") : l;
+    };
     SLEEP_RULES = [
       "When `cycle begin` or `cycle end` prints a `sleep` field in place of `wake`, arm no monitor and end your turn: the sleep timer compacts you and wakes you.",
       "A wake from sleep is the loop prompt followed by `(woken: <reason>)`: run `cycle begin` as after any wake."
@@ -9089,6 +9191,9 @@ var init_wake = __esm({
       "When it delivers `cycle due` or an event line, run `cycle begin`.",
       "It starts from where the last check read to, so a line that arrived since that check began is delivered the moment it is armed.",
       "At the end of every cycle, arm the one monitor `cycle end` prints, exactly as printed.",
+      ARRIVED_RULE,
+      CHAIN_RULE,
+      CLOSE_RULE,
       "Never call ScheduleWakeup and never start `/loop`.",
       "Never two monitors, never a longer deadline.",
       "If you find none armed (after a start, a compaction, an error), arm it by running `cycle begin`.",
@@ -9459,11 +9564,12 @@ function runPeek(root) {
   return r.peek;
 }
 function runCheck(root, opts) {
-  const r = sweep(root, { commit: opts.commit, peek: false });
+  const r = sweep(root, { commit: opts.commit, peek: false, fast: opts.fast ?? null, mode: opts.mode });
   if (!("check" in r)) throw new Error("unreachable: a check returned a peek");
   return r.check;
 }
 function sweep(root, opts) {
+  const fast = opts.peek ? null : opts.fast ?? null;
   if (!hasHead(root)) {
     throw new AxiError("no commit at HEAD in this checkout", "CANNOT_RUN", ["Commit opsbot.json first"]);
   }
@@ -9482,10 +9588,11 @@ function sweep(root, opts) {
     wm = null;
     sinceMs2 = startMs - FIRST_RUN_HOURS * 36e5;
   }
-  const SINCE = iso(sinceMs2);
+  const SINCE = fast ? fast.since : iso(sinceMs2);
   const seen = readSeen(root);
   const configPath = configSnapshot(root, text);
-  const { scripts } = discover(root, "heartbeat");
+  const all = discover(root, "heartbeat").scripts;
+  const scripts = fast ? all.filter((s) => fast.inputs.includes(s.name)) : all;
   if (scripts.length === 0) {
     failed("heartbeat.d", "no heartbeat scripts are installed, so no stream can be read");
   }
@@ -9527,7 +9634,7 @@ function sweep(root, opts) {
       inputs.push({ input: s.name, ok: true, new: fresh.length, quiet });
     }
   }
-  {
+  if (!fast) {
     let got = [];
     let problems = [];
     let files = 0;
@@ -9567,21 +9674,27 @@ function sweep(root, opts) {
   const oldWm = readWatermark(root);
   const writeState = () => {
     appendSeen(root, recorded);
-    if (outcome === "nothing-new") writeWatermark(root, NOW);
+    if (outcome === "nothing-new" && !fast) writeWatermark(root, NOW);
     const cur2 = readWatermark(root);
     const inputsObj = {};
     for (const i of realInputs()) {
       inputsObj[i.input] = { ok: i.ok, new: i.new };
       if (i.quiet > 0) inputsObj[i.input].quiet = i.quiet;
     }
-    appendJsonl(p.log, {
+    const line2 = {
       at: NOW,
       outcome,
       inputs: inputsObj,
       new: NEW,
       failed: failedList(),
       watermark: cur2 ?? null
-    });
+    };
+    if (opts.mode) {
+      line2.check = opts.mode;
+      line2.since = SINCE;
+    }
+    if (fast) line2.fast = true;
+    appendJsonl(p.log, line2);
   };
   writeState();
   if (opts.commit && !blocked) {
@@ -9607,7 +9720,7 @@ function sweep(root, opts) {
   const n = realInputs().length;
   const code = outcome === "nothing-new" ? 0 : outcome === "new" ? 10 : 20;
   if (outcome === "nothing-new") {
-    const line2 = `nothing new \xB7 ${n} inputs \xB7 watermark ${cur}`;
+    const line2 = `nothing new \xB7 ${n} inputs \xB7 watermark ${cur ?? "none"}${fast ? " (held: fast check)" : ""}`;
     return { check: { code, outcome, line: line2, output: { check: line2 } } };
   }
   const fl = failedList();
@@ -10135,6 +10248,67 @@ var init_drift = __esm({
   }
 });
 
+// src/opsbot-core/fast.ts
+function lastFullCheck(lines) {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i];
+    if (CHECK_OUTCOMES.includes(l.outcome) && l.fast !== true) return l;
+  }
+  return null;
+}
+function lastAnyCheck(lines) {
+  for (let i = lines.length - 1; i >= 0; i--) if (CHECK_OUTCOMES.includes(lines[i].outcome)) return lines[i];
+  return null;
+}
+function decideFast(input) {
+  const { s } = input;
+  if (input.forceFull) return full("--full");
+  if (s.check.full_minutes === 0) return full("check.full_minutes is 0");
+  const files = wakeFiles(s);
+  if (files.length === 0) return full("no wake files");
+  if (!input.base) return full("no wake-file counts recorded");
+  const grown = grownFiles(files, input.base, input.counts);
+  if (grown.length === 0) return full("no new wake-file lines (cycle due)");
+  const named = wakeInputs(s);
+  const want = /* @__PURE__ */ new Set();
+  for (const g of grown) {
+    const ins = named.get(g.file);
+    if (!ins || ins.length === 0) return full(`${basename7(g.file)} names no inputs`);
+    for (const i of ins) want.add(i);
+  }
+  for (const i of want) if (!input.installed.includes(i)) return full(`input ${i} is not installed in heartbeat.d`);
+  const lastFull = lastFullCheck(input.lines);
+  const fullAt = lastFull ? parseIso(lastFull.at) : null;
+  if (!lastFull || fullAt === null) return full("no full check yet");
+  const age2 = input.now - fullAt;
+  if (age2 >= s.check.full_minutes * 6e4) return full(`the last full check was ${Math.floor(age2 / 6e4)} min ago`);
+  const last = lastAnyCheck(input.lines);
+  if (last && (last.outcome === "degraded" || Array.isArray(last.failed) && last.failed.length > 0)) return full("the last check failed an input");
+  let since = typeof lastFull.since === "string" && parseIso(lastFull.since) !== null ? lastFull.since : null;
+  if (!since) {
+    since = input.watermark && validWatermark(input.watermark) ? iso(parseIso(input.watermark) - MARGIN_MINUTES * 6e4) : iso(fullAt - FIRST_RUN_HOURS * 36e5);
+  }
+  return {
+    fast: true,
+    mode: "fast",
+    inputs: input.installed.filter((i) => want.has(i)),
+    since,
+    fullDue: iso(fullAt + s.check.full_minutes * 6e4),
+    files: grown.map((g) => g.file)
+  };
+}
+var full;
+var init_fast = __esm({
+  "src/opsbot-core/fast.ts"() {
+    "use strict";
+    init_check();
+    init_repo();
+    init_state();
+    init_wake();
+    full = (why) => ({ fast: false, mode: `full: ${why}` });
+  }
+});
+
 // src/opsbot-core/commands/cycle.ts
 import { existsSync as existsSync15, rmSync as rmSync7 } from "node:fs";
 function next2(root, s) {
@@ -10151,7 +10325,7 @@ function wakeReport(root, s, boundByNext) {
 function scheduleReport(root, s) {
   const ptr = sessionPointer(root);
   const evs = ptr ? readEvents(ptr.transcript_path) : [];
-  return scheduleLines(s, evs.length ? evs : null, nowMs(), nextDelay(s, readCycleLog(root), nowMs()).seconds, readWakeBase(root));
+  return scheduleLines(s, evs.length ? evs : null, nowMs(), nextDelay(s, readCycleLog(root), nowMs()).seconds);
 }
 function sessionEvents(root) {
   const ptr = sessionPointer(root);
@@ -10170,8 +10344,8 @@ function driftLines(root, s) {
 function cycleCommand(args) {
   const [sub, ...rest] = args;
   if (sub === "begin") {
-    parseArgs(rest, {}, "cycle begin");
-    return cycleBegin();
+    const { flags } = parseArgs(rest, { bool: ["full"] }, "cycle begin [--full]");
+    return cycleBegin(flags.full === true);
   }
   if (sub === "end") return cycleEnd(rest);
   throw new AxiError(sub ? `unknown cycle subcommand ${sub}` : "cycle needs a subcommand", "VALIDATION_ERROR", [
@@ -10185,7 +10359,7 @@ function wait(root, s, who) {
   if (s.loop.schedule === "monitor") out.wake = scheduleReport(root, s);
   return out;
 }
-function cycleBegin() {
+function cycleBegin(forceFull) {
   const root = requireRoot();
   const { settings, text } = loadSettings(root);
   const blocked = blockedBy(root);
@@ -10220,8 +10394,21 @@ function cycleBegin() {
     clearSleep(root);
     appendJsonl(paths(root).log, wakeLogLine(slept, nowMs()));
   }
+  const files = wakeFiles(settings);
+  const counts = wakeCounts(files);
+  const decision = decideFast({
+    s: settings,
+    forceFull,
+    lines: readCycleLog(root),
+    base: readWakeBase(root),
+    counts,
+    installed: discover(root, "heartbeat").scripts.map((x) => x.name),
+    watermark: readWatermark(root),
+    now: nowMs()
+  });
   const configPath = configSnapshot(root, text);
   for (const s of discover(root, "cycle.begin").scripts) {
+    if (decision.fast && !s.name.endsWith(".fast")) continue;
     const r2 = runScript(s, root, baseEnv(root, settings, configPath, "cycle.begin"));
     if (r2.code !== 0) {
       const error = `exit ${r2.code}: ${firstLine(r2.stderr) || firstLine(r2.stdout) || "no message"}`;
@@ -10240,12 +10427,12 @@ function cycleBegin() {
       };
     }
   }
-  recordWakeBase(root, wakeFiles(settings));
+  recordWakeBase(root, files, counts);
   const prev2 = process.env.OPSBOT_COMMIT_TRAILERS;
   process.env.OPSBOT_COMMIT_TRAILERS = trailers();
   let r;
   try {
-    r = runCheck(root, { commit: true });
+    r = runCheck(root, { commit: true, fast: decision.fast ? { inputs: decision.inputs, since: decision.since } : null, mode: decision.mode });
   } catch (e) {
     setExit(20);
     return {
@@ -10256,6 +10443,7 @@ function cycleBegin() {
     if (prev2 === void 0) delete process.env.OPSBOT_COMMIT_TRAILERS;
     else process.env.OPSBOT_COMMIT_TRAILERS = prev2;
   }
+  const fastLine = decision.fast ? `${decision.inputs.join(", ")}; full check due ${hhmm4(decision.fullDue)}` : null;
   if (r.code === 0) {
     let sleep = sleepDecision(root, settings, text, "cycle begin");
     if (sleep) {
@@ -10272,6 +10460,7 @@ function cycleBegin() {
     releaseLock(root);
     setExit(0);
     const out = { cycle: `${r.line}${why ? ` \xB7 not pushed: ${why}` : ""} \xB7 next ${next2(root, settings)}` };
+    if (fastLine) out.fast = fastLine;
     const wake3 = sleep ? [] : wakeReport(root, settings, true);
     if (sleep) out.sleep = sleepFieldLines(settings, sleep);
     if (wake3.length) out.wake = wake3;
@@ -10280,8 +10469,11 @@ function cycleBegin() {
     return out;
   }
   setExit(r.code);
+  const { check: checkLine, ...rest } = r.output;
   const held = {
-    ...r.output,
+    check: checkLine,
+    ...fastLine ? { fast: fastLine } : {},
+    ...rest,
     help: [
       `Work the items; then \`${cliInvocation()} cycle end --records <n>${r.code === 20 ? " --degraded" : ""}\` (the checkout stays held until then)`
     ]
@@ -10322,8 +10514,12 @@ function cycleEnd(args) {
   if (!degraded) {
     const lines = readCycleLog(root);
     let checkAt = null;
+    let fastCheck = false;
     for (const l of lines) {
-      if (["new", "degraded", "nothing-new"].includes(l.outcome) && l.at >= holdAt) checkAt = l.at;
+      if (["new", "degraded", "nothing-new"].includes(l.outcome) && l.at >= holdAt) {
+        checkAt = l.at;
+        fastCheck = l.fast === true;
+      }
     }
     if (!checkAt) refuse(`no check has logged since this cycle began${holdAt ? ` at ${holdAt}` : ""}`);
     const ce = parseIso(checkAt);
@@ -10334,7 +10530,7 @@ function cycleEnd(args) {
       if (oe === null) refuse(`the watermark on file, ${oldWm}, cannot be read`);
       if (ce < oe) refuse(`the watermark would move backwards, from ${oldWm} to ${checkAt}`);
     }
-    wm = checkAt;
+    if (!fastCheck) wm = checkAt;
   }
   const blocked = blockedBy(root);
   if (blocked) {
@@ -10362,7 +10558,8 @@ function cycleEnd(args) {
   };
   if (summary !== void 0) line.summary = summary;
   appendJsonl(p.log, line);
-  const sleep = sleepDecision(root, settings, text, "cycle end");
+  const arrived = arrivals(root, settings, holdAt);
+  const sleep = arrived.length ? null : sleepDecision(root, settings, text, "cycle end");
   if (sleep) appendJsonl(p.log, sleepLogLine(sleep));
   const files = [p.log];
   if (existsSync15(p.watermark)) files.push(p.watermark);
@@ -10386,7 +10583,10 @@ function cycleEnd(args) {
     cycle: `finished \xB7 ${records} records \xB7 watermark ${wm ?? "none"}${degraded ? " (held: degraded)" : ""}${pushed ? ` \xB7 not pushed: ${pushed}` : ""}`
   };
   if (notes.length) out.notes = notes;
-  out.next = next2(root, settings);
+  if (arrived.length) {
+    out.arrived = arrived.map((a) => `${a.n} on ${basename7(a.file)}`).join(", ");
+    out.next = "0 arrived";
+  } else out.next = next2(root, settings);
   if (sleep) {
     out.sleep = sleepFieldLines(settings, sleep);
     return out;
@@ -10398,10 +10598,19 @@ function cycleEnd(args) {
     if (due2.length) out.routines = due2;
   } catch {
   }
+  if (arrived.length) return out;
   const wake2 = wakeReport(root, settings, true);
   if (wake2.length) out.wake = wake2;
   return out;
 }
+function arrivals(root, s, holdAt) {
+  const files = wakeFiles(s);
+  if (files.length === 0) return [];
+  const rec = readWakeRecord(root);
+  if (!rec || !rec.at || holdAt && rec.at < holdAt) return [];
+  return grownFiles(files, rec.lines, wakeCounts(files));
+}
+var hhmm4;
 var init_cycle = __esm({
   "src/opsbot-core/commands/cycle.ts"() {
     "use strict";
@@ -10421,7 +10630,9 @@ var init_cycle = __esm({
     init_transcript();
     init_drift();
     init_wake();
+    init_fast();
     init_sleep();
+    hhmm4 = (t) => `${t.slice(11, 16)}Z`;
   }
 });
 
@@ -11793,6 +12004,44 @@ var init_routines2 = __esm({
   }
 });
 
+// src/opsbot-core/commands/wake.ts
+async function wakeCommand(args) {
+  const [sub, ...rest] = args;
+  if (sub !== "wait") {
+    throw new AxiError(sub ? `unknown wake subcommand ${sub}` : "wake needs a subcommand", "VALIDATION_ERROR", [`${cliInvocation()} ${WAKE_USAGE}`]);
+  }
+  const { flags } = parseArgs(rest, { value: ["until"] }, WAKE_USAGE);
+  const raw = flags.until;
+  if (typeof raw !== "string" || !/^\d+$/.test(raw)) {
+    throw new AxiError("--until must be a time in whole epoch seconds", "VALIDATION_ERROR", [`${cliInvocation()} ${WAKE_USAGE}`]);
+  }
+  const untilMs = Number(raw) * 1e3;
+  const now = nowMs();
+  if (untilMs - now > WAKE_WAIT_MAX_S * 1e3) {
+    throw new AxiError(
+      `--until ${raw} is ${Math.round((untilMs - now) / 1e3)} seconds ahead; a monitor waits ${WAKE_WAIT_MAX_S} at most`,
+      "VALIDATION_ERROR",
+      ["Arm the call `cycle end` printed, exactly as printed"]
+    );
+  }
+  const root = requireRoot();
+  const { settings } = loadSettings(root);
+  return wakeWait(wakeFiles(settings), readWakeBase(root), Date.now() + (untilMs - now));
+}
+var WAKE_USAGE;
+var init_wake2 = __esm({
+  "src/opsbot-core/commands/wake.ts"() {
+    "use strict";
+    init_dist2();
+    init_args();
+    init_invocation();
+    init_repo();
+    init_settings();
+    init_wake();
+    WAKE_USAGE = "wake wait --until <epoch seconds>";
+  }
+});
+
 // src/opsbot-core/commands/simple.ts
 import { existsSync as existsSync20, readFileSync as readFileSync18 } from "node:fs";
 import { join as join24 } from "node:path";
@@ -12031,6 +12280,7 @@ var init_cli2 = __esm({
     init_sleep2();
     init_memory2();
     init_routines2();
+    init_wake2();
     init_simple();
     CLI = cliInvocation();
     TOP_HELP = `usage: ${CLI} <command> [subcommand] [args] [flags]
@@ -12060,6 +12310,7 @@ env:   OPSBOT_ROOT (the bot's repo; default: the git top level of the working di
       start: (a) => startCommand(a),
       memory: (a) => memoryCommand(a),
       routines: (a) => routinesCommand(a),
+      wake: (a) => wakeCommand(a),
       // shadows the SDK's npm self-update: this CLI ships inside a skill
       update: () => {
         throw new AxiError("opsbot-core ships inside a skill, not on npm", "VALIDATION_ERROR", [

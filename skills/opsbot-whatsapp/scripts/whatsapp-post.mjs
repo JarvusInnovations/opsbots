@@ -653,9 +653,14 @@ function cmdStatusRows() {
   }
 
   // wake.files names the wake file
-  const wakeFiles = cfg.wake && Array.isArray(cfg.wake.files) ? cfg.wake.files.map(String) : [];
-  if (wakeFiles.some((f) => home(f) === wakeAbs)) row("ok", "wake.files", `names ${wakeCfg}`);
-  else row("missing", "wake.files", `does not name ${wakeCfg}`, `add "${wakeCfg}" to wake.files in opsbot.json`);
+  // an entry is a path (it names no inputs) or {file, inputs}
+  const wakeEntries = (cfg.wake && Array.isArray(cfg.wake.files) ? cfg.wake.files : [])
+    .map((e) => (typeof e === "string" ? { file: e, inputs: [] } : e && typeof e === "object" && typeof e.file === "string" ? { file: e.file, inputs: Array.isArray(e.inputs) ? e.inputs : [] } : null))
+    .filter(Boolean);
+  const named = wakeEntries.find((e) => home(e.file) === wakeAbs);
+  if (named && named.inputs.includes("25-whatsapp-events")) row("ok", "wake.files", `names ${wakeCfg}, read by 25-whatsapp-events (a wake from it runs a fast check)`);
+  else if (named) row("ok", "wake.files", `names ${wakeCfg} (no inputs named: every wake runs a full check; install prints the object form)`);
+  else row("missing", "wake.files", `does not name ${wakeCfg}`, `add {"file": "${wakeCfg}", "inputs": ["25-whatsapp-events"]} to wake.files in opsbot.json`);
 
   // whatsapp-axi present, and new enough: `doctor --json-out` writes a file with a `checks` array
   // (a build with specs/conventions.md), and says whether the account exists

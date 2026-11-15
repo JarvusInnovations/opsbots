@@ -66,6 +66,21 @@ cfg() {
   ' "$CONFIG" "$1" 2>/dev/null
 }
 
+# wake.files, one entry per line as <file><TAB><inputs, comma-separated>: an entry is a path
+# (it names no inputs) or {file, inputs}
+wake_entries() {
+  node -e '
+    const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    const fs = c && c.wake && Array.isArray(c.wake.files) ? c.wake.files : [];
+    const out = [];
+    for (const e of fs) {
+      if (typeof e === "string") out.push(e + "\t");
+      else if (e && typeof e === "object" && typeof e.file === "string") out.push(e.file + "\t" + (Array.isArray(e.inputs) ? e.inputs.join(",") : ""));
+    }
+    process.stdout.write(out.join("\n"));
+  ' "$CONFIG" 2>/dev/null
+}
+
 expand() { case "$1" in "~"*) printf '%s' "$HOME${1#\~}" ;; *) printf '%s' "$1" ;; esac; }
 
 # ------------------------------------------------------------------------------------ install
@@ -114,7 +129,10 @@ Merge into opsbot.json yourself (this command never writes it), then commit:
       "events_file": "~/.cache/$name/slack-events.jsonl"
     }
   },
-  "wake": { "files": ["~/.cache/$name/slack-events.jsonl"] }
+  "wake": { "files": [{ "file": "~/.cache/$name/slack-events.jsonl", "inputs": ["20-slack-events"] }] }
+
+(The object form names the input that reads the file, so a wake from it checks only that input:
+a fast cycle. An entry already there as a plain path works, with a full check at every wake.)
 
 Optional keys under streams.slack: receipt_emoji, ack_emoji, ack_timeout_minutes, wake_grace_seconds,
 lookback_minutes, bot_name, team, sender_lookup, operators, screen, listen_to, intercept,
@@ -200,10 +218,13 @@ cmd_status() {
   fi
   local ef_cfg ef; ef_cfg=$(cfg streams.slack.events_file); ef_cfg=${ef_cfg:-"~/.cache/$name/slack-events.jsonl"}
   ef=$(expand "$ef_cfg")
-  local found=0 f
-  while IFS= read -r f || [ -n "$f" ]; do [ -n "$f" ] && [ "$(expand "$f")" = "$ef" ] && found=1; done < <(cfg wake.files)
-  if [ $found = 1 ]; then row ok wake.files "names $ef_cfg"
-  else row missing wake.files "does not name $ef_cfg" "add \"$ef_cfg\" to wake.files in opsbot.json"; fi
+  local found=0 f ins named=""
+  while IFS=$'\t' read -r f ins || [ -n "$f" ]; do
+    [ -n "$f" ] && [ "$(expand "$f")" = "$ef" ] && { found=1; named=$ins; }
+  done < <(wake_entries)
+  if [ $found = 1 ] && [[ ",$named," == *",20-slack-events,"* ]]; then row ok wake.files "names $ef_cfg, read by 20-slack-events (a wake from it runs a fast check)"
+  elif [ $found = 1 ]; then row ok wake.files "names $ef_cfg (no inputs named: every wake runs a full check; install prints the object form)"
+  else row missing wake.files "does not name $ef_cfg" "add {\"file\": \"$ef_cfg\", \"inputs\": [\"20-slack-events\"]} to wake.files in opsbot.json"; fi
 
   # the screen, only when it is set
   if [ -n "$(cfg streams.slack.screen)" ]; then

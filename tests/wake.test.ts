@@ -316,11 +316,15 @@ describe("the monitor is armed from where the last check read to", () => {
     appendFileSync(f, "d\n"); // lands mid-cycle
     const e = cli(bot, ["cycle", "end", "--records", "1"], { now: "2026-03-02T15:01:00Z" });
     expect(e.code).toBe(0);
-    expect(e.out).toContain("n=3;"); // from the check, not from now
-    expect(cli(bot, ["cold-start"], { now: "2026-03-02T15:02:00Z" }).out).toContain("n=3;");
-    // the monitor schedule's call starts there too
+    // the session is awake: it begins again rather than arming a monitor that would fire at once
+    expect(e.out).toContain("arrived: 1 on events.jsonl");
+    expect(e.out).toContain("next: 0 arrived");
+    expect(e.out).not.toContain("Monitor(");
+    expect(cli(bot, ["cold-start"], { now: "2026-03-02T15:02:00Z" }).out).toContain("n=3;"); // from the check, not from now
+    // the monitor schedule's poller starts from the record too: `wake wait` reads it
     setSettings(bot, { loop: { prompt: "testbot cycle: follow the opsbot-core skill, start with cycle begin", autocompact: "300k", schedule: "monitor" } });
     const s = cli(bot, ["cycle", "begin"], { now: "2026-03-02T15:10:00Z" });
-    expect(s.out).toContain("n0=4;");
+    expect(readWakeBase(bot.root)).toEqual({ [f]: 4 });
+    expect(s.out).toContain("wake wait --until");
   });
 });

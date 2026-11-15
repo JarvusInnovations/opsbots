@@ -64,7 +64,10 @@ From the bot's repo checkout:
 .agents/skills/opsbot-whatsapp/scripts/opsbot-whatsapp install
 ```
 
-It copies three scripts into `opsbot.d/` and prints a block to add to `opsbot.json`:
+It copies three scripts into `opsbot.d/` and prints a block to add to `opsbot.json`. Its `wake`
+entry names the wake file and the script that reads it, so a WhatsApp message wakes a fast cycle
+that checks only WhatsApp; if `opsbot.json` already lists the wake file as a plain path, replace
+it with the object form. Fill in:
 
 - `account`: the name you used above.
 - `operators`: your number, the same as in `whatsapp-axi operators list`.
@@ -84,7 +87,8 @@ The bot's session normally wakes itself on the wake file. The waker gives it 20 
 (`wake_grace_seconds`) to start, and only then types a prompt into the session as a backstop.
 Its log, `journalctl --user -u opsbot-<bot>-monitor-20-whatsapp-waker`, says `woken by monitor`
 or `nudged after <n>s` for each wake, and `nudged after cycle` when a line landed during a cycle that
-did not pick it up. Frequent nudges mean the session's own monitor is not armed. A line
+did not pick it up. Frequent nudges mean the session's own monitor is not armed. `nudge pending`
+once for a line means the session was busy; it picks the line up when its cycle ends. A line
 `mark failed: <reason>` means the blue ticks could not be sent; the waker tries three more times.
 
 Every post the bot tries is a line in `logs/whatsapp-posts.jsonl`: never the text, only its hash,
