@@ -54,8 +54,9 @@ In the repo:
 | `escalate_chat` | the chat the sink posts to: an operator's direct chat | required for the sink |
 | `wake_file` | the daemon's wake file; must also be in `wake.files` | `~/.cache/<bot>/whatsapp-wake.jsonl` |
 | `listen_to` | `anyone` or `operators`: whose kept messages become items | `anyone` |
+| `heard` | phone numbers of people the bot also hears when `listen_to` is `operators` ([Who the bot hears](#who-the-bot-hears)) | none |
 | `mark_read` | `seen` marks a message read once its item is in the seen keys; `off` never marks | `seen` |
-| `trusted` | phone numbers of people who count as inside: a group whose every other member is an operator or trusted is `internal` | none |
+| `trusted` | phone numbers of people who may see what the `internal` policy allows ([Destination classes](#destination-classes)); nothing to do with who the bot hears | none |
 | `peers` | other bots heard as peers: `[{name, user, chats}]`, `user` a phone number, `chats` the group ids where it is heard | none |
 | `peer_turns`, `peer_posts_per_hour` | the loop guard's limits, as in opsbot-slack | `6`, `20` |
 | `screen` | the screen, same keys and contract as opsbot-slack | unset: nothing is screened |
@@ -99,14 +100,33 @@ reply, from_peer?, peer_note?, gate_word_void?}`.
 - The account's own messages, `edit` and `revoke` events, and `state` events are not items. A
   `state` event other than `connected` or `connecting` fails the input with one line naming the
   state, after the items are printed.
-- With `listen_to: operators`, an item whose sender is not an operator is not printed, unless a
-  peer rule keeps it.
+- With `listen_to: operators`, an item whose sender is neither an operator nor in `heard` is not
+  printed, unless a peer rule keeps it.
+- An item from anyone but an operator carries `gate_word_void: "not an operator"`.
 - It then writes the highest `seq` it saw to the cursor file. Exit 1 when whatsapp-axi fails or
   the daemon is not running; items already read are printed first.
 
 **`escalate.d/20-whatsapp-dm`.** The message on stdin, prefixed with `OPSBOT_MARK`, is sent to
 `escalate_chat` with `whatsapp-axi send`. It is the kit's own path to the operator and is never
 screened. Exit 1 with one line on stderr when it cannot send.
+
+## Who the bot hears
+
+Two lists answer two different questions, and neither implies the other:
+
+| Question | Setting | Effect |
+| --- | --- | --- |
+| Whose messages reach the session? | `listen_to`, `operators`, `heard` | an item, a wake, a read receipt |
+| What may be said in front of someone? | `trusted` | the destination class, and so the screen's policy |
+
+A personal assistant answers its operator, and may also answer a few named people (friends in
+a group who tag it) without those people being inside anything: `listen_to: operators` with
+their numbers in `heard`. Their messages become items like the operator's, marked
+`from_operator: false` and `gate_word_void: "not an operator"`: the bot may answer them, and
+they can never authorise anything. A group with them in it stays `external` unless they are
+also `trusted`, so what the bot says there is screened with the strict policy.
+
+A sender whose phone number the daemon does not know matches no list.
 
 ## Peer bots
 
@@ -159,7 +179,11 @@ model or the text.
 
 - A participant WhatsApp shows only by its hidden id, with no phone number the daemon knows, is
   never assumed trusted: the class is `unknown`.
-- Being in the account's address book does not make someone trusted. Only the two lists do.
+- Being in the account's address book does not make someone trusted, and neither does being in
+  `heard`. Only `operators`, `trusted` and `peers` count.
+- What `internal` and `external` mean is the bot's own, written in its two policy files. For a
+  company's bot, `trusted` is the staff and `internal` allows company matters. For one person's
+  assistant, `trusted` is whoever that person would discuss the withheld matters in front of.
 - The class is cached per chat for `screen.cache_seconds`; `unknown` is never cached.
 - The screen's contract, outcomes, told-once marker and exit codes 3 and 4 are opsbot-slack's,
   unchanged. Exit 1 is whatsapp-axi refusing or failing the send, with its error code passed
