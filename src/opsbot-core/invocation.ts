@@ -59,6 +59,19 @@ export function cliInvocation(): string {
   return cached;
 }
 
+/**
+ * The core as the schedule monitor's command names it: the path help lines name (the bot's
+ * `.../scripts/opsbot-core` shim), absolute, never `~`, so the line runs in any shell.
+ */
+export function selfCommand(): string {
+  const inv = cliInvocation();
+  const home = homedir();
+  const abs = (w: string) => (home && (w === "~" || w.startsWith("~/")) ? `${home}${w.slice(1)}` : w);
+  const m = inv.match(/^(node )?"(.*)"$/);
+  if (m) return `${m[1] ?? ""}${quote(abs(m[2]!))}`;
+  return inv.split(" ").map(abs).join(" ");
+}
+
 /** The command a systemd unit or a hook runs: absolute, never `~`. */
 export function absoluteInvocation(): string {
   const shim = shimPath();

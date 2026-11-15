@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BASE_SETTINGS, cli, makeBot, writeStream, type Bot } from "./helpers";
+import { BASE_SETTINGS, SHIM, cli, makeBot, writeStream, type Bot } from "./helpers";
 import { nextDelay } from "../src/opsbot-core/cadence";
 import { validateSettings, withDefaults } from "../src/opsbot-core/settings";
 import { lastMonitorCall, readEvents } from "../src/opsbot-core/transcript";
@@ -29,6 +29,7 @@ const WAKE_FILE = "/tmp/opsbot-test-wake/events.jsonl";
 const MON_LOOP = { prompt: "testbot cycle: follow the opsbot-core skill, start with cycle begin", autocompact: "300k", schedule: "monitor" };
 const MONITOR = { ...BASE_SETTINGS, loop: MON_LOOP, wake: { files: [WAKE_FILE] } };
 const ev = (o: Record<string, unknown>) => JSON.stringify(o);
+const epoch = (t: string) => Date.parse(t) / 1000;
 
 /** A session log whose last act armed the schedule monitor `at`, with `seconds` baked in. */
 function scheduleLog(path: string, at: string, seconds: number, endedText?: string) {
@@ -88,7 +89,7 @@ describe("loop.schedule monitor: the cycle prints one Monitor call", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("next 1740 night (capped at 29 min: a monitor's limit)");
     expect(r.out).toContain("state unknown (no session log) · arm now: Monitor({ command: ");
-    expect(r.out).toContain("end=$(( $(date +%s) + 1740 ))");
+    expect(r.out).toContain(`${SHIM} wake wait --until ${epoch(NIGHT) + 1740}`);
     expect(r.out).toContain('description: \\"testbot schedule\\"');
     expect(r.out).toContain("timeout_ms: 1800000 })");
     expect(r.out.match(/Monitor\(/g)).toHaveLength(1);
@@ -106,7 +107,7 @@ describe("loop.schedule monitor: the cycle prints one Monitor call", () => {
     expect(e.code).toBe(0);
     // hot: due in 180 s, timeout 180 + 60 s
     expect(e.out).toContain("next: 180 arrived in the last 15 minutes");
-    expect(e.out).toContain("end=$(( $(date +%s) + 180 ))");
+    expect(e.out).toContain(`wake wait --until ${epoch("2026-03-02T23:01:00Z") + 180}`);
     expect(e.out).toContain("timeout_ms: 240000 })");
     expect(e.out.match(/Monitor\(/g)).toHaveLength(1);
     expect(e.out).not.toContain("ScheduleWakeup");
@@ -129,9 +130,8 @@ describe("loop.schedule monitor: the cycle prints one Monitor call", () => {
   });
 
   test("the call is exactly the shape the brief names", () => {
-    const call = scheduleCall("testbot", [WAKE_FILE], 600);
-    expect(call.startsWith("Monitor({ command: ")).toBe(true);
-    expect(call).toContain(', description: "testbot schedule", timeout_ms: 660000 })');
+    const call = scheduleCall("testbot", 600, Date.parse(DAY));
+    expect(call).toBe(`Monitor({ command: "${SHIM} wake wait --until ${epoch(DAY) + 600}", description: "testbot schedule", timeout_ms: 660000 })`);
     expect(scheduleSeconds(scheduleCommand([WAKE_FILE], 600))).toBe(600);
   });
 });

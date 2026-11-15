@@ -23,6 +23,10 @@
     "night_hours": { "start": "22:00", "end": "07:00" }
   },
   "lock_max_minutes": 60,
+  "check": {
+    "//": "A wake from a wake file whose wake.files entry names its inputs ({\"file\": …, \"inputs\": [\"20-slack-events\"]}) checks only those inputs while the last full check is younger than full_minutes; 0 turns fast checks off.",
+    "full_minutes": 10
+  },
   "liveness": {
     "//": "watchdog_minutes: no cycle for this long is an outage. nudge_minutes: quiet this long earns a nudge. interval_minutes: how often both timers fire.",
     "watchdog_minutes": 60,

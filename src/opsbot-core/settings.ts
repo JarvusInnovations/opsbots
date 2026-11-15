@@ -84,6 +84,44 @@ export interface Routines {
 
 export const DEFAULT_ROUTINES: Routines = { dir: "routines", runs_dir: "records/routine-runs" };
 
+/** One `wake.files` entry, normalised: the path as written, and the heartbeat.d inputs that read
+ * it (null when it names none: a bare string, or an object without `inputs`). */
+export interface WakeEntry {
+  file: string;
+  inputs: string[] | null;
+}
+
+/**
+ * The one reader of a `wake.files` entry: a bare string is a file that names no inputs; an object
+ * `{file, inputs}` names the heartbeat.d scripts that read it. Returns the entry, or a problem.
+ */
+export function wakeEntry(v: unknown): { entry: WakeEntry } | { problem: string } {
+  if (typeof v === "string") return v.trim() ? { entry: { file: v, inputs: null } } : { problem: "wake.files entries must not be empty" };
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return { problem: "wake.files entries must be file paths (strings) or {file, inputs} objects" };
+  const o = v as Record<string, unknown>;
+  const extra = Object.keys(o).filter((k) => k !== "file" && k !== "inputs" && k !== "//");
+  if (extra.length) return { problem: `unknown key wake.files[].${extra[0]}` };
+  if (typeof o.file !== "string" || !o.file.trim()) return { problem: "wake.files[].file must be a non-empty file path" };
+  if (o.inputs === undefined) return { entry: { file: o.file, inputs: null } };
+  if (!Array.isArray(o.inputs) || o.inputs.some((i) => typeof i !== "string" || !i.trim() || i.includes("/"))) {
+    return { problem: `wake.files[].inputs for ${o.file} must be an array of heartbeat.d script names` };
+  }
+  return { entry: { file: o.file, inputs: o.inputs.length ? [...new Set(o.inputs as string[])] : null } };
+}
+
+/** Every valid `wake.files` entry, normalised; invalid ones are dropped (validation names them). */
+export function wakeEntries(v: unknown): WakeEntry[] {
+  if (!Array.isArray(v)) return [];
+  const out: WakeEntry[] = [];
+  for (const x of v) {
+    const r = wakeEntry(x);
+    if ("entry" in r) out.push(r.entry);
+  }
+  return out;
+}
+
+export const DEFAULT_CHECK = { full_minutes: 10 };
+
 export const DEFAULT_SLEEP: Sleep = { after_minutes: 60, probe_minutes: 10, max_minutes: 480, compact: true };
 
 export interface Settings {
@@ -100,8 +138,12 @@ export interface Settings {
   streams: Record<string, Record<string, unknown>>;
   repo_sync: "pull-on-clean" | "never-pull";
   /** Files a stream's monitor appends one line per event to; the session arms a bounded
-   * Monitor on each between cycles (the live wake), and the listener's nudge is the backstop. */
-  wake: { files: string[] };
+   * Monitor on each between cycles (the live wake), and the listener's nudge is the backstop.
+   * `files` are the paths as written; `entries` pair each with the heartbeat.d inputs that read
+   * it (null: it names none), as `wakeEntries` normalises them. */
+  wake: { files: string[]; entries: WakeEntry[] };
+  /** How long after a full check a wake from a wake file may run a fast check; 0: never. */
+  check: { full_minutes: number };
   /** Repo-relative files the check's commit and the cycle-end commit also take when changed. */
   commit_paths: string[];
   /** Null when `sleep` is absent: the bot never sleeps. */
@@ -214,6 +256,7 @@ export function validateSettings(raw: unknown): string[] {
     "sleep",
     "memory",
     "routines",
+    "check",
   ]);
   str(raw, "name", "", true, NAME_RE, "must be lowercase letters, digits and dashes, starting with a letter");
   str(raw, "mark", "", true);
@@ -308,9 +351,21 @@ export function validateSettings(raw: unknown): string[] {
     allow(wake, "wake.", ["files"]);
     const files = wake.files;
     if (files !== undefined) {
-      if (!Array.isArray(files) || files.some((f) => typeof f !== "string" || !f.trim())) {
-        problems.push("wake.files must be an array of file paths (strings)");
+      if (!Array.isArray(files)) problems.push("wake.files must be an array of file paths (strings) or {file, inputs} objects");
+      else {
+        for (const f of files) {
+          const r = wakeEntry(f);
+          if ("problem" in r) problems.push(r.problem);
+        }
       }
+    }
+  }
+  const check = obj(raw, "check", "", false);
+  if (check) {
+    allow(check, "check.", ["full_minutes"]);
+    const fm = check.full_minutes;
+    if (fm !== undefined && (typeof fm !== "number" || !Number.isInteger(fm) || fm < 0)) {
+      problems.push("check.full_minutes must be a whole number of minutes, 0 or more (0 turns fast checks off)");
     }
   }
   if (raw.commit_paths !== undefined) problems.push(...commitPathProblems(raw.commit_paths));
@@ -400,7 +455,7 @@ export function withDefaults(raw: Json): Settings {
   const rt = (raw.runtime ?? {}) as Json;
   const pick = <T>(v: unknown, d: T): T => (v === undefined ? d : (v as T));
   const mode: LoopMode = LOOP_MODES.includes(loop.mode as LoopMode) ? (loop.mode as LoopMode) : "strategist";
-  const wakeList = Array.isArray((raw.wake as Json | undefined)?.files) ? ((raw.wake as Json).files as string[]) : [];
+  const wakeList = wakeEntries((raw.wake as Json | undefined)?.files);
   const cadence: Cadence = {
     hot: pick(cad.hot, DEFAULT_CADENCE.hot),
     warm: pick(cad.warm, DEFAULT_CADENCE.warm),
@@ -459,7 +514,8 @@ export function withDefaults(raw: Json): Settings {
     runtime: { adapter: "herdr", agent: rt.agent as string },
     streams,
     repo_sync: pick(raw.repo_sync, "pull-on-clean"),
-    wake: { files: wakeList },
+    wake: { files: wakeList.map((e) => e.file), entries: wakeList },
+    check: { full_minutes: isObj(raw.check) && typeof raw.check.full_minutes === "number" ? raw.check.full_minutes : DEFAULT_CHECK.full_minutes },
     commit_paths: Array.isArray(raw.commit_paths) ? (raw.commit_paths as string[]) : [],
     sleep: isObj(raw.sleep)
       ? {
