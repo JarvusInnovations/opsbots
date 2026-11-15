@@ -126,7 +126,7 @@ Merge into opsbot.json yourself (this command never writes it), then commit:
   "wake": { "files": ["$wake_cfg"] }
 
 Optional keys under streams.whatsapp: listen_to, mark_read, trusted, peers, peer_turns,
-peer_posts_per_hour, screen, post_log, lookback, ack_timeout_minutes (see the skill's SKILL.md).
+peer_posts_per_hour, screen, post_log, lookback, ack_timeout_minutes, wake_grace_seconds (see the skill's SKILL.md).
 
 Point the account's daemon at the wake file (the operator runs this; install never does):
 

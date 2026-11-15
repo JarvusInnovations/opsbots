@@ -64,9 +64,15 @@ where each token goes, is [README.md](README.md).
 - a reaction on one of the bot's own messages;
 - a new member joining the workspace.
 
-For each it appends one JSON line to `events_file`, reacts `receipt_emoji` on a message, and
-runs `$OPSBOT_CORE nudge --now`, repeating every 10 seconds while the agent is mid-turn until
-it wakes or the item was read. It reacts `ack_emoji` only once the item's key is in
+For each it appends one JSON line to `events_file` and reacts `receipt_emoji` on a message at
+once. Then it gives the session's own monitor the first chance: it waits `wake_grace_seconds`
+(20), checking each second, and stops without nudging as soon as the key is in
+`logs/intake/seen` or a cycle has begun since the event (the cycle lock exists, or
+`logs/cycle.jsonl` has a newer line). When the bot is asleep (`.git/opsbot-sleep`) it skips the
+wait. Only if the grace runs out does it run `$OPSBOT_CORE nudge --now`, repeating every 10
+seconds while the agent is mid-turn until it wakes or the item was read. Events that arrive
+together share one pending wake, so a burst is at most one nudge. One journal line says which
+path woke the session: `woken by monitor` or `nudged after <n>s`. It reacts `ack_emoji` only once the item's key is in
 `logs/intake/seen`, which the core writes when the check reports the item to the model: the
 second reaction means read. It logs every event type it receives, kept or not, so a missing
 scope or event subscription shows in `journalctl --user -u opsbot-<bot>-monitor-10-slack-listener`.
@@ -109,7 +115,8 @@ before it is recorded, in this order. None of them calls a model.
   anyone who can message the bot can run the command.
 
 The events file is in `wake.files`, so the session's own bounded monitor wakes on it first.
-The nudge is the backstop that survives the session. With `loop.schedule: "monitor"` the one
+The nudge is the backstop that survives the session, and it waits out `wake_grace_seconds`
+first, so a healthy session gets no typed prompt. With `loop.schedule: "monitor"` the one
 schedule monitor is that wake; the nudge stays, with its own cooldown.
 
 **The reader** prints one item per event recorded since the check's window opened
@@ -296,6 +303,7 @@ which customer they belong to. That knowledge is the bot's own, so the reader ta
 | `receipt_emoji` | the reaction on arrival | `eyes` |
 | `ack_emoji` | the reaction once the check has reported the item | `gear` |
 | `ack_timeout_minutes` | how long the listener keeps nudging and waiting for the read | `30` |
+| `wake_grace_seconds` | how long the listener waits for the session's own monitor to start a cycle before it nudges; `0` nudges at once (`status` says `differs` for anything but a whole number 0 or more) | `20` |
 | `lookback_minutes` | extra window before `$OPSBOT_SINCE` | `30` |
 | `bot_name` | the name the bot posts under, to find its last message in a thread | the bot's `name` |
 | `team` | the workspace id, when slack-axi holds more than one | slack-axi's default |

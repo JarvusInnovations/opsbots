@@ -797,14 +797,14 @@ describe("scripts/opsbot-slack", () => {
  * fails for an id starting F0FAIL); the core logs every nudge and says it woke. HOME is the
  * temp dir. Returns what each stub saw.
  */
-function runListener(slack: Record<string, unknown>, events: unknown[], opts: { settleMs?: number; setup?: (repo: string, dir: string) => void } = {}) {
+function runListener(slack: Record<string, unknown>, events: unknown[], opts: { settleMs?: number; tickMs?: number; setup?: (repo: string, dir: string) => void } = {}) {
   const dir = tmp();
   const repo = join(dir, "repo");
   mkdirSync(repo);
   const tf = join(dir, "app-token");
   writeFileSync(tf, "xapp-1-FAKE\n", { mode: 0o600 });
   chmodSync(tf, 0o600);
-  writeFileSync(join(repo, "opsbot.json"), JSON.stringify({ name: "examplebot", streams: { slack: { app_token_file: tf, events_file: join(dir, "slack-events.jsonl"), bot_user: BOT, ...slack } } }));
+  writeFileSync(join(repo, "opsbot.json"), JSON.stringify({ name: "examplebot", streams: { slack: { app_token_file: tf, events_file: join(dir, "slack-events.jsonl"), bot_user: BOT, wake_grace_seconds: 0, ...slack } } }));
   const axi = join(dir, "slack-axi");
   writeFileSync(axi, `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "${dir}/axi.log"
@@ -843,7 +843,7 @@ exit 0
     };`);
   const r = spawnSync(NODE, ["--import", preload, LISTENER], {
     encoding: "utf8", timeout: 30000,
-    env: { ...process.env, HOME: dir, OPSBOT_ROOT: repo, OPSBOT_CORE: core, OPSBOT_SLACK_AXI: axi },
+    env: { ...process.env, HOME: dir, OPSBOT_ROOT: repo, OPSBOT_CORE: core, OPSBOT_SLACK_AXI: axi, ...(opts.tickMs ? { OPSBOT_SLACK_TICK_MS: String(opts.tickMs) } : {}) },
   });
   const read = (f: string) => (existsSync(join(dir, f)) ? readFileSync(join(dir, f), "utf8").trim().split("\n").filter(Boolean) : []);
   return {
@@ -854,6 +854,70 @@ exit 0
     read,
   };
 }
+
+describe("the wake: the monitor first, the nudge second", () => {
+  // A 50 ms tick, so wake_grace_seconds 10 is half a second here.
+  const now = Math.floor(Date.now() / 1000);
+  const dm = (n: number) => ({ ...DM_TOP, ts: `${now}.00010${n}` });
+  const key = (n: number) => `slack:${DM}:${now}.00010${n}:msg`;
+  const seen = (repo: string, k: string) => { mkdirSync(join(repo, "logs/intake"), { recursive: true }); writeFileSync(join(repo, "logs/intake/seen"), k + "\n"); };
+  const gitFile = (repo: string, name: string, body = "") => { mkdirSync(join(repo, ".git"), { recursive: true }); writeFileSync(join(repo, ".git", name), body); };
+
+  test("key seen during the grace: no nudge, the ack still lands, one line says the monitor woke it", () => {
+    const r = runListener({ wake_grace_seconds: 10 }, [dm(1)], { tickMs: 50, settleMs: 1200, setup: (repo) => seen(repo, key(1)) });
+    expect(r.nudges).toEqual([]);
+    expect(r.axi).toContain(`react ${DM} ${now}.000101 :gear:`);
+    expect(r.out.match(/woken by monitor/g)).toHaveLength(1);
+  });
+
+  test("a cycle begun during the grace (the lock, or a newer cycle-log line): no nudge", () => {
+    const locked = runListener({ wake_grace_seconds: 10 }, [dm(1)], { tickMs: 50, settleMs: 1200, setup: (repo) => gitFile(repo, "opsbot-cycle.lock", "{}") });
+    expect(locked.nudges).toEqual([]);
+    const logged = runListener({ wake_grace_seconds: 10 }, [dm(1)], {
+      tickMs: 50, settleMs: 1200,
+      setup: (repo) => {
+        mkdirSync(join(repo, "logs"), { recursive: true });
+        // an older line, then one newer than the event
+        writeFileSync(join(repo, "logs/cycle.jsonl"), [{ at: "2020-01-01T00:00:00Z", outcome: "finished" }, { at: new Date(Date.now() + 60000).toISOString().slice(0, 19) + "Z", outcome: "new" }].map((l) => JSON.stringify(l)).join("\n") + "\n");
+      },
+    });
+    expect(logged.nudges).toEqual([]);
+    expect(logged.out).toContain("woken by monitor");
+  });
+
+  test("the grace expires with neither: the nudge loop runs as before", () => {
+    const r = runListener({ wake_grace_seconds: 4 }, [dm(1)], {
+      tickMs: 50, settleMs: 1200,
+      setup: (repo) => { mkdirSync(join(repo, "logs"), { recursive: true }); writeFileSync(join(repo, "logs/cycle.jsonl"), JSON.stringify({ at: "2020-01-01T00:00:00Z", outcome: "finished" }) + "\n"); },
+    });
+    expect(r.nudges).toHaveLength(1);
+    expect(r.out).toMatch(/nudged after \d+s/);
+    expect(r.axi).toContain(`react ${DM} ${now}.000101 :eyes:`);
+  });
+
+  test("asleep: nudges at once, however long the grace", () => {
+    const r = runListener({ wake_grace_seconds: 600 }, [dm(1)], { tickMs: 50, settleMs: 800, setup: (repo) => gitFile(repo, "opsbot-sleep") });
+    expect(r.nudges).toHaveLength(1);
+    expect(r.out).toContain("asleep: nudging at once");
+  });
+
+  test("wake_grace_seconds 0 nudges at once", () => {
+    const r = runListener({ wake_grace_seconds: 0 }, [dm(1)], { settleMs: 600 });
+    expect(r.nudges).toHaveLength(1);
+  });
+
+  test("a burst of three events: one pending wake, at most one nudge", () => {
+    const r = runListener({ wake_grace_seconds: 20 }, [dm(1), dm(2), dm(3)], { tickMs: 50, settleMs: 1800 });
+    expect(r.recorded).toHaveLength(3);
+    expect(r.nudges).toHaveLength(1);
+    expect(r.out.match(/nudged after/g)).toHaveLength(1);
+  });
+
+  test("a wake_grace_seconds that is not a whole number 0 or more falls back to 20", () => {
+    expect(call("settings", [{ name: "examplebot", streams: { slack: { wake_grace_seconds: -1 } } }])).toMatchObject({ wakeGraceSeconds: 20 });
+    expect(call("settings", [{ name: "examplebot", streams: { slack: { wake_grace_seconds: 0 } } }])).toMatchObject({ wakeGraceSeconds: 0 });
+  });
+});
 
 describe("owner-only listening (listen_to)", () => {
   const OPS = "U0OPS00001";
@@ -1153,6 +1217,12 @@ describe("status: listen_to, intercept and files rows", () => {
     expect(repoWith({ listen_to: "owner" }).out).toMatch(/^differs\s+listen_to\s+"owner" is neither/m);
     const ok = repoWith({ listen_to: "operators", operators: ["U0OPS00001"], escalate_dm: DM });
     expect(ok.out).toMatch(new RegExp(`^ok\\s+listen_to\\s+operators: U0OPS00001, and anyone in ${DM}`, "m"));
+  });
+
+  test("wake_grace_seconds: a whole number 0 or more is ok; anything else is differs", () => {
+    expect(repoWith({ escalate_dm: DM, wake_grace_seconds: 20 }).out).toMatch(/^ok\s+wake_grace_seconds\s+20/m);
+    expect(repoWith({ escalate_dm: DM, wake_grace_seconds: 0 }).out).toMatch(/^ok\s+wake_grace_seconds\s+0: nudges at once/m);
+    for (const v of [-1, 2.5, "20"]) expect(repoWith({ escalate_dm: DM, wake_grace_seconds: v }).out).toMatch(/^differs\s+wake_grace_seconds\s/m);
   });
 
   test("intercept: usable rules are ok and say who can trigger them; a missing command is differs", () => {
