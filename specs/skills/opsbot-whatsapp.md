@@ -53,9 +53,9 @@ In the repo:
 | `operators` | the operator's phone numbers in E.164 form; must match the account's own operator list | required |
 | `escalate_chat` | the chat the sink posts to: an operator's direct chat | required for the sink |
 | `wake_file` | the daemon's wake file; must also be in `wake.files` | `~/.cache/<bot>/whatsapp-wake.jsonl` |
-| `listen_to` | `anyone` or `operators`: whose kept messages become items | `anyone` |
+| `listen_to` | `anyone`, `trusted` or `operators`: whose kept messages become items ([The trusted circle](#the-trusted-circle)) | `anyone` |
 | `mark_read` | `seen` marks a message read once its item is in the seen keys; `off` never marks | `seen` |
-| `trusted` | phone numbers of people who count as inside: a group whose every other member is an operator or trusted is `internal` | none |
+| `trusted` | phone numbers of the people the operator trusts with the bot ([The trusted circle](#the-trusted-circle)) | none |
 | `peers` | other bots heard as peers: `[{name, user, chats}]`, `user` a phone number, `chats` the group ids where it is heard | none |
 | `peer_turns`, `peer_posts_per_hour` | the loop guard's limits, as in opsbot-slack | `6`, `20` |
 | `screen` | the screen, same keys and contract as opsbot-slack | unset: nothing is screened |
@@ -99,14 +99,40 @@ reply, from_peer?, peer_note?, gate_word_void?}`.
 - The account's own messages, `edit` and `revoke` events, and `state` events are not items. A
   `state` event other than `connected` or `connecting` fails the input with one line naming the
   state, after the items are printed.
-- With `listen_to: operators`, an item whose sender is not an operator is not printed, unless a
-  peer rule keeps it.
+- With `listen_to: operators`, an item whose sender is not an operator is not printed; with
+  `trusted`, one whose sender is neither an operator nor in `trusted`. A peer rule keeps a
+  peer's either way.
+- An item from anyone but an operator carries `from_operator: false` and
+  `gate_word_void: "not an operator"`; one from a trusted person also carries
+  `from_trusted: true`.
 - It then writes the highest `seq` it saw to the cursor file. Exit 1 when whatsapp-axi fails or
   the daemon is not running; items already read are printed first.
 
 **`escalate.d/20-whatsapp-dm`.** The message on stdin, prefixed with `OPSBOT_MARK`, is sent to
 `escalate_chat` with `whatsapp-axi send`. It is the kit's own path to the operator and is never
 screened. Exit 1 with one line on stderr when it cannot send.
+
+## The trusted circle
+
+WhatsApp has no workspace, so nothing in its data says who is "inside". The operator says so,
+with one list: `trusted` is the people who know the operator runs a bot and whom the operator
+trusts to use it. For one person's assistant that is a circle of friends making plans with it;
+for a company's bot it is the staff.
+
+Being trusted means two things, and only these:
+
+- **The bot hears you.** With `listen_to: trusted`, a kept message from a trusted person
+  becomes an item, wakes the session and gets a read receipt, as the operator's does. With
+  `operators` only the operator's does; with `anyone`, everyone's.
+- **A chat of only trusted people is its own class.** The post command classifies such a chat
+  `trusted`, and the screen checks the draft against `screen.policy.trusted`, a policy the bot
+  writes for that audience: what may be said among these people and what may not.
+
+Being trusted never means authority. A trusted person's message is not the operator's word: it
+cannot give the gate word, approve anything, or change what the bot may do. The bot's own rules
+decide what it will do for them.
+
+A sender whose phone number the daemon does not know is not trusted.
 
 ## Peer bots
 
@@ -153,13 +179,18 @@ model or the text.
 | Class | Decided when | Screened with |
 | --- | --- | --- |
 | `operator-dm` | a direct chat whose other party is an operator | nothing |
-| `internal` | a group whose every participant is the bot, an operator, a `trusted` number or a listed peer; or a direct chat with a `trusted` number | `screen.policy.internal` |
+| `trusted` | a group whose every participant is the bot, an operator, a `trusted` number or a listed peer; or a direct chat with a `trusted` number | `screen.policy.trusted` |
 | `external` | any other participant; or a direct chat with anyone else | `screen.policy.external` |
 | `unknown` | the lookup failed, the daemon is not connected, or a participant has no known phone number | as `external` |
 
 - A participant WhatsApp shows only by its hidden id, with no phone number the daemon knows, is
   never assumed trusted: the class is `unknown`.
-- Being in the account's address book does not make someone trusted. Only the two lists do.
+- Being in the account's address book does not make someone trusted. Only `operators`,
+  `trusted` and `peers` count.
+- The classes are `operator-dm`, `trusted`, `external` and `unknown`. There is no `internal`:
+  that is Slack's word for a workspace's own members, and WhatsApp has no such thing. A bot on
+  both channels may point `policy.trusted` at the same file as its Slack `policy.internal`, or
+  at a different one.
 - The class is cached per chat for `screen.cache_seconds`; `unknown` is never cached.
 - The screen's contract, outcomes, told-once marker and exit codes 3 and 4 are opsbot-slack's,
   unchanged. Exit 1 is whatsapp-axi refusing or failing the send, with its error code passed
