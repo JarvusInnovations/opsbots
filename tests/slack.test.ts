@@ -712,7 +712,7 @@ describe("scripts/opsbot-slack", () => {
       expect(first.out).toContain(`wrote        opsbot.d/${p}`);
     }
     expect(first.out).toContain('"events_file": "~/.cache/examplebot/slack-events.jsonl"');
-    expect(first.out).toContain('"wake": { "files": ["~/.cache/examplebot/slack-events.jsonl"] }');
+    expect(first.out).toContain('"wake": { "files": [{ "file": "~/.cache/examplebot/slack-events.jsonl", "inputs": ["20-slack-events"] }] }');
     expect(first.out).toContain(join(SKILL, "templates", "manifest.yaml"));
     expect(readFileSync(join(b.root, "opsbot.json"), "utf8")).toBe(JSON.stringify({ name: "examplebot" }, null, 2));
     const second = b.cli("install");
@@ -762,7 +762,17 @@ describe("scripts/opsbot-slack", () => {
     const all = b.cli("status");
     expect(all.out).toMatch(/^ok\s+app-token\s+~\/\.config\/examplebot\/slack-app-token \(600, xapp-\)/m);
     expect(all.out).toContain("status: all 10 ok");
+    expect(all.out).toMatch(/^ok\s+wake.files\s+names ~\/\.cache\/examplebot\/slack-events\.jsonl \(no inputs named/m);
     expect(all.code).toBe(0);
+    // the object form, as install prints it, is read the same way, and says the wake is fast
+    writeFileSync(join(b.root, "opsbot.json"), JSON.stringify({
+      name: "examplebot",
+      streams: { slack: { bot_user: BOT, escalate_dm: DM } },
+      wake: { files: [{ file: "~/.cache/examplebot/slack-events.jsonl", inputs: ["20-slack-events"] }] },
+    }));
+    const obj = b.cli("status");
+    expect(obj.out).toMatch(/^ok\s+wake.files\s+names ~\/\.cache\/examplebot\/slack-events\.jsonl, read by 20-slack-events/m);
+    expect(obj.out).toContain("status: all 10 ok");
     expect(all.out + all.err).not.toContain("FAKE");
     expect(readFileSync(join(b.home, "systemctl.log"), "utf8")).toContain("--user is-active opsbot-examplebot-monitor-10-slack-listener.service");
   });
@@ -797,7 +807,7 @@ describe("scripts/opsbot-slack", () => {
  * fails for an id starting F0FAIL); the core logs every nudge and says it woke. HOME is the
  * temp dir. Returns what each stub saw.
  */
-function runListener(slack: Record<string, unknown>, events: unknown[], opts: { settleMs?: number; tickMs?: number; setup?: (repo: string, dir: string) => void } = {}) {
+function runListener(slack: Record<string, unknown>, events: unknown[], opts: { settleMs?: number; tickMs?: number; setup?: (repo: string, dir: string) => void; coreSays?: string } = {}) {
   const dir = tmp();
   const repo = join(dir, "repo");
   mkdirSync(repo);
@@ -818,7 +828,7 @@ exit 0
 `);
   chmodSync(axi, 0o755);
   const core = join(dir, "core");
-  writeFileSync(core, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${dir}/core.log"\necho "woke: stand-in"\n`);
+  writeFileSync(core, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${dir}/core.log"\necho ${JSON.stringify(opts.coreSays ?? "woke: stand-in")}\n`);
   chmodSync(core, 0o755);
   opts.setup?.(repo, dir);
   const preload = join(dir, "fake-slack.mjs");
@@ -955,6 +965,13 @@ describe("the wake: the monitor first, the nudge second", () => {
     const r = runListener({ wake_grace_seconds: 600 }, [dm(1)], { tickMs: 50, settleMs: 800, setup: (repo) => gitFile(repo, "opsbot-sleep") });
     expect(r.nudges).toHaveLength(1);
     expect(r.out).toContain("asleep: nudging at once");
+  });
+
+  test("a nudge refused because the session is mid-turn is logged once per wake, and the listener keeps waiting", () => {
+    const r = runListener({ wake_grace_seconds: 0 }, [dm(1)], { tickMs: 50, settleMs: 2500, coreSays: "nothing · examplebot is working (mid-turn since 15:00Z)" });
+    expect(r.nudges.length).toBeGreaterThanOrEqual(3); // it kept trying
+    expect(r.out.match(/nudge pending:/g)).toHaveLength(1);
+    expect(r.out).toContain("nudge pending: nothing · examplebot is working (mid-turn since 15:00Z)");
   });
 
   test("wake_grace_seconds 0 nudges at once", () => {

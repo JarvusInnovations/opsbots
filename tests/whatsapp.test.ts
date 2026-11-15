@@ -731,9 +731,9 @@ describe("opsbot-whatsapp post", () => {
 describe("monitor.d/20-whatsapp-waker", () => {
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   /** Start the waker with a fast tick; the core stand-in logs each nudge and says it woke. */
-  function startWaker(b: ReturnType<typeof bot>, opts: { woke?: boolean } = {}) {
+  function startWaker(b: ReturnType<typeof bot>, opts: { woke?: boolean; says?: string } = {}) {
     const core = join(b.dir, "core");
-    writeFileSync(core, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${b.dir}/core.log"\n${opts.woke === false ? 'echo "busy: working"' : 'echo "woke: stand-in"'}\n`);
+    writeFileSync(core, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${b.dir}/core.log"\n${opts.says ? `echo ${JSON.stringify(opts.says)}` : opts.woke === false ? 'echo "busy: working"' : 'echo "woke: stand-in"'}\n`);
     chmodSync(core, 0o755);
     const child = spawn(NODE, [WAKER], { cwd: b.root, env: { ...b.env, OPSBOT_CORE: core, OPSBOT_WHATSAPP_TICK_MS: "50" } });
     let out = "", errOut = "";
@@ -958,6 +958,20 @@ describe("monitor.d/20-whatsapp-waker", () => {
     await w.stop();
   });
 
+  test("a nudge refused because the session is mid-turn is logged once per wake, and the waker keeps waiting", async () => {
+    const b = one({ wake_grace_seconds: 0 });
+    const w = startWaker(b, { says: "nothing · examplebot is working (mid-turn since 15:00Z)" });
+    await ready(w);
+    w.wakeLine(1);
+    await sleep(1800); // a nudge every 10 ticks (500 ms) while it is refused
+    expect(w.nudges().length).toBeGreaterThanOrEqual(3);
+    expect(w.out().match(/nudge pending:/g)).toHaveLength(1);
+    w.seen(KEY1);
+    await sleep(600);
+    await w.stop();
+    expect(w.out().match(/nudge pending:/g)).toHaveLength(1);
+  });
+
   test("asleep: nudges at once, however long the grace", async () => {
     const b = one({ wake_grace_seconds: 600 });
     gitFile(b, "opsbot-sleep");
@@ -1079,7 +1093,7 @@ describe("scripts/opsbot-whatsapp install and status", () => {
     }
     expect(first.out).toContain('"whatsapp": {');
     expect(first.out).toContain(`"account": "${ACCOUNT}"`);
-    expect(first.out).toContain(`"wake": { "files": ["${b.wake}"] }`);
+    expect(first.out).toContain(`"wake": { "files": [{ "file": "${b.wake}", "inputs": ["25-whatsapp-events"] }] }`);
     expect(first.out).toContain(`whatsapp-axi settings set wake_file ${b.wake} --account ${ACCOUNT}`);
     expect(readFileSync(join(b.root, "opsbot.json"), "utf8")).toBe(before);
     expect(b.calls()).toEqual([]); // install asks nothing of whatsapp-axi and changes nothing there

@@ -125,7 +125,10 @@ Merge into opsbot.json yourself (this command never writes it), then commit:
       "wake_file": "$wake_cfg"
     }
   },
-  "wake": { "files": ["$wake_cfg"] }
+  "wake": { "files": [{ "file": "$wake_cfg", "inputs": ["25-whatsapp-events"] }] }
+
+(The object form names the input that reads the file, so a wake from it checks only that input:
+a fast cycle. An entry already there as a plain path works, with a full check at every wake.)
 
 Optional keys under streams.whatsapp: listen_to, mark_read, trusted, peers, peer_turns,
 peer_posts_per_hour, screen, post_log, lookback, ack_timeout_minutes, wake_grace_seconds (see the skill's SKILL.md).

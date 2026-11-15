@@ -45,7 +45,9 @@ Run as the bot's user, from the bot's repo checkout. The person-facing walk-thro
    `whatsapp-axi operators add <+number> --confirm --account <account>`, and the scope with `whatsapp-axi scope set`. This skill
    never changes them.
 3. **The scripts.** `scripts/opsbot-whatsapp install`. It copies the three scripts and prints the
-   `streams.whatsapp` block, the `wake.files` entry, and the `whatsapp-axi settings set wake_file`
+   `streams.whatsapp` block, the `wake.files` entry in its object form (`{ "file": "<wake file>",
+   "inputs": ["25-whatsapp-events"] }`, so a wake from it runs a fast check: opsbot-core, *A fast
+   cycle*), and the `whatsapp-axi settings set wake_file`
    command. Merge the blocks into `opsbot.json`, run that command, and commit.
 4. **The unit.** `opsbot-core infra install` renders the waker as the user service
    `opsbot-<bot>-monitor-20-whatsapp-waker`.
@@ -74,7 +76,8 @@ account is in and discards the rest without writing it.
   pending wake, so a burst is at most one nudge;
 - only when the grace runs out, runs `$OPSBOT_CORE nudge --now --reason whatsapp`, and again
   every 10 seconds until the nudge reports a wake, the key is in `logs/intake/seen`, a newer
-  check begins, or `ack_timeout_minutes` (30) pass. One journal line says which path woke the
+  check begins, or `ack_timeout_minutes` (30) pass. A refused nudge is logged once per wake
+  (`nudge pending: …`): a session that is mid-turn reaches `cycle end`, which reports the arrival. One journal line says which path woke the
   session: `woken by monitor`, `nudged after <n>s` or `nudged after cycle`;
 - with `mark_read: seen`, waits for the key in `logs/intake/seen` and then runs
   `whatsapp-axi mark-read <chat>/<id>`. The core writes that file when the check reports the item
@@ -261,8 +264,8 @@ when it is settled. After two disagreements, ask the operator in the same chat w
 
 | Command | Does | Exit |
 | --- | --- | --- |
-| `install [--dry-run] [--force]` | copies the three scripts into `opsbot.d/`, executable; a file that differs is left unless `--force`. Prints the `streams.whatsapp` block, the `wake.files` entry and the `whatsapp-axi settings set wake_file` command. Never writes `opsbot.json` and never changes the account | 0 · 2 |
-| `status` | one row each, `ok`, `missing` or `differs`, with the fix: `streams.whatsapp`, the wake file in `wake.files`, whatsapp-axi present and new enough (its `doctor --json-out` file has a `checks` array: a build with whatsapp-axi's `specs/conventions.md`; no release has it yet), the account, its daemon installed, running and connected (else the state and the first failing `doctor` check), one `doctor:<check>` row, `differs`, per failing doctor check for the account (skipped checks and the `(all)` hooks row ignored), fixed by running `whatsapp-axi doctor --account <account>`, the account's `wake_file`, its operators against `operators`, `read_receipts` `on-read` when `mark_read` is `seen`, the account scope and each per-chat override, `escalate_chat` an operator's direct chat; with `screen`, the command and policies; with `peers`, each peer and the bot's membership of each listed group; each script against its template; the waker's unit | 0 all ok · 1 something to fix · 2 |
+| `install [--dry-run] [--force]` | copies the three scripts into `opsbot.d/`, executable; a file that differs is left unless `--force`. Prints the `streams.whatsapp` block, the `wake.files` entry (the object form, naming `heartbeat.d/25-whatsapp-events` as its input) and the `whatsapp-axi settings set wake_file` command. Never writes `opsbot.json` and never changes the account | 0 · 2 |
+| `status` | one row each, `ok`, `missing` or `differs`, with the fix: `streams.whatsapp`, the wake file in `wake.files` (a path or the `{file, inputs}` form; the row says whether a wake from it is fast), whatsapp-axi present and new enough (its `doctor --json-out` file has a `checks` array: a build with whatsapp-axi's `specs/conventions.md`; no release has it yet), the account, its daemon installed, running and connected (else the state and the first failing `doctor` check), one `doctor:<check>` row, `differs`, per failing doctor check for the account (skipped checks and the `(all)` hooks row ignored), fixed by running `whatsapp-axi doctor --account <account>`, the account's `wake_file`, its operators against `operators`, `read_receipts` `on-read` when `mark_read` is `seen`, the account scope and each per-chat override, `escalate_chat` an operator's direct chat; with `screen`, the command and policies; with `peers`, each peer and the bot's membership of each listed group; each script against its template; the waker's unit | 0 all ok · 1 something to fix · 2 |
 | `post <chat> [--reply <id>] [--file <path>] [--retry-id <send id>] [--dry-run] [<text> \| -]` | Posting, above | 0 · 1 · 2 · 3 · 4 · 6 |
 | `classify <chat>` | `{chat, class, why, cached}` | 0 · 2 |
 

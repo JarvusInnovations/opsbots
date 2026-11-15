@@ -109,7 +109,8 @@ export function cycleBegunSince(root, t) {
  * nor the timeout, since a busy session cannot be nudged and that cycle may have checked before
  * the event; then it looks again and, if neither, nudges at once. Else, after the grace, it runs
  * `nudge` every 10 ticks while it reports busy, until it wakes, every key is seen or a newer check
- * begins, or ackTimeoutMs pass. One journal line says which path woke it. Events that joined
+ * begins, or ackTimeoutMs pass; a refusal is logged once per wake (a mid-turn session reaches
+ * `cycle end`, which reports the arrival), not at every try. One journal line says which path woke it. Events that joined
  * after the deciding check start a new wake.
  */
 export function makeWaker({ graceS, tick, ackTimeoutMs, nudge, isSeen, begunSince, cycleRunning = () => false, asleep, log }) {
@@ -121,6 +122,7 @@ export function makeWaker({ graceS, tick, ackTimeoutMs, nudge, isSeen, begunSinc
     const done = () => b.events.length;
     let decided = 0;
     let afterCycle = false;
+    let pending = null;
     try {
       const answered = () => { decided = done(); const evs = b.events.slice(0, decided); return keysSeen(evs) || begunSince(evs[evs.length - 1].at); };
       if (graceS > 0 && asleep()) log("asleep: nudging at once");
@@ -144,7 +146,9 @@ export function makeWaker({ graceS, tick, ackTimeoutMs, nudge, isSeen, begunSinc
         const line = await nudge(b.reason);
         if (/woke/.test(line)) { log(afterCycle ? "nudged after cycle" : `nudged after ${Math.round((Date.now() - t0) / 1000)}s`); return; }
         if (answered()) { log("woken by monitor"); return; }
-        log("nudge pending:", line.slice(0, 120));
+        // a session mid-turn reaches `cycle end`, which reports the arrival: one line per wake
+        const why = /mid-turn/.test(line) ? "mid-turn" : line;
+        if (why !== pending) { pending = why; log("nudge pending:", line.slice(0, 120)); }
         await sleep(10 * tick);
       }
       decided = done();
