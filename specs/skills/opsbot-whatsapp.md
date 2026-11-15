@@ -67,6 +67,10 @@ In the repo:
 
 ## The pieces
 
+`install` prints the `wake.files` entry in its object form, naming `heartbeat.d/25-whatsapp-events` as the
+input that reads the file, so a wake from it runs a fast check
+([opsbot-core](opsbot-core.md#a-fast-cycle)).
+
 **The daemon does the listening.** There is no listener here. What reaches the bot is decided
 by the account's scope in whatsapp-axi: in a group in `tagged` scope, a message that mentions
 the account, the parent of such a reply, replies down from it, and replies to the account's own
