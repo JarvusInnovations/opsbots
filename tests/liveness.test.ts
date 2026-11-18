@@ -2,7 +2,7 @@ import { pickAgent } from "../src/opsbot-core/runtime";
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { cli, makeBot, readLines, type Bot } from "./helpers";
+import { cli, cliAsync, makeBot, readLines, type Bot } from "./helpers";
 
 let bot: Bot;
 afterEach(() => bot?.cleanup());
@@ -122,6 +122,24 @@ describe("nudge", () => {
     expect(r.out).toContain("woke testbot for: a probe failed");
     expect(cli(bot, ["nudge", "--now"], { now: "2026-03-02T15:05:00Z" }).out).toContain("woke 4 min ago");
     expect(prompts(f)).toHaveLength(1);
+  });
+
+  test("outcome tells a typed prompt from a refusal: woke, then cooldown", () => {
+    bot = makeBot();
+    fakeRuntime(bot, { status: "idle" });
+    expect(cli(bot, ["nudge", "--now"], { now: "2026-03-02T15:01:00Z" }).out).toMatch(/^outcome: woke$/m);
+    expect(cli(bot, ["nudge", "--now"], { now: "2026-03-02T15:02:00Z" }).out).toMatch(/^outcome: cooldown$/m);
+    writeFileSync(join(bot.root, ".git", "opsbot-cycle.lock"), JSON.stringify({ pid: String(process.pid), session: "s", started: "2026-03-02T15:59:00Z" }));
+    expect(cli(bot, ["nudge", "--now"], { now: "2026-03-02T16:00:00Z" }).out).toMatch(/^outcome: refused$/m);
+  });
+
+  test("two --now nudges at the same moment type the prompt once", async () => {
+    bot = makeBot();
+    const f = fakeRuntime(bot, { status: "idle" });
+    const rs = await Promise.all([1, 2, 3, 4].map(() => cliAsync(bot, ["nudge", "--now"], { now: "2026-03-02T15:01:00Z" })));
+    expect(prompts(f)).toHaveLength(1);
+    expect(rs.filter((r) => /^outcome: woke$/m.test(r.out))).toHaveLength(1);
+    expect(rs.filter((r) => /^outcome: cooldown$/m.test(r.out))).toHaveLength(3);
   });
 
   test("a missing agent is 'cannot', exit 1", () => {

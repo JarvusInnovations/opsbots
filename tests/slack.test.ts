@@ -804,7 +804,7 @@ describe("scripts/opsbot-slack", () => {
  * The running listener with Slack, slack-axi and the core all stubbed: a preload stands in for
  * fetch and the WebSocket and delivers `events` one at a time, then waits `settleMs` and exits;
  * slack-axi is a script that logs its calls and, for `download`, writes a file into --out (or
- * fails for an id starting F0FAIL); the core logs every nudge and says it woke. HOME is the
+ * fails for an id starting F0FAIL); the core logs every nudge and says it woke (`outcome: woke`). HOME is the
  * temp dir. Returns what each stub saw.
  */
 function runListener(slack: Record<string, unknown>, events: unknown[], opts: { settleMs?: number; tickMs?: number; setup?: (repo: string, dir: string) => void; coreSays?: string } = {}) {
@@ -828,7 +828,7 @@ exit 0
 `);
   chmodSync(axi, 0o755);
   const core = join(dir, "core");
-  writeFileSync(core, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${dir}/core.log"\necho ${JSON.stringify(opts.coreSays ?? "woke: stand-in")}\n`);
+  writeFileSync(core, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${dir}/core.log"\necho -e ${JSON.stringify(opts.coreSays ?? 'nudge: "woke stand-in"\noutcome: woke')}\n`);
   chmodSync(core, 0o755);
   opts.setup?.(repo, dir);
   const preload = join(dir, "fake-slack.mjs");
@@ -972,6 +972,13 @@ describe("the wake: the monitor first, the nudge second", () => {
     expect(r.nudges.length).toBeGreaterThanOrEqual(3); // it kept trying
     expect(r.out.match(/nudge pending:/g)).toHaveLength(1);
     expect(r.out).toContain("nudge pending: nothing · examplebot is working (mid-turn since 15:00Z)");
+  });
+
+  test("a cooldown refusal (another wake typed the prompt moments ago) is 'already woken', not a nudge, and ends the wake", () => {
+    const r = runListener({ wake_grace_seconds: 0 }, [dm(1)], { tickMs: 50, settleMs: 1500, coreSays: 'nudge: "nothing · woke 0 min ago for: slack"\noutcome: cooldown' });
+    expect(r.nudges).toHaveLength(1);
+    expect(r.out).toContain("already woken");
+    expect(r.out).not.toContain("nudged after");
   });
 
   test("wake_grace_seconds 0 nudges at once", () => {

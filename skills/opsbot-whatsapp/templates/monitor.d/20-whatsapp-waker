@@ -143,8 +143,13 @@ export function makeWaker({ graceS, tick, ackTimeoutMs, nudge, isSeen, begunSinc
       const until = Date.now() + ackTimeoutMs;
       while (Date.now() < until) {
         decided = done();
-        const line = await nudge(b.reason);
-        if (/woke/.test(line)) { log(afterCycle ? "nudged after cycle" : `nudged after ${Math.round((Date.now() - t0) / 1000)}s`); return; }
+        // the core's reply carries `outcome: <word>`; the prose is for people, never tested
+        const out = await nudge(b.reason);
+        const line = out.split("\n")[0] || "";
+        const outcome = (/^outcome: "?([a-z-]+)"?$/m.exec(out) || [])[1] || "";
+        if (outcome === "woke") { log(afterCycle ? "nudged after cycle" : `nudged after ${Math.round((Date.now() - t0) / 1000)}s`); return; }
+        // another wake typed the prompt moments ago: this one is satisfied by it
+        if (outcome === "cooldown") { log("already woken"); return; }
         if (answered()) { log("woken by monitor"); return; }
         // a session mid-turn reaches `cycle end`, which reports the arrival: one line per wake
         const why = /mid-turn/.test(line) ? "mid-turn" : line;
@@ -241,7 +246,7 @@ const lockFile = gitPath(root, "opsbot-cycle.lock");
 const sleepFile = gitPath(root, "opsbot-sleep");
 const waker = makeWaker({
   graceS, tick, ackTimeoutMs, isSeen, log,
-  nudge: async (reason) => (await run(core, ["nudge", "--now", "--reason", reason])).out.split("\n")[0] || "",
+  nudge: async (reason) => (await run(core, ["nudge", "--now", "--reason", reason])).out || "",
   begunSince: (t) => cycleBegunSince(root, t),
   cycleRunning: () => existsSync(lockFile),
   asleep: () => existsSync(sleepFile),
