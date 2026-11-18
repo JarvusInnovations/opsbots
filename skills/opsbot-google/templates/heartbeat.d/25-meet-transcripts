@@ -1,0 +1,34 @@
+#!/usr/bin/env node
+// heartbeat.d: Meet transcripts as check items, and the health of the Meet push, installed by the
+// opsbot-google skill. Each transcript line the listener (monitor.d/35-meet-transcripts) recorded
+// since $OPSBOT_SINCE less streams.meet_push.lookback_minutes is one NDJSON item:
+//
+//   {key, at, conv: "meet:<account>", kind: "group", from: "google-meet", text, transcript,
+//    conference, start, end, meeting_code, doc: {id, url}, ...enrich}
+//
+// resolved through the Meet API with the skill's own grant (transcripts.get, conferenceRecords.get,
+// spaces.get; a metadata cache beside the state file, 0600). It never reads the transcript's text:
+// doc.url is where the bot's own reader, with its own credential, fetches it. A lifecycle
+// `expired` or `suspended` line is an item too; a reminder is not.
+//
+// enrich (optional): a repo path to an executable, run once per transcript item from the repo root
+// with the item as JSON on stdin. It prints one JSON object whose keys are added unless the item
+// has them (a calendar title, attendees). A non-zero exit or output that is not a JSON object
+// fails this input after every item is printed. A path outside the repo is refused.
+//
+// Exit 1, after the items, with one reason per line when: a lookup or enrich failed; there is no
+// state; a problem stands; the subscription is missing, not ACTIVE or lapsed; the last pull is
+// older than stale_minutes. Under OPSBOT_PEEK=1: no Google call, no enrich, no cache read or
+// write; one unresolved item per line. Nothing when streams.meet_push.enabled is not true.
+// The logic is the skill's scripts/google-push.mjs (OPSBOT_GOOGLE_PUSH names another copy).
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+
+const root = process.env.OPSBOT_ROOT || process.cwd();
+const lib = process.env.OPSBOT_GOOGLE_PUSH || join(root, ".agents/skills/opsbot-google/scripts/google-push.mjs");
+let m;
+try { m = await import(pathToFileURL(lib).href); } catch (e) {
+  console.error(`cannot load ${lib}: ${e.code || e.message}; install the opsbot-google skill`);
+  process.exit(1);
+}
+process.exitCode = await m.main(["heartbeat", "meet"]);

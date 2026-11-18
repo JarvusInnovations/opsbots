@@ -578,14 +578,17 @@ describe("scripts/opsbot-google login and ensure", () => {
     expect(existsSync(d.tokenFile)).toBe(false);
   });
 
-  test("meet is not yet available; bad usage is exit 2", async () => {
+  test("a Meet-only sign-in that would drop the enabled Gmail source's scopes from the shared token file is refused; bad usage is exit 2", async () => {
     const g = google();
     const b = bot(g, {}, { token: null });
     const m = await b.run("bash", [CLI, "login", "--source", "meet", "--client", "x"]);
-    expect(m.out).toContain("meet: not yet available");
+    expect(m.err).toContain("login --source both");
     expect(m.code).toBe(1);
+    expect(existsSync(b.tokenFile)).toBe(false);
     expect((await b.run("bash", [CLI, "login", "--source", "gmail"])).code).toBe(2);
-    expect((await b.run("bash", [CLI, "ensure", "--source", "meet"])).out).toContain("meet: not yet available");
+    const e = await b.run("bash", [CLI, "ensure", "--source", "meet"]);
+    expect(e.code).toBe(1);
+    expect(e.err).toContain("streams.meet_push: account is not set");
     expect((await b.run("bash", [CLI, "ensure", "--bogus"])).code).toBe(2);
     expect((await b.run("bash", [CLI, "nothing"])).code).toBe(2);
   });
@@ -640,7 +643,8 @@ describe("scripts/opsbot-google install and status", () => {
     expect((await b.run("bash", [CLI, "install"])).out).toContain("differs from the template; --force replaces it");
     expect((await b.run("bash", [CLI, "install", "--force"])).out).toContain(`replaced     opsbot.d/${PIECES[0]}`);
     const both = await b.run("bash", [CLI, "install", "--source", "both", "--dry-run"]);
-    expect(both.out).toContain("meet: not yet available");
+    expect(both.out).toContain("would write  opsbot.d/monitor.d/35-meet-transcripts");
+    expect(both.out).toContain('"meet_push": {');
     expect((await b.run("bash", [CLI, "install", "--bogus"])).code).toBe(2);
   });
 
@@ -667,7 +671,7 @@ describe("scripts/opsbot-google install and status", () => {
     expect(g.queue).toHaveLength(1);
     expect(r.out).not.toMatch(/rt-secret|at-refreshed|cs-secret/);
     const meet = await b.run("bash", [CLI, "status", "--source", "both"]);
-    expect(meet.out).toContain("meet: not yet available");
+    expect(meet.out).toMatch(/^missing +streams\.meet_push +not in opsbot\.json/m);
   });
 
   test("status: each problem is a row with its fix", async () => {

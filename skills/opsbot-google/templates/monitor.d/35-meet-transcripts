@@ -1,0 +1,28 @@
+#!/usr/bin/env node
+// monitor.d: the Meet transcript listener, installed by the opsbot-google skill. `opsbot-core
+// infra install` runs it as a user service. It hears, within seconds, that Google Meet wrote a
+// transcript for a meeting streams.meet_push.account organized, through a Workspace Events
+// subscription that delivers to a Pub/Sub topic, and a pull subscription on that topic:
+//   1. ensures the Workspace Events subscription (finds its own by target and topic, then
+//      creates, reactivates or extends it): at start, every renew_hours, after any lifecycle event;
+//   2. appends one line per event to the wake file:
+//      {key: "meet:transcript:<transcript name>", type: "transcript", account, transcript, recorded_at}
+//      or {key, type: "lifecycle", event, expire_time?, recorded_at}: never a title, a participant
+//      or a word of the transcript;
+//   3. then writes its state (temporary file, rename), then acknowledges the batch;
+//   4. then runs `$OPSBOT_CORE wake backstop`, detached, one at a time, for a transcript.
+// A failure is a problem by kind (sign-in, watch for the subscription, pull, write), raised once
+// in the wake file after problem_after_minutes (sign-in at once) and kept in the state file until
+// a success. The logic is the skill's scripts/google-push.mjs (OPSBOT_GOOGLE_PUSH names another
+// copy). No model is called here; heartbeat.d/25-meet-transcripts turns the lines into items.
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+
+const root = process.env.OPSBOT_ROOT || process.cwd();
+const lib = process.env.OPSBOT_GOOGLE_PUSH || join(root, ".agents/skills/opsbot-google/scripts/google-push.mjs");
+let m;
+try { m = await import(pathToFileURL(lib).href); } catch (e) {
+  console.error(`cannot load ${lib}: ${e.code || e.message}; install the opsbot-google skill (npx skills add JarvusInnovations/opsbots --skill opsbot-google)`);
+  process.exit(1);
+}
+process.exitCode = await m.main(["listen", "meet"]);
