@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "6551e94" : "dev";
+    VERSION = true ? "a77efa6" : "dev";
   }
 });
 
@@ -1994,7 +1994,7 @@ var init_reference = __esm({
           { usage: "watchdog [--dry-run]", summary: "When no cycle has logged within `watchdog_minutes`, tell the operator once per outage through `escalate.d/` and record it. Stands down while the bot sleeps." },
           {
             usage: "nudge [--now [--reason TEXT]] [--dry-run]",
-            summary: "Re-issue `loop.prompt` to the named agent when the loop is quiet, unlocked, past cooldown and idle. `--now` (for listeners) skips the quiet test. A `working` agent whose own session log shows its turn ended (background work only) is prompted anyway, with a note. While the bot sleeps only `--now` acts, and it wakes it."
+            summary: "Re-issue `loop.prompt` to the named agent when the loop is quiet, unlocked, past cooldown and idle. `--now` (for listeners) skips the quiet test. A `working` agent whose own session log shows its turn ended (background work only) is prompted anyway, with a note. While the bot sleeps only `--now` acts, and it wakes it. Every reply ends with `outcome:`, the word to test (the prose is for people): `woke` or `nudged` when the prompt was typed, `cooldown` when another nudge typed it moments ago or is typing it now (one nudge at a time holds the marker), `refused` for any other reason not to (lock, mid-turn, blocked, asleep, quiet), `cannot` (exit 1) when the runtime failed, `dry-run`."
           },
           {
             usage: "sleep tick [--dry-run]",
@@ -10816,7 +10816,7 @@ ${r.stdout}`) };
 });
 
 // src/opsbot-core/commands/liveness.ts
-import { existsSync as existsSync16, readFileSync as readFileSync14, writeFileSync as writeFileSync9 } from "node:fs";
+import { existsSync as existsSync16, readFileSync as readFileSync14, rmSync as rmSync8, statSync as statSync7, writeFileSync as writeFileSync9 } from "node:fs";
 function watchdogCommand(args) {
   const { flags } = parseArgs(args, { bool: ["dry-run"] }, "watchdog [--dry-run]");
   const dry = flags["dry-run"] === true;
@@ -10929,6 +10929,34 @@ function sessionIdle(root, agent, found2) {
   }
 }
 function nudgeCommand(args) {
+  const r = nudgeReply(args);
+  if (r.outcome) return r;
+  const text = String(r.nudge ?? "");
+  const outcome = /^cannot\b/.test(text) ? "cannot" : /^nothing\b/.test(text) ? "refused" : /^would\b/.test(text) ? "dry-run" : /^woke\b/.test(text) ? "woke" : "nudged";
+  return { ...r, outcome };
+}
+function claimMarker(marker) {
+  const f = `${marker}.claim`;
+  for (let i = 0; i < 2; i++) {
+    try {
+      writeFileSync9(f, `${process.pid}
+`, { flag: "wx" });
+      return () => rmSync8(f, { force: true });
+    } catch {
+      try {
+        if (Date.now() - statSync7(f).mtimeMs > 6e4) {
+          rmSync8(f, { force: true });
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      return null;
+    }
+  }
+  return null;
+}
+function nudgeReply(args) {
   const usage = "nudge [--now [--reason TEXT]] [--dry-run]";
   const { flags } = parseArgs(args, { bool: ["now", "dry-run"], value: ["reason"] }, usage);
   const wake2 = flags.now === true;
@@ -10954,11 +10982,22 @@ function nudgeCommand(args) {
   if (!wake2 && last && now - (parseIso(last) ?? 0) < quiet * 6e4) {
     return { nudge: `nothing \xB7 last cycle ${last}` };
   }
+  const release = dry ? () => {
+  } : claimMarker(marker);
+  if (!release) return { nudge: `nothing \xB7 another nudge is ${wake2 ? "waking" : "prompting"} ${agent} now`, outcome: "cooldown" };
+  try {
+    return nudgeClaimed(root, settings, { wake: wake2, reason, dry, agent, line, now, cooldown, marker, asleep, firstWake });
+  } finally {
+    release();
+  }
+}
+function nudgeClaimed(root, settings, o) {
+  const { wake: wake2, reason, dry, agent, line, now, cooldown, marker, asleep, firstWake } = o;
   if (existsSync16(marker) && !firstWake) {
     const [prev2, why] = readFileSync14(marker, "utf8").split("\n");
     if (prev2 && /^\d+$/.test(prev2) && now - Number(prev2) * 1e3 < cooldown * 6e4) {
       const ago = Math.floor((now - Number(prev2) * 1e3) / 6e4);
-      return { nudge: wake2 ? `nothing \xB7 woke ${ago} min ago${why ? ` for: ${why}` : ""}` : `nothing \xB7 nudged ${ago} min ago and no cycle since` };
+      return { nudge: wake2 ? `nothing \xB7 woke ${ago} min ago${why ? ` for: ${why}` : ""}` : `nothing \xB7 nudged ${ago} min ago and no cycle since`, outcome: "cooldown" };
     }
   }
   const rt = runtimeFor(settings);
@@ -11004,7 +11043,7 @@ var init_liveness = __esm({
 });
 
 // src/opsbot-core/commands/infra.ts
-import { existsSync as existsSync17, mkdirSync as mkdirSync6, readFileSync as readFileSync15, readdirSync as readdirSync5, rmSync as rmSync8, writeFileSync as writeFileSync10 } from "node:fs";
+import { existsSync as existsSync17, mkdirSync as mkdirSync6, readFileSync as readFileSync15, readdirSync as readdirSync5, rmSync as rmSync9, writeFileSync as writeFileSync10 } from "node:fs";
 import { homedir as homedir11 } from "node:os";
 import { join as join21 } from "node:path";
 function unitDir() {
@@ -11150,7 +11189,7 @@ function infraCommand(args) {
     mkdirSync6(dir, { recursive: true });
     if (stale.length) {
       systemctl(["disable", "--now", ...stale]);
-      for (const f of stale) rmSync8(join21(dir, f), { force: true });
+      for (const f of stale) rmSync9(join21(dir, f), { force: true });
     }
     for (const u of units) writeFileSync10(join21(dir, u.file), u.content);
     const steps = [];
@@ -11169,7 +11208,7 @@ function infraCommand(args) {
   if (files.length === 0) return { infra: `no ${prefix(settings)}* units installed (no-op)` };
   if (dry) return { infra: `would disable and remove ${files.length} units from ${dir}`, units: files };
   const dis = systemctl(["disable", "--now", ...files]);
-  for (const f of files) rmSync8(join21(dir, f), { force: true });
+  for (const f of files) rmSync9(join21(dir, f), { force: true });
   const reload = systemctl(["daemon-reload"]);
   if (!reload.ok) setExit(1);
   return {
@@ -11327,7 +11366,7 @@ var init_hook = __esm({
 });
 
 // src/opsbot-core/commands/sleep.ts
-import { statSync as statSync7 } from "node:fs";
+import { statSync as statSync8 } from "node:fs";
 import { basename as basename8 } from "node:path";
 function wakePrompt(s, reason) {
   return `${s.loop.prompt} (woken: ${reason})`;
@@ -11495,7 +11534,7 @@ var init_sleep2 = __esm({
     COMPACT = "/compact";
     mtime = (f) => {
       try {
-        return iso(statSync7(f).mtimeMs);
+        return iso(statSync8(f).mtimeMs);
       } catch {
         return null;
       }
@@ -11504,7 +11543,7 @@ var init_sleep2 = __esm({
 });
 
 // src/opsbot-core/commands/memory.ts
-import { copyFileSync, existsSync as existsSync19, mkdirSync as mkdirSync8, readdirSync as readdirSync6, readFileSync as readFileSync17, statSync as statSync8, writeFileSync as writeFileSync12 } from "node:fs";
+import { copyFileSync, existsSync as existsSync19, mkdirSync as mkdirSync8, readdirSync as readdirSync6, readFileSync as readFileSync17, statSync as statSync9, writeFileSync as writeFileSync12 } from "node:fs";
 import { dirname as dirname12, join as join23, resolve as resolve9 } from "node:path";
 function settingsFor(root) {
   try {
@@ -11652,7 +11691,7 @@ function planImport(src, dest) {
     }
     const to = join23(dest, e.name);
     if (!existsSync19(to)) plan.copy.push(e.name);
-    else if (statSync8(to).isFile() && readFileSync17(to).equals(readFileSync17(join23(src, e.name)))) plan.same.push(e.name);
+    else if (statSync9(to).isFile() && readFileSync17(to).equals(readFileSync17(join23(src, e.name)))) plan.same.push(e.name);
     else plan.clashes.push(e.name);
   }
   const srcIdx = join23(src, MEMORY_INDEX);
@@ -11686,7 +11725,7 @@ function importCommand(args) {
   const s = settingsFor(root);
   const dest = requireMemory(root, s);
   const src = resolve9(positionals[0].replace(/^~(?=$|\/)/, process.env.HOME ?? "~"));
-  if (!existsSync19(src) || !statSync8(src).isDirectory()) {
+  if (!existsSync19(src) || !statSync9(src).isDirectory()) {
     setExit(1);
     throw new AxiError(`${src} is not a directory`, "REFUSED", ["Give the memory directory to import, such as ~/.claude/projects/<project>/memory"]);
   }

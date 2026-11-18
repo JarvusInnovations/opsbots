@@ -733,7 +733,7 @@ describe("monitor.d/20-whatsapp-waker", () => {
   /** Start the waker with a fast tick; the core stand-in logs each nudge and says it woke. */
   function startWaker(b: ReturnType<typeof bot>, opts: { woke?: boolean; says?: string } = {}) {
     const core = join(b.dir, "core");
-    writeFileSync(core, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${b.dir}/core.log"\n${opts.says ? `echo ${JSON.stringify(opts.says)}` : opts.woke === false ? 'echo "busy: working"' : 'echo "woke: stand-in"'}\n`);
+    writeFileSync(core, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${b.dir}/core.log"\n${opts.says ? `echo -e ${JSON.stringify(opts.says)}` : opts.woke === false ? 'echo -e "nudge: nothing · busy\\noutcome: refused"' : 'echo -e "nudge: \\"woke stand-in\\"\\noutcome: woke"'}\n`);
     chmodSync(core, 0o755);
     const child = spawn(NODE, [WAKER], { cwd: b.root, env: { ...b.env, OPSBOT_CORE: core, OPSBOT_WHATSAPP_TICK_MS: "50" } });
     let out = "", errOut = "";
@@ -970,6 +970,18 @@ describe("monitor.d/20-whatsapp-waker", () => {
     await sleep(600);
     await w.stop();
     expect(w.out().match(/nudge pending:/g)).toHaveLength(1);
+  });
+
+  test("a cooldown refusal (another wake typed the prompt moments ago) is 'already woken', not a nudge, and ends the wake", async () => {
+    const b = one({ wake_grace_seconds: 0 });
+    const w = startWaker(b, { says: 'nudge: "nothing · woke 0 min ago for: whatsapp"\noutcome: cooldown' });
+    await ready(w);
+    w.wakeLine(1);
+    await sleep(1200);
+    await w.stop();
+    expect(w.nudges()).toHaveLength(1);
+    expect(w.out()).toContain("already woken");
+    expect(w.out()).not.toContain("nudged after");
   });
 
   test("asleep: nudges at once, however long the grace", async () => {
