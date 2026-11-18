@@ -32,9 +32,12 @@ Two kinds of skill, installed with the [`skills`](https://skills.sh/) CLI:
 
 - **`opsbot-google`**: push from Google into the loop. A Gmail listener hears within seconds
   that mail reached the bot's inbox, through a Gmail watch and a Pub/Sub pull subscription, and
-  writes a line that says only how much arrived; the bot's own inbox reader fetches it. It ships
-  the listener with its own narrow sign-in, a health heartbeat, an OpenTofu module for the cloud
-  objects, and an install, login and status command. It only listens.
+  writes a line that says only how much arrived; the bot's own inbox reader fetches it. A Meet
+  listener hears that a transcript was written for a meeting the bot's account organized,
+  through a Workspace Events subscription, and its reader turns each into an item with the
+  meeting's times, code and document, never the text. It ships the listeners with their own
+  narrow sign-in, health heartbeats, OpenTofu modules for the cloud objects, and an install,
+  login, ensure and status command. It only listens.
 
 Setting up a fresh machine for agent work, bot or not, is one line with no root:
 
