@@ -68,19 +68,21 @@ where each token goes, is [README.md](README.md).
 - a new member joining the workspace.
 
 For each it appends one JSON line to `events_file` and reacts `receipt_emoji` on a message at
-once. Then it gives the session's own monitor the first chance: it waits `wake_grace_seconds`
-(20), checking each second, and stops without nudging as soon as the key is in
-`logs/intake/seen` or a check has begun since the event (a check line in `logs/cycle.jsonl`
-newer than the event). A cycle already running when the event arrived does not count, since its
-check may have read the stream first: while it holds the cycle lock the listener waits for it to
-end, then looks again, and nudges at once if neither. When the bot is asleep
-(`.git/opsbot-sleep`) it skips the wait. Only if the grace runs out does it run
-`$OPSBOT_CORE nudge --now`, repeating every 10 seconds while the agent is mid-turn until it
-wakes, the item was read, or a newer check began. A refused nudge is logged once per wake
-(`nudge pending: …`), not at every try: a session that is mid-turn reaches `cycle end`, which
-reports the arrival and begins again. Events that arrive
-together share one pending wake, so a burst is at most one nudge. One journal line says which
-path woke the session: `woken by monitor`, `nudged after <n>s` or `nudged after cycle`. It reacts `ack_emoji` only once the item's key is in
+once. Then it runs `$OPSBOT_CORE wake backstop` for the event, detached: the core's one wake
+routine, shared with every listener. It gives the session's own monitor the first chance: it
+waits `wake_grace_seconds` (20), checking each second, and stops without nudging as soon as the
+key is in `logs/intake/seen` or a check has begun since the event (a check line in
+`logs/cycle.jsonl` newer than the event). A cycle already running when the event arrived does not
+count, since its check may have read the stream first: while it holds the cycle lock the backstop
+waits for it to end, then looks again, and nudges at once if neither. When the bot is asleep
+(`.git/opsbot-sleep`) it skips the wait. Only if the grace runs out does it run `nudge --now`,
+repeating every 10 seconds while the agent is mid-turn until it wakes, the item was read, a
+newer check began, or 30 minutes pass. A refused nudge is noted once (`nudge pending: …`), not at
+every try: a session that is mid-turn reaches `cycle end`, which reports the arrival and begins
+again. One backstop runs at a time; events that arrive while it is pending join it, so a burst is
+at most one nudge. The listener logs the backstop's notes and its one line, which says which path
+woke the session: `woken by monitor`, `nudged after <n>s`, `nudged after cycle`, `already woken`
+(another wake had just typed the prompt), `asleep: nudged`, or `! wake gave up for <key>`. It reacts `ack_emoji` only once the item's key is in
 `logs/intake/seen`, which the core writes when the check reports the item to the model: the
 second reaction means read. It logs every event type it receives, kept or not, so a missing
 scope or event subscription shows in `journalctl --user -u opsbot-<bot>-monitor-10-slack-listener`.

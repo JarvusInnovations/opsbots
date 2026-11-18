@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "b0f0c3a" : "dev";
+    VERSION = true ? "efa6310" : "dev";
   }
 });
 
@@ -1920,6 +1920,10 @@ var init_reference = __esm({
           {
             usage: "wake wait --until <epoch seconds>",
             summary: "The schedule monitor's poller, run by the one `Monitor` call `cycle begin` and `cycle end` print and by nothing else. From the line counts the last check recorded, polls every 2 s; prints the new lines of any wake file (each prefixed with the file's basename, cut to 300 characters, at most 20) or `cycle due` when the time passes, and exits 0. Refuses a time more than 1800 s ahead (exit 2)."
+          },
+          {
+            usage: "wake backstop --key <key> --at <ISO time> [--grace <seconds>] --reason <text>",
+            summary: "The listeners' one wake routine, so no listener carries its own; a listener runs it detached, one at a time, and logs its line. Waits `--grace` (default 20 s) for a check begun after `--at` or the key in `logs/intake/seen`; waits out a cycle already running and looks again; skips the wait while the bot is asleep; then runs `nudge --now`, again every 10 s, until its outcome is `woke` or `cooldown`, a newer check begins, the key is seen, or 30 minutes pass. Prints one line, `backstop:` with `woken by monitor`, `nudged after <n>s`, `nudged after cycle`, `already woken`, `asleep: nudged` or `gave up`, and exits 0; its progress notes go to stderr. Exit 2 on a missing key, time or reason."
           },
           { usage: "next-delay", summary: "Seconds until the next cycle and why, from the cycle log and the cadence table. With `loop.schedule: monitor`, never over 1740 (29 min), and the reason says when that cap applied." }
         ]
@@ -4270,7 +4274,7 @@ async function* readLinesBackward(path, blockSize = BLOCK_SIZE) {
       return;
     let end = size;
     let carry = [];
-    const join26 = (head2) => carry.length === 0 ? head2 : Buffer.concat([head2, ...carry.reverse()]);
+    const join27 = (head2) => carry.length === 0 ? head2 : Buffer.concat([head2, ...carry.reverse()]);
     let first = true;
     const emit = (offset, bytes2) => {
       if (first) {
@@ -4288,7 +4292,7 @@ async function* readLinesBackward(path, blockSize = BLOCK_SIZE) {
         const nl = buf.lastIndexOf(NL, stop - 1);
         if (nl === -1)
           break;
-        const line2 = emit(start + nl + 1, join26(buf.subarray(nl + 1, stop)));
+        const line2 = emit(start + nl + 1, join27(buf.subarray(nl + 1, stop)));
         carry = [];
         if (line2)
           yield line2;
@@ -4298,7 +4302,7 @@ async function* readLinesBackward(path, blockSize = BLOCK_SIZE) {
         carry.push(buf.subarray(0, stop));
       end = start;
     }
-    const line = emit(0, join26(Buffer.alloc(0)));
+    const line = emit(0, join27(Buffer.alloc(0)));
     if (line)
       yield line;
   } finally {
@@ -12322,11 +12326,105 @@ var init_routines2 = __esm({
   }
 });
 
+// src/opsbot-core/backstop.ts
+import { closeSync as closeSync2, openSync as openSync2, readFileSync as readFileSync19, readSync as readSync2, statSync as statSync10 } from "node:fs";
+import { join as join25 } from "node:path";
+function cycleBegunSince(root, t) {
+  let fd;
+  try {
+    const file = join25(root, "logs/cycle.jsonl");
+    const size = statSync10(file).size;
+    const n = Math.min(size, 65536);
+    const buf = Buffer.alloc(n);
+    fd = openSync2(file, "r");
+    readSync2(fd, buf, 0, n, size - n);
+    const lines = buf.toString("utf8").trim().split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      let l;
+      try {
+        l = JSON.parse(lines[i]);
+      } catch {
+        continue;
+      }
+      if (!l || !["nothing-new", "new", "degraded"].includes(String(l.outcome))) continue;
+      const at = Date.parse(String(l.at));
+      return Number.isFinite(at) && at > t;
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== void 0) closeSync2(fd);
+  }
+}
+function keySeen(root, key) {
+  try {
+    return readFileSync19(join25(root, "logs/intake/seen"), "utf8").split("\n").includes(key);
+  } catch {
+    return false;
+  }
+}
+async function backstop(d) {
+  const now = d.now ?? (() => Date.now());
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const answered = () => d.seen() || d.begunSince(d.at);
+  let afterCycle = false;
+  let asleep = false;
+  if (d.graceS > 0 && d.asleep()) {
+    asleep = true;
+    d.note("asleep: nudging at once");
+  } else if (d.graceS > 0) {
+    for (let i = 0; ; i++) {
+      if (answered()) return "woken by monitor";
+      if (d.cycleRunning()) {
+        d.note("a cycle is running: waiting for it to end");
+        while (d.cycleRunning()) await sleep(d.tick);
+        if (answered()) return "woken by monitor";
+        afterCycle = true;
+        break;
+      }
+      if (i >= d.graceS) break;
+      await sleep(d.tick);
+    }
+  } else {
+    asleep = d.asleep();
+  }
+  const until = now() + d.limitMs;
+  let pending = null;
+  while (now() < until) {
+    const r = await d.nudge();
+    if (r.outcome === "woke") {
+      if (afterCycle) return "nudged after cycle";
+      if (asleep) return "asleep: nudged";
+      return `nudged after ${Math.round((now() - d.at) / 1e3)}s`;
+    }
+    if (r.outcome === "cooldown") return "already woken";
+    if (answered()) return "woken by monitor";
+    const why = /mid-turn/.test(r.text) ? "mid-turn" : r.text;
+    if (why !== pending) {
+      pending = why;
+      d.note(`nudge pending: ${r.text.slice(0, 120)}`);
+    }
+    await sleep(10 * d.tick);
+  }
+  return "gave up";
+}
+var BACKSTOP_GRACE_S, BACKSTOP_LIMIT_MS;
+var init_backstop = __esm({
+  "src/opsbot-core/backstop.ts"() {
+    "use strict";
+    BACKSTOP_GRACE_S = 20;
+    BACKSTOP_LIMIT_MS = 30 * 6e4;
+  }
+});
+
 // src/opsbot-core/commands/wake.ts
+import { existsSync as existsSync22 } from "node:fs";
 async function wakeCommand(args) {
   const [sub, ...rest] = args;
+  if (sub === "backstop") return backstopCommand(rest);
   if (sub !== "wait") {
-    throw new AxiError(sub ? `unknown wake subcommand ${sub}` : "wake needs a subcommand", "VALIDATION_ERROR", [`${cliInvocation()} ${WAKE_USAGE}`]);
+    throw new AxiError(sub ? `unknown wake subcommand ${sub}` : "wake needs a subcommand", "VALIDATION_ERROR", [`${cliInvocation()} ${WAKE_USAGE}`, `${cliInvocation()} ${BACKSTOP_USAGE}`]);
   }
   const { flags } = parseArgs(rest, { value: ["until"] }, WAKE_USAGE);
   const raw = flags.until;
@@ -12346,17 +12444,74 @@ async function wakeCommand(args) {
   const { settings } = loadSettings(root);
   return wakeWait(wakeFiles(settings), readWakeBase(root), Date.now() + (untilMs - now));
 }
-var WAKE_USAGE;
+async function backstopCommand(args) {
+  const { flags } = parseArgs(args, { value: ["key", "at", "grace", "reason"] }, BACKSTOP_USAGE);
+  const key = typeof flags.key === "string" ? flags.key : "";
+  if (!key) throw usageError("--key is required: the event's key, as the check records it in logs/intake/seen", BACKSTOP_USAGE);
+  const at = typeof flags.at === "string" ? Date.parse(flags.at) : NaN;
+  if (!Number.isFinite(at)) throw usageError("--at is required: the event's time, ISO 8601", BACKSTOP_USAGE);
+  const reason = typeof flags.reason === "string" ? flags.reason : "";
+  if (!reason) throw usageError("--reason is required: what the nudge says it woke the session for", BACKSTOP_USAGE);
+  let graceS = BACKSTOP_GRACE_S;
+  if (flags.grace !== void 0) {
+    if (typeof flags.grace !== "string" || !/^\d+$/.test(flags.grace)) throw usageError("--grace must be a whole number of seconds, 0 or more", BACKSTOP_USAGE);
+    graceS = Number(flags.grace);
+  }
+  const root = requireRoot();
+  const lockFile = gitPath(root, "opsbot-cycle.lock");
+  const sleepFile2 = gitPath(root, "opsbot-sleep");
+  process.stdout.on("error", () => {
+  });
+  process.stderr.on("error", () => {
+  });
+  const line = await backstop({
+    graceS,
+    tick: envMs("OPSBOT_WAKE_TICK_MS") ?? 1e3,
+    limitMs: envMs("OPSBOT_WAKE_LIMIT_MS") ?? BACKSTOP_LIMIT_MS,
+    at,
+    nudge: async () => {
+      try {
+        const r = nudgeCommand(["--now", "--reason", reason]);
+        return { outcome: String(r.outcome ?? ""), text: String(r.nudge ?? "") };
+      } catch (e) {
+        return { outcome: "cannot", text: `cannot \xB7 ${e instanceof Error ? e.message.split("\n")[0] : String(e)}` };
+      } finally {
+        setExit(0);
+      }
+    },
+    seen: () => keySeen(root, key),
+    begunSince: (t) => cycleBegunSince(root, t),
+    cycleRunning: () => existsSync22(lockFile),
+    asleep: () => existsSync22(sleepFile2),
+    note: (l) => {
+      try {
+        process.stderr.write(`${l}
+`);
+      } catch {
+      }
+    }
+  });
+  setExit(0);
+  return { backstop: line };
+}
+var WAKE_USAGE, BACKSTOP_USAGE, envMs;
 var init_wake2 = __esm({
   "src/opsbot-core/commands/wake.ts"() {
     "use strict";
     init_dist2();
     init_args();
+    init_backstop();
     init_invocation();
     init_repo();
     init_settings();
     init_wake();
+    init_liveness();
     WAKE_USAGE = "wake wait --until <epoch seconds>";
+    BACKSTOP_USAGE = "wake backstop --key <key> --at <ISO time> [--grace <seconds>] --reason <text>";
+    envMs = (name) => {
+      const n = Number(process.env[name]);
+      return Number.isFinite(n) && n > 0 ? n : void 0;
+    };
   }
 });
 
@@ -12419,8 +12574,8 @@ var init_record2 = __esm({
 });
 
 // src/opsbot-core/commands/simple.ts
-import { existsSync as existsSync21, readFileSync as readFileSync19 } from "node:fs";
-import { join as join25 } from "node:path";
+import { existsSync as existsSync23, readFileSync as readFileSync20 } from "node:fs";
+import { join as join26 } from "node:path";
 function nextDelayCommand(args) {
   parseArgs(args, {}, "next-delay");
   const root = requireRoot();
@@ -12553,8 +12708,8 @@ function settingsCommand(args) {
     text = showHead(root, SETTINGS_FILE);
     where = `${SETTINGS_FILE} at HEAD`;
   } else {
-    const p = join25(root, SETTINGS_FILE);
-    text = existsSync21(p) ? readFileSync19(p, "utf8") : null;
+    const p = join26(root, SETTINGS_FILE);
+    text = existsSync23(p) ? readFileSync20(p, "utf8") : null;
     where = SETTINGS_FILE;
   }
   if (text === null) {
@@ -12563,10 +12718,10 @@ function settingsCommand(args) {
     ]);
   }
   const { raw, problems } = parseSettingsText(text, where);
-  const claude = join25(root, ".claude", "settings.json");
-  if (raw && existsSync21(claude)) {
+  const claude = join26(root, ".claude", "settings.json");
+  if (raw && existsSync23(claude)) {
     try {
-      const cs = JSON.parse(readFileSync19(claude, "utf8"));
+      const cs = JSON.parse(readFileSync20(claude, "utf8"));
       const loop = raw.loop ?? {};
       for (const k of ["autoMemoryEnabled", "autoMemoryDirectory"]) {
         if (cs && cs[k] !== void 0) {
