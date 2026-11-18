@@ -104,7 +104,7 @@ it tells its operator once. Outside a session (`CLAUDECODE` unset) nothing is ch
 | `wake wait --until <epoch seconds>` | the schedule monitor's poller, run by the session's one `Monitor` call and by nothing else: polls every 2 seconds from the line counts the last check recorded; prints the new lines of any wake file, each prefixed with the file's basename and cut to 300 characters, at most 20, and exits 0; or prints `cycle due` and exits 0 when the time passes. Without a recorded count for a file it starts at that file's end. A time more than 1 800 seconds ahead is refused | 0 · 2 |
 | `next-delay` | reads the log and the cadence table; prints `<seconds> <reason>`. With `loop.schedule: "monitor"` no delay passes 1 740 seconds (29 minutes: the delay plus the monitor's one-minute margin stays inside the harness's 30-minute limit), and a capped reason says so: `night (capped at 29 min: a monitor's limit)` | 0 |
 | `start [--continue] [--dry-run] [-- <extra>]` | launches `claude` with the flags `opsbot.json` implies: permission mode, model, autocompact window, and one `--settings` object holding `autoCompactEnabled: true` and the auto memory keys (`autoMemoryEnabled: true` and `autoMemoryDirectory: <absolute root>/<memory.dir>`, the directory created first when missing; or, with `memory: false`, `autoMemoryEnabled: false` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` in its `env` and the process environment), and `loop.prompt` as the first message; `--continue` resumes the session that last ran a cycle here, by id (`--resume <id>`, recorded at every `cycle begin` in `.git/opsbot-loop-session`), and by `loop.session_name` when none is recorded; it never takes the directory's most recent session (a person's session opened in the bot's checkout would be that, and get the loop). Every start passes `--name <loop.session_name>`; the bot's `bin/start` shim is two lines calling this | exit code of `claude` |
-| `cold-start [--write] [--transcript <jsonl>]` | prints the pack: the rule card; the kit's own sections (`references/pack/*.md` shipped with the skill, in order, whole: house writing style, delegation rubric); then, when the SessionStart hook payload on stdin names a `transcript_path` (or `--transcript` does), a "Before this start" section read from the bot's own session log since its last compaction through `agent-recall-axi` (bundled; the kit's own text reader is the fallback when the library cannot read the log): the operator's messages verbatim (the highest-authority record of intent; the loop prompt excluded, since the nudge and the bot's wakeups type it), newest kept whole within their share and the rest counted with the exact command that prints them; the last tool calls with their status as data; and the bot's last statements flagged as its own claims, each layer with its own share so one long message cannot crowd out the others, capped at 4 000 bytes; then every script in `wake.d/` in order (each prints one section); then the 48 h log summary (with one more line when the memory review is due, and a few lines naming the other due routines) and the untrusted-memory line, which names the memory files too; `--write` first makes sure `.scratch/` exists and is excluded, then writes the pack file and sets pending there | 0 |
+| `cold-start [--write] [--transcript <jsonl>]` | prints the pack: the rule card; the kit's own sections (`references/pack/*.md` shipped with the skill, in order, whole: house writing style, the console and the record, delegation rubric); then, when the SessionStart hook payload on stdin names a `transcript_path` (or `--transcript` does), a "Before this start" section read from the bot's own session log since its last compaction through `agent-recall-axi` (bundled; the kit's own text reader is the fallback when the library cannot read the log): the operator's messages verbatim (the highest-authority record of intent; the loop prompt excluded, since the nudge and the bot's wakeups type it), newest kept whole within their share and the rest counted with the exact command that prints them; the last tool calls with their status as data; and the bot's last statements flagged as its own claims, each layer with its own share so one long message cannot crowd out the others, capped at 4 000 bytes; then every script in `wake.d/` in order (each prints one section); then the 48 h log summary (with one more line when the memory review is due, and a few lines naming the other due routines) and the untrusted-memory line, which names the memory files too; `--write` first makes sure `.scratch/` exists and is excluded, then writes the pack file and sets pending there | 0 |
 | `gate check` | the PreToolUse body: exit 0 when nothing is pending or the pending pack was read whole; otherwise prints the deny reason and exits 2 | 0 · 2 |
 | `lock status|release` | shows or releases the lock (release refuses another live process's lock without `--abandon`) | 0 · 1 |
 | `outage record <kind> [--note] [--started] [--ended]` / `outage end [--ended]` / `outage list` | `failed-turn · refused · plan-limit · session-ended · stopped`; times default to now; end closes the open one | 0 |
@@ -189,6 +189,82 @@ session in the peer's `project` looks like its successor. Keys carry the event's
 (`peer:<name>:<event id>`), so the window's overlap never repeats an item, and the id opens the
 whole entry with `agent-recall-axi show`. The adapter sends the peer nothing and never keeps
 its cache warm; both are the operator's call. A peer that cannot be read fails the input.
+
+## The console, and the record
+
+Two kit sections ride every cold-start pack, ahead of the mode section, because they shape
+every turn ([principles](../principles.md#nobody-reads-the-terminal)).
+
+**`references/pack/12-console.md`**, verbatim:
+
+> # Your terminal is a log, not a channel
+>
+> Nobody reads this terminal unless something is broken. People read your channels and your
+> repo.
+>
+> - **End a turn with one line, or nothing.** A status line a maintainer could grep:
+>   what the turn did, in a dozen words. No recap of messages you already sent, no summary
+>   of the cycle (`cycle end --summary` is that), no list of what you will do next, no
+>   sign-off.
+> - **Say it where it will be read.** Anything a person should know goes to their channel
+>   with the post command. Anything you will need later goes in a record (next section).
+>   If it is in neither, it does not exist: never leave a finding, a question, a promise or
+>   a "note for later" only here.
+> - **Do not narrate.** No "now I will", no thinking out loud between tool calls, no
+>   restating a tool's result. Call the tool.
+> - **Errors and surprises are the exception**: one or two lines saying what failed and
+>   what you did about it, so the log shows it. Then report it where it will be read too
+>   (a failed check is said out loud).
+> - This is about the terminal only. A message to a person is as long as it needs to be.
+
+**`references/pack/14-record.md`**, verbatim:
+
+> # What must outlive a compaction goes in a record
+>
+> Your context will be summarized without warning, and the summary drops detail. Before
+> the message that reports a step, write down what you would need to carry on from cold:
+>
+> - **Use a sheet, never a notes file.** A row in an existing gitsheet (`.gitsheets/*.toml`
+>   in your repo: `gitsheets-axi sheets` lists them and what each is for). Something you
+>   are in the middle of, something you promised, something you wait on, a decision and
+>   its reason, a fact about a person or a system: each has a sheet, or needs one.
+> - **No sheet fits? Propose one**, by the same route as any change to yourself: a schema
+>   with required fields, a path template, and a recall (below). A free-text file is never
+>   the answer, and neither is your memory directory, which is for how to work, never for
+>   the state of the work.
+> - **Every sheet has a recall.** Rows come back to you through code: open work at every
+>   cold start, what is due at the close of every cycle, a person's rows when they write.
+>   If nothing would ever show you a row again, the sheet is not finished.
+> - **Close what you open.** A row has a state. Mark it done, with what settled it, in the
+>   cycle that settles it.
+
+**Recalls in code.** `opsbot.json` may carry `record.recall`, a list:
+
+```json
+"record": { "recall": [
+  { "sheet": "work", "filter": "status=open", "at": "cold-start", "title": "In progress" },
+  { "sheet": "promises", "filter": "status=open due<=today", "at": "cycle-end", "title": "Due" }
+] }
+```
+
+| Key | Meaning |
+| --- | --- |
+| `sheet` | a sheet in the repo's `.gitsheets/` |
+| `filter` | a `gitsheets-axi` filter expression; `today` is the date in the bot's timezone |
+| `at` | `cold-start` (a section of the pack, inside the `wake.d` budget), `cycle-end` (printed with the closing lines), or `item` (added to a check item whose `from` or `conv` matches the row's `match` field) |
+| `title` | the section's heading |
+| `fields` | the columns to print; default the sheet's first four |
+| `limit` | most rows shown; default 20, with "… N more" |
+
+The core runs each recall with `gitsheets-axi query` and prints the rows; a recall whose sheet
+is missing or whose query fails is one line saying so, and `settings validate` reports it. A
+recall never writes. `opsbot-core record status` lists each sheet in the repo, whether a recall
+names it, and its open-row count by the recall's filter; a sheet no recall names is flagged.
+
+The kit ships no sheets of its own: a bot's records are its own design. `templates/sheets/`
+holds two starting points a bot may copy, `work` (what it is in the middle of: `title`,
+`status`, `next`, `waiting_on`, `updated`) and `promises` (`to`, `what`, `due`, `status`,
+`settled_by`), each with its recall entry in a comment.
 
 ## Rules the commands enforce
 
