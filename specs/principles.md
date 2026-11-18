@@ -108,6 +108,33 @@ replaces it without a rewrite.
 > Why: a harness that grew to thousands of words of rules was replaced by one that
 > enforced forty in code.
 
+## Nobody reads the terminal
+
+A bot's terminal is a diagnostic log. People read the bot's channels (the DM, the thread, the
+group) and its repo. Nobody reads its console unless something is broken. So nothing a person
+needs, and nothing the bot itself needs after its next compaction, lives only in console
+output; and the console gets the least that makes a later diagnosis possible: one status line
+for what a turn did, and errors.
+
+> Why: an operator watched a bot write a tidy paragraph to an empty room after every cycle:
+> a recap of messages it had already answered, in a pane nobody was looking at. On one
+> measured wake a third of the model calls and most of the prose went there. Worse than the
+> waste: a finding, a promise or a "note for later" said only in the terminal is gone at the
+> next compaction, and the bot believes it told someone.
+
+## What must outlive a compaction goes in a record with a way back
+
+A fact the bot will need after its context is next summarized is written, when it is learned,
+into a structured record in its repo: a row in a sheet with a schema, never a line in a
+free-text notes file, and never only the session. Every such sheet has a recall: something in
+code that puts the right rows back in front of the session at the right time (at a cold start,
+at the close of a cycle, when a date arrives, when a named thing comes up).
+
+> Why: a notes file is written faithfully and read never; a bot kept "what I am in the middle
+> of" as prose, and after a compaction it had the file and no reason to open it. A record
+> that cannot be asked "what is open, what is due, what did I promise this person" is a diary.
+> Structure is what lets code do the remembering.
+
 ## The loop's context is the scarcest thing it has
 
 The mother loop runs on the class its work needs (next principle), and its context window
