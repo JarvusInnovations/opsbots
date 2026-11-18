@@ -208,7 +208,7 @@ export const ARRIVED_RULE =
 export const CHAIN_RULE =
   "When the work of a cycle is one command, chain `cycle end` after it in the same call: `<the command> && <core> cycle end …`.";
 /** The turn's last output, for the pack. */
-export const CLOSE_RULE = "End the turn with one short line at most.";
+export const CLOSE_RULE = "End the turn with one status line or nothing: the terminal is a log, not a channel.";
 
 /** The standing rules, for the pack. */
 export const WAKE_RULES = [

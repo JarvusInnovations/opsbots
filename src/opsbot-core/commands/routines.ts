@@ -163,7 +163,7 @@ function view(args: string[]): Record<string, unknown> {
   };
   if (d.owner) out.owner = d.owner;
   if (d.hands_to) out.hands_to = d.hands_to;
-  out.instructions = d.body.trim() ? paragraphs(d.body) : "(the definition has no body: say so to the operator)";
+  out.instructions = d.body.trim() ? paragraphs(d.body) : "(the definition has no body: say so to the operator in their channel)";
   out.help =
     d.builtin && d.id === MEMORY_ROUTINE
       ? [`Run \`${cli} memory review --begin\`, then \`${cli} memory review --done --note "<what was folded where>"\``]

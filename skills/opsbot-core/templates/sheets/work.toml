@@ -1,0 +1,51 @@
+# A starting point for a bot's record of what it is in the middle of: one row per piece of work
+# that must outlive a compaction. Copy to .gitsheets/work.toml, adjust, commit, and add its
+# recall to record.recall in opsbot.json, so every cold start puts the open rows back in front of
+# the session:
+#
+#   { "sheet": "work", "filter": "status=open", "at": "cold-start", "title": "In progress" }
+#
+# A row is open until it is settled: set status to done (or dropped) and say what settled it, in
+# the cycle that settles it. Write rows with `gitsheets-axi upsert work --data '{...}'`.
+[gitsheet]
+root = 'records/work'
+path = '${{ id }}'
+
+[gitsheet.schema]
+type = 'object'
+additionalProperties = false
+required = ['title', 'status', 'next', 'updated', 'id']
+
+[gitsheet.schema.properties.title]
+type = 'string'
+description = 'What the work is, in a few words'
+
+[gitsheet.schema.properties.status]
+type = 'string'
+enum = ['open', 'done', 'dropped']
+
+[gitsheet.schema.properties.next]
+type = 'string'
+description = 'The next step, concrete enough to take from cold'
+
+[gitsheet.schema.properties.waiting_on]
+type = 'string'
+description = 'Who or what it waits on; empty when nothing'
+
+[gitsheet.schema.properties.updated]
+type = 'string'
+format = 'date'
+description = 'The date of the last change, YYYY-MM-DD'
+
+[gitsheet.schema.properties.id]
+type = 'string'
+pattern = '^[a-z0-9][a-z0-9-]{1,60}$'
+description = 'A short slug, the file name'
+
+[gitsheet.schema.properties.settled_by]
+type = 'string'
+description = 'What settled it: the message, the commit, the decision'
+
+[gitsheet.schema.properties.match]
+type = 'string'
+description = 'Optional: the from or conv of the stream items this work is about, for an item recall'

@@ -39,7 +39,7 @@ the CLI is not on PATH.
      judged here. `present, does not count: <why>` means the adapter said the item's author
      cannot give it (another bot's message): it approves nothing.
    - **Exit 20, degraded.** The failed inputs by name, then what could be read. Never treat
-     it as nothing new: tell the operator what could not be read.
+     it as nothing new: tell the operator, in their channel, what could not be read.
 2. **Act.** Do the work the items ask for, through the bot's own tools. Anything longer than
    a cycle is acknowledged first.
 3. **`scripts/opsbot-core cycle end --records <n>`** (add `--degraded` when an input failed).
@@ -52,7 +52,8 @@ the CLI is not on PATH.
    `arrived: <n> on <file>` and `next 0 arrived` and no `wake` field: run `cycle begin`
    again in the same turn and arm nothing. When the work of a cycle is one command, chain
    `cycle end` after it in the same call (`<the command> && scripts/opsbot-core cycle end
-   --records 1`), and end the turn with one short line at most.
+   --records 1`), and end the turn with one status line or nothing: the terminal is a log,
+   not a channel (see *The console, and the record*).
 4. **Wake.** `loop.schedule` in `opsbot.json` says how. There is one clock either way:
    never create a cron or a second loop. The nudge is the only thing that restarts a
    stopped loop.
@@ -110,8 +111,9 @@ in the bot's checkout and sets a pending flag; until the pack has been **read wh
 `gate check` refuses every other tool. The pack, in order:
 
 1. the rule card, whole (`rule_card` in `opsbot.json`, read at `HEAD`)
-2. one section per `opsbot.d/wake.d/` script (what is owed, open escalations, …), each cut
-   to its share of the wake budget (6 000 bytes across them all) with `… N more lines`
+2. one section per `opsbot.d/wake.d/` script (what is owed, open escalations, …), then one
+   per `cold-start` recall (the rows a record sheet puts back, below), each cut to its share
+   of the wake budget (6 000 bytes across them all) with `… N more lines`
 3. the last 48 hours of the cycle log: counts, the longest gap, the last degraded cycle,
    outages, one line when the memory review is due, and a few naming the other due routines
 4. memory before this point is untrusted, the auto-memory files included: open the source
@@ -169,6 +171,9 @@ commits. It refuses an absolute path, a `..` segment, and a path under `.git/` o
 `routines` (optional) is `{dir, runs_dir}`, defaults `routines` and `records/routine-runs`.
 See *Routines* below.
 
+`record` (optional) is `{recall: [...]}`: the recalls that put a record sheet's rows back in
+front of the session. See *The console, and the record* below.
+
 ## State it keeps
 
 | Path | What |
@@ -203,7 +208,9 @@ nudge to reach it.
 
 `references/pack/*.md` ship with this skill and are read into the reground pack right
 after the rule card, whole, at every start, resume, clear and compaction: the house
-writing style (`10-writing.md`: tone, shape, Slack mrkdwn, email, records, logs) and the
+writing style (`10-writing.md`: tone, shape, Slack mrkdwn, email, records, logs), that the
+terminal is a log and not a channel (`12-console.md`), that what must outlive a compaction
+goes in a sheet with a recall (`14-record.md`), the
 delegation rubric (`20-delegation.md`: which model class earns which work, and what the
 loop keeps for itself), how to read the digest (`30-digest.md`), where scratch files go
 (`40-scratch.md`), how routines work (`45-routines.md`, only when the bot has a routine
@@ -221,6 +228,56 @@ directory, so the gate's required read needs no permission beyond the checkout. 
 flag left at the pack's earlier home, `~/.cache/<bot>/`, is honored once: a whole read of
 the old pack clears it, and the next `cold-start --write` removes it. The old pack file is
 left where it is; delete it by hand when you like. A bot's own `specs/persona.md` colors the style and never overrides it.
+
+## The console, and the record
+
+Nobody reads a bot's terminal unless something is broken; people read its channels and its
+repo. `12-console.md` in the pack says so to every session: end a turn with one status line
+or nothing, say a thing where it will be read (the person's channel, or a record), never
+narrate. `14-record.md` says where the rest goes: what the bot must still know after its next
+compaction is a row in a gitsheet (`.gitsheets/<sheet>.toml`), never a free-text notes file
+and never the memory directory, and every sheet has a recall.
+
+A **recall** is code putting rows back in front of the session at the right moment. List them
+in `opsbot.json`:
+
+```json
+"record": { "recall": [
+  { "sheet": "work", "filter": "status=open", "at": "cold-start", "title": "In progress" },
+  { "sheet": "promises", "filter": ["status=open", "due<=today"], "at": "cycle-end", "title": "Due" },
+  { "sheet": "promises", "filter": "status=open", "at": "item", "title": "Promised to them" }
+] }
+```
+
+| Key | Meaning |
+| --- | --- |
+| `sheet` | a sheet in the repo's `.gitsheets/` (required) |
+| `filter` | one `gitsheets-axi query` filter clause as a string, or several as a list (they all must hold); the forms are gitsheets-axi's own: `k=v`, `k!=v`, `k<v`, `k>v`, `k<=v`, `k>=v`, `k~regex`, `"k in (a,b)"`, `k:present`, `k:empty`. A clause whose value is `today` (`due<=today`) gets the date in the bot's `timezone`, `YYYY-MM-DD`. Two clauses in one string are refused: write a list |
+| `at` | `cold-start` (a section of the pack, after the `wake.d/` sections and inside their budget), `cycle-end` (a `recall` field in `cycle end`'s output, only when there are rows), or `item` (a `recall` field on each new check item whose `from` or `conv` equals a row's `match` field) (required) |
+| `title` | the heading; default the sheet's name |
+| `fields` | the columns to print; default the sheet's first four, in the order its config declares them |
+| `limit` | most rows shown (per item, for `item`); default 20, then `… N more:` and the command that lists them all |
+
+The core runs each recall as `gitsheets-axi query <sheet> --filter <clause>... --json-out=<a
+temporary file>`, reads that file (never the TOON on stdout), and removes it. A recall never
+writes. gitsheets reads the sheet configs and records from the committed tree, so commit a new
+sheet before its recall can run. `OPSBOT_GITSHEETS_AXI` names another binary. A recall whose
+sheet is missing or whose query fails prints one line saying so in its place, never an empty
+section, and `settings validate` refuses it: an unknown key, an `at` other than the three, a
+filter that is not gitsheets-axi clauses, a sheet not under `.gitsheets/`, an `item` recall on
+a sheet whose schema declares no `match`, and a query that fails. A `cycle-end` recall runs at
+`cycle end`, as `cycle.d/end/` scripts do, not on a quiet `cycle begin`.
+
+`scripts/opsbot-core record status` lists every sheet with the recalls that name it and its
+open-row count by each recall's filter; a sheet no recall names is flagged, because nothing
+would ever show the session one of its rows again.
+
+**Adopting it.** The kit ships no sheets of its own. `templates/sheets/work.toml` (what the bot
+is in the middle of: `title`, `status`, `next`, `waiting_on`, `updated`) and
+`templates/sheets/promises.toml` (`to`, `what`, `due`, `status`, `settled_by`, and `match`
+for the item recall) are starting points: copy one to `.gitsheets/`, adjust it, commit it, add
+the recall entry from the comment at its top to `record.recall`, run `settings validate`, and
+check `record status`. Moving an existing notes file into a sheet is the bot's own migration.
 
 ## Auto memory
 
@@ -286,8 +343,8 @@ record.** They live apart.
 ### The cycle
 
 - `scripts/opsbot-core cycle begin [--full]` — Refuse while another writer holds the checkout (exit 30, `wait · … · next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. A wake from a wake file whose `wake.files` entry names its inputs (`{file, inputs}`) runs a fast check: only those inputs, the last full check's window, the watermark left alone, only `cycle.d/begin/` scripts named `*.fast`, and a `fast` field naming the inputs and when the next full check is due; a quiet deadline, a full check older than `check.full_minutes` (10; 0 turns fast checks off), a failed last check or `--full` runs the full check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it. With `loop.schedule: monitor`, on 0 and 30 the `wake` field holds the schedule monitor's state and the one Monitor call to make now. With `sleep` set, a nothing-new begin that finds the loop quiet for `after_minutes` prints a `sleep` field in place of `wake`: arm nothing, end the turn. A begin that finds `.git/opsbot-sleep` removes it and logs the wake.
-- `scripts/opsbot-core check [--no-commit]` — Run every `opsbot.d/heartbeat.d/` script and the core's `routines` input (one item per due routine occurrence), record seen keys, log, commit. Exit 0 nothing new · 10 new (digest) · 20 degraded (failed inputs named) · 2 cannot run.
-- `scripts/opsbot-core cycle end --records N [--degraded] [--summary TEXT]` — Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` (or, when a wake file gained lines since this cycle's check, `arrived: <n> on <file>` and `next 0 arrived` with no `wake` field: run `cycle begin` again at once) and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle. With `sleep` set, a `sleep` field may replace `wake`, as at `cycle begin`. When the memory review is due, one `memory` line says so with the command to run, and a `routines` field names each other due routine; neither blocks the cycle.
+- `scripts/opsbot-core check [--no-commit]` — Run every `opsbot.d/heartbeat.d/` script and the core's `routines` input (one item per due routine occurrence), record seen keys, log, commit. With an `item` recall, a new item whose `from` or `conv` equals a row's `match` field carries those rows in a `recall` field. Exit 0 nothing new · 10 new (digest) · 20 degraded (failed inputs named) · 2 cannot run.
+- `scripts/opsbot-core cycle end --records N [--degraded] [--summary TEXT]` — Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` (or, when a wake file gained lines since this cycle's check, `arrived: <n> on <file>` and `next 0 arrived` with no `wake` field: run `cycle begin` again at once) and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle. With `sleep` set, a `sleep` field may replace `wake`, as at `cycle begin`. Each `cycle-end` recall with rows prints them in a `recall` field (a recall that cannot run is one line there). When the memory review is due, one `memory` line says so with the command to run, and a `routines` field names each other due routine; neither blocks the cycle.
 - `scripts/opsbot-core check --peek` — Run every heartbeat script and the `routines` input as a check does (each script also gets `OPSBOT_PEEK=1`) and print the count of new items per input. Records, logs and commits nothing; the watermark and seen keys are untouched, so the next check sees the same items. Exit 0 · 10 · 20 · 2 as `check`.
 - `scripts/opsbot-core wake wait --until <epoch seconds>` — The schedule monitor's poller, run by the one `Monitor` call `cycle begin` and `cycle end` print and by nothing else. From the line counts the last check recorded, polls every 2 s; prints the new lines of any wake file (each prefixed with the file's basename, cut to 300 characters, at most 20) or `cycle due` when the time passes, and exits 0. Refuses a time more than 1800 s ahead (exit 2).
 - `scripts/opsbot-core next-delay` — Seconds until the next cycle and why, from the cycle log and the cadence table. With `loop.schedule: monitor`, never over 1740 (29 min), and the reason says when that cap applied.
@@ -295,7 +352,7 @@ record.** They live apart.
 ### Cold start
 
 - `scripts/opsbot-core start [--continue] [--dry-run] [-- <extra claude args>]` — Launch the bot's Claude Code session with the flags opsbot.json implies: permission mode (default auto), model, autocompact window, autocompact forced on, auto memory in the repo (`autoMemoryDirectory` set to `memory.dir` as an absolute path, created when missing; off with `memory: false`), and `loop.prompt` as the first message. `--continue` resumes the last session in this checkout. A bot's `bin/start` shim calls this.
-- `scripts/opsbot-core cold-start [--write]` — Print the reground pack: the rule card, the kit's sections (house style, delegation, what the session log says, the live wake to arm), each `wake.d/` section, the last 48 hours of the cycle log (with one line when the memory review is due and a few naming the other due routines), the untrusted-memory line; the routines section rides when the bot has a routine definition. `--write` also makes sure `.scratch/` exists and is git-excluded, writes the pack to `.scratch/opsbot-core/reground.md`, sets the pending flag and records the session log's path for `cycle` and `nudge`.
+- `scripts/opsbot-core cold-start [--write]` — Print the reground pack: the rule card, the kit's sections (house style, the console and the record, delegation, what the session log says, the live wake to arm), each `wake.d/` section, then each `cold-start` recall's rows (both inside the wake budget), the last 48 hours of the cycle log (with one line when the memory review is due and a few naming the other due routines), the untrusted-memory line; the routines section rides when the bot has a routine definition. `--write` also makes sure `.scratch/` exists and is git-excluded, writes the pack to `.scratch/opsbot-core/reground.md`, sets the pending flag and records the session log's path for `cycle` and `nudge`.
 - `scripts/opsbot-core gate check` — PreToolUse body: exit 0 when nothing is pending or this call reads the pack whole; otherwise deny (exit 2).
 
 ### State
@@ -303,6 +360,10 @@ record.** They live apart.
 - `scripts/opsbot-core lock status | lock release [--abandon]` — Show the writer lock, or release it (another live process's only with `--abandon`).
 - `scripts/opsbot-core outage record <kind> [--note TEXT] [--started ISO] [--ended ISO] | outage end | outage list` — Record, close or list outages: failed-turn, refused, plan-limit, session-ended, stopped.
 - `scripts/opsbot-core log tail [--n N]` — The last N cycle-log lines (default 10).
+
+### The record
+
+- `scripts/opsbot-core record status` — Each sheet in `.gitsheets/` with the recalls that name it (`record.recall` in `opsbot.json`) and its open-row count by each recall's filter (`today` resolved in `timezone`); a sheet no recall names is flagged, and a recall that cannot run (a missing sheet, a failing query) says why. Runs `gitsheets-axi query` (or `OPSBOT_GITSHEETS_AXI`) and writes nothing.
 
 ### Memory
 
@@ -329,6 +390,6 @@ record.** They live apart.
 
 - `scripts/opsbot-core hook install|uninstall|status [--scope project|global] [--dir PATH]` — Register the SessionStart (`cold-start --write`) and PreToolUse (`gate check`) hooks; project scope by default.
 - `scripts/opsbot-core hooks list [--point P]` — Every script that will run at each lifecycle point, in order, with its source.
-- `scripts/opsbot-core settings validate [--head]` — Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; and any invalid routine definition.
+- `scripts/opsbot-core settings validate [--head]` — Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails.
 
 <!-- END GENERATED: command-reference -->
