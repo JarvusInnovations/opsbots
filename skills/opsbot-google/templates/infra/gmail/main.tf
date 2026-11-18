@@ -4,7 +4,7 @@
 
 resource "google_pubsub_topic" "gmail" {
   project = var.project
-  name    = var.gmail_topic
+  name    = var.topic
 }
 
 # Gmail's push service publishes as this fixed account (Gmail API push notifications guide).
@@ -17,7 +17,7 @@ resource "google_pubsub_topic_iam_member" "gmail_publisher" {
 
 resource "google_pubsub_subscription" "gmail" {
   project = var.project
-  name    = var.gmail_subscription
+  name    = var.subscription
   topic   = google_pubsub_topic.gmail.id
 
   # A notification carries no content; one not acknowledged in time is redelivered, and a week
@@ -33,5 +33,5 @@ resource "google_pubsub_subscription_iam_member" "gmail_subscriber" {
   project      = var.project
   subscription = google_pubsub_subscription.gmail.name
   role         = "roles/pubsub.subscriber"
-  member       = var.gmail_subscriber
+  member       = var.subscriber
 }
