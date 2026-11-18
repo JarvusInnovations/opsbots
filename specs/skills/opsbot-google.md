@@ -19,7 +19,7 @@ skills/opsbot-google/
   templates/monitor.d/35-meet-transcripts   the Meet listener
   templates/heartbeat.d/15-gmail-push       health of the Gmail push; prints no items
   templates/heartbeat.d/25-meet-transcripts items for transcripts, and the Meet push's health
-  templates/infra/                          an OpenTofu module for the cloud objects, no defaults
+  templates/infra/gmail/, infra/meet/       an OpenTofu module per source for the cloud objects, no defaults
 ```
 
 Outside the repo, on the bot's user, all created mode 0600 in 0700 directories:
@@ -62,8 +62,9 @@ another tool's token store.
   `--client <file>` and is read once, never copied into the repo). It prints the consent URL,
   listens on a loopback port for the redirect, or takes the pasted redirect URL with
   `--paste` on a headless host, and writes the token file. It asks for exactly:
-  `gmail.metadata` and `pubsub` for Gmail; `meetings.space.readonly`, `drive.metadata.readonly`
-  and `pubsub` for Meet.
+  `gmail.metadata` and `pubsub` for Gmail; `meetings.space.readonly` and `pubsub` for Meet.
+  Both sources share one token file by default, and a sign-in for one source that would drop
+  an enabled source's scopes is refused.
 - The listener refreshes the access token itself and rewrites the file in place. A missing
   file, a missing scope or a revoked grant is one problem (`sign-in`), raised at once, with the
   `login` command as its fix; the listener then sleeps 30 minutes between tries.
@@ -78,8 +79,9 @@ four per source, every name and id a required variable, and no project, organiza
 or state configuration: the adopting repo calls it from its own root module. The README gives
 the same objects as a short list for an operator who makes them by hand.
 
-`opsbot-google status` checks they exist and are usable by pulling with a zero-message request;
-it never creates or changes one.
+`opsbot-google status` checks they exist and are usable by pulling one message without
+waiting and handing it straight back, since Pub/Sub has no empty pull; it never creates or
+changes one.
 
 ## The Gmail listener
 
@@ -108,13 +110,15 @@ it never creates or changes one.
    account, transcript, recorded_at}` or `{key, type: "lifecycle", event, expire_time?,
    recorded_at}`. Lines are written, then acknowledged, then the backstop for a transcript.
 3. **What it hears.** Google delivers this event for meetings the account **organized**. A
-   meeting it was only invited to produces none (seen on an adopting bot); the README says so
-   first.
+   meeting it was only invited to produced none on an adopting bot, though Google's guide can
+   be read as allowing it; the README says "organized only" first, until a real run shows
+   otherwise.
 
 **`heartbeat.d/25-meet-transcripts`** turns each transcript line since `OPSBOT_SINCE` less
 `lookback_minutes` into an item: `{key, at, conv: "meet:<account>", kind: "group", from:
 "google-meet", text, transcript, conference, start, end, meeting_code, doc: {id, url}}`,
-resolved through the Meet and Drive APIs with the skill's own grant. It never reads the
+resolved through the Meet API with the skill's own grant. Meet gives no meeting title; a
+title is for `enrich` to add. It never reads the
 transcript's text. `enrich`, when set, is run once per item with the item as JSON on stdin and
 may add keys (a calendar title, attendees), like the Slack skill's sender hook. A lifecycle
 `expired` or `suspended` is an item; a reminder is not. Under `OPSBOT_PEEK=1` it makes no
