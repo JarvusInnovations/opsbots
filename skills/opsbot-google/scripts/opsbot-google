@@ -7,19 +7,19 @@
 #   opsbot-google login --source … --client <file> [--paste]
 #                          the installed-app sign-in for the listener's own grant
 #   opsbot-google ensure [--source …] [--dry-run]
-#                          create or renew the Gmail watch now
+#                          create or renew the Gmail watch, or the Meet transcript subscription, now
 #   opsbot-google status [--source …]
 #                          one row per piece: ok, missing or differs, with the fix
 #
 # Run from the bot's repo checkout, as the bot's user. Exit 0 all ok, 1 something to fix or a
-# failed call, 2 bad usage or not in a bot's repo. The Meet source is not in this build: each
-# command says "meet: not yet available" for it.
+# failed call, 2 bad usage or not in a bot's repo. --source defaults to gmail.
 set -uo pipefail
 
 SKILL="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 TEMPLATES="$SKILL/templates"
 LIB="$SKILL/scripts/google-push.mjs"
 GMAIL_PIECES=(monitor.d/30-gmail-push heartbeat.d/15-gmail-push)
+MEET_PIECES=(monitor.d/35-meet-transcripts heartbeat.d/25-meet-transcripts)
 
 usage() {
   cat <<'EOF'
@@ -28,20 +28,26 @@ commands:
   install [--source gmail|meet|both] [--dry-run] [--force]
                                  copy the source's listener and heartbeat into opsbot.d/ (a file
                                  that differs is left unless --force), then print the opsbot.json
-                                 blocks to merge (streams.gmail_push and the wake.files entry)
-                                 and the next commands; never writes opsbot.json
+                                 blocks to merge (streams.gmail_push or streams.meet_push, and
+                                 the wake.files entry) and the next commands; never writes
+                                 opsbot.json
   login --source gmail|meet|both --client <client.json> [--paste]
                                  sign in with the OAuth client (a Desktop app) for the
-                                 listener's own grant: gmail.metadata and pubsub for Gmail. It
+                                 listener's own grant: gmail.metadata and pubsub for Gmail,
+                                 meetings.space.readonly and pubsub for Meet. It
                                  prints the consent URL and waits on a 127.0.0.1 port for the
                                  redirect; with --paste, paste the redirect's address instead
                                  (a headless host). Writes the token file, 0600
   ensure [--source …] [--dry-run]
-                                 create or renew the Gmail watch now
-  status [--source …]            check the settings, the token file, the subscription, the watch,
+                                 create or renew the Gmail watch, or the Meet transcript
+                                 subscription (found by its target and topic; created,
+                                 reactivated or extended), now
+  status [--source …]            check the settings, the token file, the subscription, the watch
+                                 or the transcript subscription,
                                  the last pull, standing problems, the scripts, the unit and
                                  wake.files; exit 0 all ok, 1 something to fix
-The source defaults to gmail. meet is not yet available.
+The source defaults to gmail. Google sends the Meet event only for meetings the account
+organized.
 EOF
 }
 
@@ -93,11 +99,10 @@ cmd_install() {
   need_bot_repo
   local name; name=$(cfg name)
   [ -n "$name" ] || { echo "error: opsbot.json has no name" >&2; exit 2; }
-  [ $MEET = 1 ] && echo "meet: not yet available"
-  [ $GMAIL = 1 ] || return 0
-
-  local p src dst
-  for p in "${GMAIL_PIECES[@]}"; do
+  local pieces=() p src dst
+  [ $GMAIL = 1 ] && pieces+=("${GMAIL_PIECES[@]}")
+  [ $MEET = 1 ] && pieces+=("${MEET_PIECES[@]}")
+  for p in "${pieces[@]}"; do
     src="$TEMPLATES/$p"; dst="$ROOT/opsbot.d/$p"
     if [ ! -e "$dst" ]; then
       if [ $dry = 1 ]; then echo "would write  opsbot.d/$p"
@@ -114,44 +119,91 @@ cmd_install() {
     fi
   done
 
-  local account project topic sub wake_cfg
-  account=$(cfg streams.gmail_push.account); project=$(cfg streams.gmail_push.project)
-  topic=$(cfg streams.gmail_push.topic); sub=$(cfg streams.gmail_push.subscription)
-  wake_cfg=$(cfg streams.gmail_push.wake_file); wake_cfg=${wake_cfg:-"~/.cache/$name/gmail-push.jsonl"}
-  account=${account:-"<the bot's Google account, the mailbox to watch>"}
-  project=${project:-"<the Google Cloud project that holds the topic>"}
-  topic=${topic:-"<the Pub/Sub topic Gmail publishes to>"}
-  sub=${sub:-"<the pull subscription on that topic>"}
+  local blocks=() wakes=() gwake mwake
+  if [ $GMAIL = 1 ]; then
+    local account project topic sub
+    account=$(cfg streams.gmail_push.account); project=$(cfg streams.gmail_push.project)
+    topic=$(cfg streams.gmail_push.topic); sub=$(cfg streams.gmail_push.subscription)
+    gwake=$(cfg streams.gmail_push.wake_file); gwake=${gwake:-"~/.cache/$name/gmail-push.jsonl"}
+    account=${account:-"<the bot's Google account, the mailbox to watch>"}
+    project=${project:-"<the Google Cloud project that holds the topic>"}
+    topic=${topic:-"<the Pub/Sub topic Gmail publishes to>"}
+    sub=${sub:-"<the pull subscription on that topic>"}
+    blocks+=("    \"gmail_push\": {
+      \"enabled\": true,
+      \"account\": \"$account\",
+      \"project\": \"$project\",
+      \"topic\": \"$topic\",
+      \"subscription\": \"$sub\"
+    }")
+    wakes+=("{ \"file\": \"$gwake\", \"inputs\": [\"15-gmail-push\", \"<the bot's own inbox reader, e.g. 20-mail>\"] }")
+  fi
+  if [ $MEET = 1 ]; then
+    local maccount muser mproject mtopic msub
+    maccount=$(cfg streams.meet_push.account); muser=$(cfg streams.meet_push.user_id)
+    mproject=$(cfg streams.meet_push.project); mtopic=$(cfg streams.meet_push.topic); msub=$(cfg streams.meet_push.subscription)
+    mwake=$(cfg streams.meet_push.wake_file); mwake=${mwake:-"~/.cache/$name/meet-push.jsonl"}
+    maccount=${maccount:-"<the bot's Google account, the meetings' organizer>"}
+    muser=${muser:-"<that account's directory id; opsbot-google status --source meet says how to find it>"}
+    mproject=${mproject:-"<the Google Cloud project that holds the topic>"}
+    mtopic=${mtopic:-"<the Pub/Sub topic Meet events are delivered to>"}
+    msub=${msub:-"<the pull subscription on that topic>"}
+    blocks+=("    \"meet_push\": {
+      \"enabled\": true,
+      \"account\": \"$maccount\",
+      \"user_id\": \"$muser\",
+      \"project\": \"$mproject\",
+      \"topic\": \"$mtopic\",
+      \"subscription\": \"$msub\"
+    }")
+    wakes+=("{ \"file\": \"$mwake\", \"inputs\": [\"25-meet-transcripts\"] }")
+  fi
+  local joined_blocks joined_wakes i
+  joined_blocks="${blocks[0]}"; for ((i = 1; i < ${#blocks[@]}; i++)); do joined_blocks+=$',\n'"${blocks[$i]}"; done
+  joined_wakes="${wakes[0]}"; for ((i = 1; i < ${#wakes[@]}; i++)); do joined_wakes+=", ${wakes[$i]}"; done
+  local srcflag=""
+  [ $MEET = 1 ] && srcflag=" --source meet"
+  [ $MEET = 1 ] && [ $GMAIL = 1 ] && srcflag=" --source both"
+  local loginsrc="${srcflag:- --source gmail}"
 
   cat <<EOF
 
 Merge into opsbot.json yourself (this command never writes it), then commit:
 
   "streams": {
-    "gmail_push": {
-      "enabled": true,
-      "account": "$account",
-      "project": "$project",
-      "topic": "$topic",
-      "subscription": "$sub"
-    }
+$joined_blocks
   },
-  "wake": { "files": [{ "file": "$wake_cfg", "inputs": ["15-gmail-push", "<the bot's own inbox reader, e.g. 20-mail>"] }] }
+  "wake": { "files": [$joined_wakes] }
 
-(The wake line says only that mail arrived and how much: the bot's own inbox reader, named in
-inputs, fetches it. Keep any wake.files entries already there.)
+(A wake line says only that something arrived, never what: the inputs named beside it turn it
+into items. Keep any wake.files entries already there.)
+EOF
+  if [ $GMAIL = 1 ]; then cat <<'EOF'
 
 Optional keys under streams.gmail_push: labels (["INBOX"]), renew_hours (24), renew_before_hours
 (24), wake_grace_seconds (20), problem_after_minutes (5), stale_minutes (15), token_file,
 wake_file, state_file (see the skill's SKILL.md). Nothing has a default naming a project or an
 address.
+EOF
+  fi
+  if [ $MEET = 1 ]; then cat <<'EOF'
+
+Google sends the Meet event only for meetings the account organized: a meeting it was only
+invited to produces nothing.
+
+Optional keys under streams.meet_push: renew_hours (6), lookback_minutes (30), enrich (a repo
+path to an executable that adds keys to each item), wake_grace_seconds (20),
+problem_after_minutes (5), stale_minutes (15), token_file, wake_file, state_file.
+EOF
+  fi
+  cat <<EOF
 
 Then, in order:
-  1. the cloud objects: templates/infra/ in the skill, or the README's list
-  2. opsbot-google login --source gmail --client <the Desktop app client's JSON>   (--paste on a headless host)
-  3. opsbot-google ensure
+  1. the cloud objects: templates/infra/<source>/ in the skill, or templates/infra/README.md
+  2. opsbot-google login$loginsrc --client <the Desktop app client's JSON>   (--paste on a headless host)
+  3. opsbot-google ensure$srcflag
   4. opsbot-core infra install
-  5. opsbot-google status
+  5. opsbot-google status$srcflag
 EOF
   return 0
 }
@@ -161,8 +213,8 @@ EOF
 ROWS=0; BAD=0
 row() { # state piece detail [fix]
   ROWS=$((ROWS + 1))
-  printf '%-8s %-26s %s\n' "$1" "$2" "$3"
-  if [ "$1" != ok ]; then BAD=$((BAD + 1)); [ -n "${4:-}" ] && printf '%-8s %-26s fix: %s\n' "" "" "$4"; fi
+  printf '%-8s %-32s %s\n' "$1" "$2" "$3"
+  if [ "$1" != ok ]; then BAD=$((BAD + 1)); [ -n "${4:-}" ] && printf '%-8s %-32s fix: %s\n' "" "" "$4"; fi
 }
 
 cmd_status() {
@@ -178,11 +230,8 @@ cmd_status() {
   need_bot_repo
   local name; name=$(cfg name)
   [ -n "$name" ] || { echo "error: opsbot.json has no name" >&2; exit 2; }
-  [ $MEET = 1 ] && echo "meet: not yet available"
-  [ $GMAIL = 1 ] || return 0
-
   local state piece detail fix out
-  out=$(OPSBOT_ROOT="$ROOT" OPSBOT_CONFIG="$CONFIG" node "$LIB" status-rows --source gmail 2>&1)
+  out=$(OPSBOT_ROOT="$ROOT" OPSBOT_CONFIG="$CONFIG" node "$LIB" status-rows --source "$srcarg" 2>&1)
   while IFS=$'\t' read -r state piece detail fix; do
     [ -n "$state" ] || continue
     case "$state" in
@@ -191,22 +240,27 @@ cmd_status() {
     esac
   done <<< "$out"
 
-  local p dst
-  for p in "${GMAIL_PIECES[@]}"; do
+  local pieces=() units=() p dst
+  [ $GMAIL = 1 ] && { pieces+=("${GMAIL_PIECES[@]}"); units+=("opsbot-$name-monitor-30-gmail-push.service"); }
+  [ $MEET = 1 ] && { pieces+=("${MEET_PIECES[@]}"); units+=("opsbot-$name-monitor-35-meet-transcripts.service"); }
+  for p in "${pieces[@]}"; do
     dst="$ROOT/opsbot.d/$p"
-    if [ ! -e "$dst" ]; then row missing "$p" "not installed" "opsbot-google install"
-    elif ! cmp -s "$TEMPLATES/$p" "$dst"; then row differs "$p" "differs from the template" "opsbot-google install --force   (after keeping any change you meant)"
+    if [ ! -e "$dst" ]; then row missing "$p" "not installed" "opsbot-google install --source $srcarg"
+    elif ! cmp -s "$TEMPLATES/$p" "$dst"; then row differs "$p" "differs from the template" "opsbot-google install --source $srcarg --force   (after keeping any change you meant)"
     elif [ ! -x "$dst" ]; then row differs "$p" "not executable" "chmod 755 opsbot.d/$p"
     else row ok "$p" "matches the template"; fi
   done
 
-  local unit="opsbot-$name-monitor-30-gmail-push.service"
-  if ! command -v systemctl >/dev/null; then row missing listener "$unit: no systemctl on this host" "opsbot-core infra install (on a systemd host)"
-  else
-    local st; st=$(systemctl --user is-active "$unit" 2>/dev/null | head -1); st=${st:-unknown}
-    if [ "$st" = active ]; then row ok listener "$unit active"
-    else row missing listener "$unit $st" "opsbot-core infra install; journalctl --user -u $unit"; fi
-  fi
+  local unit lname=listener
+  for unit in "${units[@]}"; do
+    case "$unit" in *meet-transcripts*) lname="meet listener" ;; *) lname=listener ;; esac
+    if ! command -v systemctl >/dev/null; then row missing "$lname" "$unit: no systemctl on this host" "opsbot-core infra install (on a systemd host)"
+    else
+      local st; st=$(systemctl --user is-active "$unit" 2>/dev/null | head -1); st=${st:-unknown}
+      if [ "$st" = active ]; then row ok "$lname" "$unit active"
+      else row missing "$lname" "$unit $st" "opsbot-core infra install; journalctl --user -u $unit"; fi
+    fi
+  done
 
   echo
   if [ $BAD = 0 ]; then echo "status: all $ROWS ok"; return 0; fi
