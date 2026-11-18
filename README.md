@@ -23,6 +23,13 @@ Two kinds of skill, installed with the [`skills`](https://skills.sh/) CLI:
   turns those events into check items with the exact reply address, a DM to the operator for
   escalations, and an install and status command.
 
+- **`opsbot-whatsapp`**: puts the bot in WhatsApp as its own account, held by a
+  [whatsapp-axi](https://github.com/JarvusInnovations/whatsapp-axi) daemon that does the
+  listening. It ships a waker that nudges the loop and sends the blue ticks once the bot has
+  read a message, a reader that turns kept messages into check items with the exact reply
+  address, a message to the operator for escalations, a guarded post command, and an install
+  and status command.
+
 Setting up a fresh machine for agent work, bot or not, is one line with no root:
 
 ```bash
@@ -36,6 +43,7 @@ missing, and lists the sign-ins left for you. Add `-s -- --dry-run` to look firs
 npx skills add JarvusInnovations/opsbots --skill opsbot-core   # in a bot's repo
 npx skills add JarvusInnovations/opsbots --skill opsbot-host   # in a bot's repo
 npx skills add JarvusInnovations/opsbots --skill opsbot-slack  # in a bot's repo
+npx skills add JarvusInnovations/opsbots --skill opsbot-whatsapp  # in a bot's repo
 npx skills add JarvusInnovations/opsbots --skill mothership    # in a mothership
 ```
 

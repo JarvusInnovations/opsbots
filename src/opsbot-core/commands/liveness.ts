@@ -18,7 +18,7 @@
  * A prompt that may have landed counts as a nudge; a refused one does not.
  * The nudge never creates a second loop: it prompts the one named agent.
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { AxiError } from "axi-sdk-js";
 import { parseArgs, setExit } from "../args.js";
 import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
@@ -168,7 +168,39 @@ export function sessionIdle(root: string, agent: string, found: Extract<Found, {
 
 // ------------------------------------------------------------------ nudge
 
+/**
+ * Every reply carries `outcome`, the word a listener tests (never the prose):
+ *   woke | nudged   the prompt was typed (`--now` / plain)
+ *   cooldown        refused: the session was prompted moments ago by another nudge, or one is
+ *                   typing it now (the claim below); for a listener, satisfied by another wake
+ *   refused         refused for any other reason (lock held, mid-turn, blocked, asleep, quiet)
+ *   cannot          the runtime could not be reached or refused the prompt (exit 1)
+ */
 export function nudgeCommand(args: string[]): Record<string, unknown> {
+  const r = nudgeReply(args);
+  if (r.outcome) return r;
+  const text = String(r.nudge ?? "");
+  const outcome = /^cannot\b/.test(text) ? "cannot" : /^nothing\b/.test(text) ? "refused" : /^would\b/.test(text) ? "dry-run" : /^woke\b/.test(text) ? "woke" : "nudged";
+  return { ...r, outcome };
+}
+
+/** Claim the marker: one nudge at a time gets past the cooldown test to the prompt. */
+function claimMarker(marker: string): (() => void) | null {
+  const f = `${marker}.claim`;
+  for (let i = 0; i < 2; i++) {
+    try {
+      writeFileSync(f, `${process.pid}\n`, { flag: "wx" });
+      return () => rmSync(f, { force: true });
+    } catch {
+      // a claim left by a process that died: stale after a minute
+      try { if (Date.now() - statSync(f).mtimeMs > 60_000) { rmSync(f, { force: true }); continue; } } catch { continue; }
+      return null;
+    }
+  }
+  return null;
+}
+
+function nudgeReply(args: string[]): Record<string, unknown> {
   const usage = "nudge [--now [--reason TEXT]] [--dry-run]";
   const { flags } = parseArgs(args, { bool: ["now", "dry-run"], value: ["reason"] }, usage);
   const wake = flags.now === true;
@@ -199,11 +231,26 @@ export function nudgeCommand(args: string[]): Record<string, unknown> {
   if (!wake && last && now - (parseIso(last) ?? 0) < quiet * 60_000) {
     return { nudge: `nothing · last cycle ${last}` };
   }
+  const release = dry ? () => {} : claimMarker(marker);
+  if (!release) return { nudge: `nothing · another nudge is ${wake ? "waking" : "prompting"} ${agent} now`, outcome: "cooldown" };
+  try {
+    return nudgeClaimed(root, settings, { wake, reason, dry, agent, line, now, cooldown, marker, asleep, firstWake });
+  } finally {
+    release();
+  }
+}
+
+function nudgeClaimed(
+  root: string,
+  settings: Settings,
+  o: { wake: boolean; reason: string; dry: boolean; agent: string; line: string; now: number; cooldown: number; marker: string; asleep: ReturnType<typeof activeSleep>; firstWake: boolean },
+): Record<string, unknown> {
+  const { wake, reason, dry, agent, line, now, cooldown, marker, asleep, firstWake } = o;
   if (existsSync(marker) && !firstWake) {
     const [prev, why] = readFileSync(marker, "utf8").split("\n");
     if (prev && /^\d+$/.test(prev) && now - Number(prev) * 1000 < cooldown * 60_000) {
       const ago = Math.floor((now - Number(prev) * 1000) / 60_000);
-      return { nudge: wake ? `nothing · woke ${ago} min ago${why ? ` for: ${why}` : ""}` : `nothing · nudged ${ago} min ago and no cycle since` };
+      return { nudge: wake ? `nothing · woke ${ago} min ago${why ? ` for: ${why}` : ""}` : `nothing · nudged ${ago} min ago and no cycle since`, outcome: "cooldown" };
     }
   }
 

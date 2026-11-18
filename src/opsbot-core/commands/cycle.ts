@@ -46,11 +46,12 @@ import { loadRoutines, routineDueLines } from "../routines.js";
 import { sessionPointer } from "./coldstart.js";
 import { lastModel, readEvents } from "../transcript.js";
 import { driftReport, sessionDrift } from "../drift.js";
-import { scheduleLines, wakeFiles, wakeLines } from "../wake.js";
+import { basename, grownFiles, readWakeBase, readWakeRecord, recordWakeBase, scheduleLines, wakeCounts, wakeFiles, wakeLines } from "../wake.js";
+import { decideFast } from "../fast.js";
 import { existsSync, rmSync } from "node:fs";
 import { clearSleep, decideSleep, readSleep, silenceFrom, sleepFieldLines, sleepLogLine, wakeLogLine, writeSleep, type SleepState } from "../sleep.js";
 
-export const CYCLE_USAGE = "cycle begin | cycle end --records N [--degraded] [--summary TEXT]";
+export const CYCLE_USAGE = "cycle begin [--full] | cycle end --records N [--degraded] [--summary TEXT]";
 
 function next(root: string, s: Settings): string {
   return delayLine(nextDelay(s, readCycleLog(root), nowMs()));
@@ -64,7 +65,7 @@ function wakeReport(root: string, s: Settings, boundByNext: boolean): string[] {
   const ptr = sessionPointer(root);
   const evs = ptr ? readEvents(ptr.transcript_path) : [];
   const until = boundByNext ? nextDelay(s, readCycleLog(root), nowMs()).seconds * 1000 : null;
-  return wakeLines(s, evs.length ? evs : null, nowMs(), until);
+  return wakeLines(s, evs.length ? evs : null, nowMs(), until, readWakeBase(root));
 }
 
 /** With a monitor schedule: the schedule monitor's state and the one call to make now, due at the
@@ -99,8 +100,8 @@ function driftLines(root: string, s: Settings): string[] {
 export function cycleCommand(args: string[]): Record<string, unknown> {
   const [sub, ...rest] = args;
   if (sub === "begin") {
-    parseArgs(rest, {}, "cycle begin");
-    return cycleBegin();
+    const { flags } = parseArgs(rest, { bool: ["full"] }, "cycle begin [--full]");
+    return cycleBegin(flags.full === true);
   }
   if (sub === "end") return cycleEnd(rest);
   throw new AxiError(sub ? `unknown cycle subcommand ${sub}` : "cycle needs a subcommand", "VALIDATION_ERROR", [
@@ -116,7 +117,9 @@ function wait(root: string, s: Settings, who: string): Record<string, unknown> {
   return out;
 }
 
-function cycleBegin(): Record<string, unknown> {
+const hhmm = (t: string) => `${t.slice(11, 16)}Z`;
+
+function cycleBegin(forceFull: boolean): Record<string, unknown> {
   const root = requireRoot();
   const { settings, text } = loadSettings(root);
 
@@ -160,9 +163,26 @@ function cycleBegin(): Record<string, unknown> {
     appendJsonl(paths(root).log, wakeLogLine(slept, nowMs()));
   }
 
-  // housekeeping that must run first
+  // a wake from a wake file that names its inputs checks only those (A fast cycle). The counts are
+  // taken once, here: they decide, and they are what the record says this check read from, so a
+  // line that lands after this moment is past the record and reported at `cycle end`.
+  const files = wakeFiles(settings);
+  const counts = wakeCounts(files);
+  const decision = decideFast({
+    s: settings,
+    forceFull,
+    lines: readCycleLog(root),
+    base: readWakeBase(root),
+    counts,
+    installed: discover(root, "heartbeat").scripts.map((x) => x.name),
+    watermark: readWatermark(root),
+    now: nowMs(),
+  });
+
+  // housekeeping that must run first; on a fast cycle only what declares itself quick (`.fast`)
   const configPath = configSnapshot(root, text);
   for (const s of discover(root, "cycle.begin").scripts) {
+    if (decision.fast && !s.name.endsWith(".fast")) continue;
     const r = runScript(s, root, baseEnv(root, settings, configPath, "cycle.begin"));
     if (r.code !== 0) {
       const error = `exit ${r.code}: ${firstLine(r.stderr) || firstLine(r.stdout) || "no message"}`;
@@ -182,12 +202,15 @@ function cycleBegin(): Record<string, unknown> {
     }
   }
 
+  // where this check starts reading each wake file: the monitor armed after it starts there
+  recordWakeBase(root, files, counts);
+
   // the check, with this session's trailers on its commit
   const prev = process.env.OPSBOT_COMMIT_TRAILERS;
   process.env.OPSBOT_COMMIT_TRAILERS = trailers();
   let r;
   try {
-    r = runCheck(root, { commit: true });
+    r = runCheck(root, { commit: true, fast: decision.fast ? { inputs: decision.inputs, since: decision.since } : null, mode: decision.mode });
   } catch (e) {
     // the check could not run: treated as degraded, the hold kept
     setExit(20);
@@ -200,6 +223,7 @@ function cycleBegin(): Record<string, unknown> {
     else process.env.OPSBOT_COMMIT_TRAILERS = prev;
   }
 
+  const fastLine = decision.fast ? `${decision.inputs.join(", ")}; full check due ${hhmm(decision.fullDue)}` : null;
   if (r.code === 0) {
     let sleep = sleepDecision(root, settings, text, "cycle begin");
     if (sleep) {
@@ -217,6 +241,7 @@ function cycleBegin(): Record<string, unknown> {
     releaseLock(root);
     setExit(0);
     const out: Record<string, unknown> = { cycle: `${r.line}${why ? ` · not pushed: ${why}` : ""} · next ${next(root, settings)}` };
+    if (fastLine) out.fast = fastLine;
     const wake = sleep ? [] : wakeReport(root, settings, true);
     if (sleep) out.sleep = sleepFieldLines(settings, sleep);
     if (wake.length) out.wake = wake;
@@ -225,8 +250,11 @@ function cycleBegin(): Record<string, unknown> {
     return out;
   }
   setExit(r.code);
+  const { check: checkLine, ...rest } = r.output;
   const held: Record<string, unknown> = {
-    ...r.output,
+    check: checkLine,
+    ...(fastLine ? { fast: fastLine } : {}),
+    ...rest,
     help: [
       `Work the items; then \`${cliInvocation()} cycle end --records <n>${r.code === 20 ? " --degraded" : ""}\` (the checkout stays held until then)`,
     ],
@@ -272,8 +300,12 @@ function cycleEnd(args: string[]): Record<string, unknown> {
   if (!degraded) {
     const lines = readCycleLog(root);
     let checkAt: string | null = null;
+    let fastCheck = false;
     for (const l of lines) {
-      if (["new", "degraded", "nothing-new"].includes(l.outcome) && l.at >= holdAt) checkAt = l.at;
+      if (["new", "degraded", "nothing-new"].includes(l.outcome) && l.at >= holdAt) {
+        checkAt = l.at;
+        fastCheck = l.fast === true;
+      }
     }
     if (!checkAt) refuse(`no check has logged since this cycle began${holdAt ? ` at ${holdAt}` : ""}`);
     const ce = parseIso(checkAt);
@@ -284,7 +316,8 @@ function cycleEnd(args: string[]): Record<string, unknown> {
       if (oe === null) refuse(`the watermark on file, ${oldWm}, cannot be read`);
       if (ce! < oe!) refuse(`the watermark would move backwards, from ${oldWm} to ${checkAt}`);
     }
-    wm = checkAt;
+    // a fast check read only some inputs: the watermark stays with the last full check
+    if (!fastCheck) wm = checkAt;
   }
 
   const blocked = blockedBy(root);
@@ -316,7 +349,9 @@ function cycleEnd(args: string[]): Record<string, unknown> {
   };
   if (summary !== undefined) line.summary = summary;
   appendJsonl(p.log, line);
-  const sleep = sleepDecision(root, settings, text, "cycle end");
+  // lines that came in while the cycle worked: the session is awake, so it begins again now
+  const arrived = arrivals(root, settings, holdAt);
+  const sleep = arrived.length ? null : sleepDecision(root, settings, text, "cycle end");
   if (sleep) appendJsonl(p.log, sleepLogLine(sleep));
 
   const files = [p.log];
@@ -341,7 +376,10 @@ function cycleEnd(args: string[]): Record<string, unknown> {
     cycle: `finished · ${records} records · watermark ${wm ?? "none"}${degraded ? " (held: degraded)" : ""}${pushed ? ` · not pushed: ${pushed}` : ""}`,
   };
   if (notes.length) out.notes = notes;
-  out.next = next(root, settings);
+  if (arrived.length) {
+    out.arrived = arrived.map((a) => `${a.n} on ${basename(a.file)}`).join(", ");
+    out.next = "0 arrived";
+  } else out.next = next(root, settings);
   if (sleep) {
     out.sleep = sleepFieldLines(settings, sleep);
     return out;
@@ -356,7 +394,19 @@ function cycleEnd(args: string[]): Record<string, unknown> {
   } catch {
     // the check names a routine that cannot be read; the close does not repeat it
   }
+  if (arrived.length) return out;
   const wake = wakeReport(root, settings, true);
   if (wake.length) out.wake = wake;
   return out;
+}
+
+/** The wake files that grew past the counts this cycle's check recorded. Only a record taken in
+ * this cycle counts (one taken before the lock was a cycle that never checked, as when a
+ * `cycle.d/begin/` script failed), so a broken begin cannot loop on its own arrivals. */
+function arrivals(root: string, s: Settings, holdAt: string): Array<{ file: string; n: number }> {
+  const files = wakeFiles(s);
+  if (files.length === 0) return [];
+  const rec = readWakeRecord(root);
+  if (!rec || !rec.at || (holdAt && rec.at < holdAt)) return [];
+  return grownFiles(files, rec.lines, wakeCounts(files));
 }

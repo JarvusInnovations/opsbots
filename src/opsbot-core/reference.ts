@@ -22,9 +22,9 @@ export const COMMAND_GROUPS: CommandGroup[] = [
     group: "The cycle",
     commands: [
       {
-        usage: "cycle begin",
+        usage: "cycle begin [--full]",
         summary:
-          "Refuse while another writer holds the checkout (exit 30, `wait · … · next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it. With `loop.schedule: monitor`, on 0 and 30 the `wake` field holds the schedule monitor's state and the one Monitor call to make now. With `sleep` set, a nothing-new begin that finds the loop quiet for `after_minutes` prints a `sleep` field in place of `wake`: arm nothing, end the turn. A begin that finds `.git/opsbot-sleep` removes it and logs the wake.",
+          "Refuse while another writer holds the checkout (exit 30, `wait · … · next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. A wake from a wake file whose `wake.files` entry names its inputs (`{file, inputs}`) runs a fast check: only those inputs, the last full check's window, the watermark left alone, only `cycle.d/begin/` scripts named `*.fast`, and a `fast` field naming the inputs and when the next full check is due; a quiet deadline, a full check older than `check.full_minutes` (10; 0 turns fast checks off), a failed last check or `--full` runs the full check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it. With `loop.schedule: monitor`, on 0 and 30 the `wake` field holds the schedule monitor's state and the one Monitor call to make now. With `sleep` set, a nothing-new begin that finds the loop quiet for `after_minutes` prints a `sleep` field in place of `wake`: arm nothing, end the turn. A begin that finds `.git/opsbot-sleep` removes it and logs the wake.",
       },
       {
         usage: "check [--no-commit]",
@@ -34,12 +34,17 @@ export const COMMAND_GROUPS: CommandGroup[] = [
       {
         usage: "cycle end --records N [--degraded] [--summary TEXT]",
         summary:
-          "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle. With `sleep` set, a `sleep` field may replace `wake`, as at `cycle begin`. When the memory review is due, one `memory` line says so with the command to run, and a `routines` field names each other due routine; neither blocks the cycle.",
+          "Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` (or, when a wake file gained lines since this cycle's check, `arrived: <n> on <file>` and `next 0 arrived` with no `wake` field: run `cycle begin` again at once) and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle. With `sleep` set, a `sleep` field may replace `wake`, as at `cycle begin`. When the memory review is due, one `memory` line says so with the command to run, and a `routines` field names each other due routine; neither blocks the cycle.",
       },
       {
         usage: "check --peek",
         summary:
           "Run every heartbeat script and the `routines` input as a check does (each script also gets `OPSBOT_PEEK=1`) and print the count of new items per input. Records, logs and commits nothing; the watermark and seen keys are untouched, so the next check sees the same items. Exit 0 · 10 · 20 · 2 as `check`.",
+      },
+      {
+        usage: "wake wait --until <epoch seconds>",
+        summary:
+          "The schedule monitor's poller, run by the one `Monitor` call `cycle begin` and `cycle end` print and by nothing else. From the line counts the last check recorded, polls every 2 s; prints the new lines of any wake file (each prefixed with the file's basename, cut to 300 characters, at most 20) or `cycle due` when the time passes, and exits 0. Refuses a time more than 1800 s ahead (exit 2).",
       },
       { usage: "next-delay", summary: "Seconds until the next cycle and why, from the cycle log and the cadence table. With `loop.schedule: monitor`, never over 1740 (29 min), and the reason says when that cap applied." },
     ],
@@ -122,7 +127,7 @@ export const COMMAND_GROUPS: CommandGroup[] = [
       { usage: "watchdog [--dry-run]", summary: "When no cycle has logged within `watchdog_minutes`, tell the operator once per outage through `escalate.d/` and record it. Stands down while the bot sleeps." },
       {
         usage: "nudge [--now [--reason TEXT]] [--dry-run]",
-        summary: "Re-issue `loop.prompt` to the named agent when the loop is quiet, unlocked, past cooldown and idle. `--now` (for listeners) skips the quiet test. A `working` agent whose own session log shows its turn ended (background work only) is prompted anyway, with a note. While the bot sleeps only `--now` acts, and it wakes it.",
+        summary: "Re-issue `loop.prompt` to the named agent when the loop is quiet, unlocked, past cooldown and idle. `--now` (for listeners) skips the quiet test. A `working` agent whose own session log shows its turn ended (background work only) is prompted anyway, with a note. While the bot sleeps only `--now` acts, and it wakes it. Every reply ends with `outcome:`, the word to test (the prose is for people): `woke` or `nudged` when the prompt was typed, `cooldown` when another nudge typed it moments ago or is typing it now (one nudge at a time holds the marker), `refused` for any other reason not to (lock, mid-turn, blocked, asleep, quiet), `cannot` (exit 1) when the runtime failed, `dry-run`.",
       },
       {
         usage: "sleep tick [--dry-run]",

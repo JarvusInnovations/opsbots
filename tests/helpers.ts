@@ -102,6 +102,17 @@ const STRIP = [
   "CLAUDE_CODE_BRIDGE_SESSION_ID",
 ];
 
+/** `cli` without waiting: for runs that must overlap. */
+export async function cliAsync(bot: Bot, args: string[], opts: { now?: string } = {}): Promise<Ran> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !STRIP.includes(k)) env[k] = v;
+  Object.assign(env, bot.env);
+  if (opts.now) env.OPSBOT_TEST_NOW = opts.now;
+  const p = Bun.spawn([process.execPath, ENTRY, ...args], { cwd: bot.root, env, stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+  return { code, out, err };
+}
+
 export function cli(bot: Bot | null, args: string[], opts: { env?: Record<string, string>; now?: string; input?: string; cwd?: string } = {}): Ran {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !STRIP.includes(k)) env[k] = v;

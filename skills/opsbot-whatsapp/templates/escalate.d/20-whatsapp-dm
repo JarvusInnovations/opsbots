@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# escalate.d: reach the operator in WhatsApp, installed by the opsbot-whatsapp skill. The core
+# pipes the message on stdin (the watchdog's outage notice, for one). It is sent once, opening
+# with the bot's mark, to the chat named in streams.whatsapp.escalate_chat (an operator's direct
+# chat), through `whatsapp-axi send` on the bot's own account. It is the kit's own path to the
+# operator and is never screened.
+#
+# Exit 1 with one line on stderr when account or escalate_chat is unset, the message is empty, or
+# whatsapp-axi refuses or fails the send, so the watchdog can say it could not escalate. Nothing is
+# retried here: the core decides when to try again.
+# OPSBOT_WHATSAPP_AXI names another whatsapp-axi binary (a pinned copy, a test double).
+set -uo pipefail
+
+cfg="${OPSBOT_CONFIG:-${OPSBOT_ROOT:-.}/opsbot.json}"
+read_cfg() {
+  node -e 'const s=(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).streams||{}).whatsapp||{};process.stdout.write(String(s[process.argv[2]]??""))' "$cfg" "$1" 2>/dev/null
+}
+chat=$(read_cfg escalate_chat)
+account=$(read_cfg account)
+axi="${OPSBOT_WHATSAPP_AXI:-whatsapp-axi}"
+[ -n "$account" ] || { echo "streams.whatsapp.account is not set in opsbot.json (the whatsapp-axi account name)" >&2; exit 1; }
+[ -n "$chat" ] || { echo "streams.whatsapp.escalate_chat is not set in opsbot.json (an operator's direct chat: their number)" >&2; exit 1; }
+
+msg=$(cat)
+[ -n "${msg//[[:space:]]/}" ] || { echo "empty message; nothing sent" >&2; exit 1; }
+
+# The core's own messages (the watchdog's) already open with the mark; a bot's script may not.
+mark="${OPSBOT_MARK:-🤖}"
+case "$msg" in "$mark"*) text="$msg" ;; *) text="$mark $msg" ;; esac
+
+# The daemon's answer goes to a --json-out file in a private temp directory, removed on exit;
+# stdout is the TOON view and is not read.
+tmp=$(mktemp -d) || { echo "could not make a temp directory" >&2; exit 1; }
+chmod 700 "$tmp"
+trap 'rm -rf "$tmp"' EXIT
+printf '%s' "$text" | "$axi" send "$chat" - --account "$account" --json-out="$tmp/send.json" >/dev/null 2>&1; rc=$?
+err=$(node -e '
+  let j; try { j = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); } catch { process.exit(0); }
+  if (j && j.error) process.stdout.write(`${j.error.code || "error"}: ${j.error.message || "no message"}`);
+' "$tmp/send.json" 2>/dev/null)
+if [ $rc -ne 0 ] || [ -n "$err" ]; then
+  echo "whatsapp-axi send failed: ${err:-exit $rc}" >&2
+  exit 1
+fi
+[ -s "$tmp/send.json" ] || { echo "whatsapp-axi send wrote no --json-out file" >&2; exit 1; }
+echo "sent to $chat"

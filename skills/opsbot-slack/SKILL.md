@@ -45,7 +45,10 @@ where each token goes, is [README.md](README.md).
 3. **The app-level token** (`xapp-`, scope `connections:write`): into
    `~/.config/<bot>/slack-app-token`, mode 600. The listener reads it from there.
 4. **The scripts.** `scripts/opsbot-slack install`. It copies the three scripts and prints the
-   `streams.slack` block and the `wake.files` entry. Merge them into `opsbot.json` with the
+   `streams.slack` block and the `wake.files` entry in its object form,
+   `{ "file": "~/.cache/<bot>/slack-events.jsonl", "inputs": ["20-slack-events"] }`, which names
+   the reader of the file so a wake from it runs a fast check (opsbot-core, *A fast cycle*).
+   Merge them into `opsbot.json` with the
    bot's user id (`bot_user`) and the id of its DM with the operator (`escalate_dm`); commit.
 5. **The unit.** `opsbot-core infra install` renders the listener as the user service
    `opsbot-<bot>-monitor-10-slack-listener`.
@@ -64,9 +67,20 @@ where each token goes, is [README.md](README.md).
 - a reaction on one of the bot's own messages;
 - a new member joining the workspace.
 
-For each it appends one JSON line to `events_file`, reacts `receipt_emoji` on a message, and
-runs `$OPSBOT_CORE nudge --now`, repeating every 10 seconds while the agent is mid-turn until
-it wakes or the item was read. It reacts `ack_emoji` only once the item's key is in
+For each it appends one JSON line to `events_file` and reacts `receipt_emoji` on a message at
+once. Then it gives the session's own monitor the first chance: it waits `wake_grace_seconds`
+(20), checking each second, and stops without nudging as soon as the key is in
+`logs/intake/seen` or a check has begun since the event (a check line in `logs/cycle.jsonl`
+newer than the event). A cycle already running when the event arrived does not count, since its
+check may have read the stream first: while it holds the cycle lock the listener waits for it to
+end, then looks again, and nudges at once if neither. When the bot is asleep
+(`.git/opsbot-sleep`) it skips the wait. Only if the grace runs out does it run
+`$OPSBOT_CORE nudge --now`, repeating every 10 seconds while the agent is mid-turn until it
+wakes, the item was read, or a newer check began. A refused nudge is logged once per wake
+(`nudge pending: …`), not at every try: a session that is mid-turn reaches `cycle end`, which
+reports the arrival and begins again. Events that arrive
+together share one pending wake, so a burst is at most one nudge. One journal line says which
+path woke the session: `woken by monitor`, `nudged after <n>s` or `nudged after cycle`. It reacts `ack_emoji` only once the item's key is in
 `logs/intake/seen`, which the core writes when the check reports the item to the model: the
 second reaction means read. It logs every event type it receives, kept or not, so a missing
 scope or event subscription shows in `journalctl --user -u opsbot-<bot>-monitor-10-slack-listener`.
@@ -109,7 +123,8 @@ before it is recorded, in this order. None of them calls a model.
   anyone who can message the bot can run the command.
 
 The events file is in `wake.files`, so the session's own bounded monitor wakes on it first.
-The nudge is the backstop that survives the session. With `loop.schedule: "monitor"` the one
+The nudge is the backstop that survives the session, and it waits out `wake_grace_seconds`
+first, so a healthy session gets no typed prompt. With `loop.schedule: "monitor"` the one
 schedule monitor is that wake; the nudge stays, with its own cooldown.
 
 **The reader** prints one item per event recorded since the check's window opened
@@ -296,6 +311,7 @@ which customer they belong to. That knowledge is the bot's own, so the reader ta
 | `receipt_emoji` | the reaction on arrival | `eyes` |
 | `ack_emoji` | the reaction once the check has reported the item | `gear` |
 | `ack_timeout_minutes` | how long the listener keeps nudging and waiting for the read | `30` |
+| `wake_grace_seconds` | how long the listener waits for the session's own monitor to start a cycle before it nudges; `0` nudges at once (`status` says `differs` for anything but a whole number 0 or more) | `20` |
 | `lookback_minutes` | extra window before `$OPSBOT_SINCE` | `30` |
 | `bot_name` | the name the bot posts under, to find its last message in a thread | the bot's `name` |
 | `team` | the workspace id, when slack-axi holds more than one | slack-axi's default |
@@ -319,8 +335,8 @@ which customer they belong to. That knowledge is the bot's own, so the reader ta
 
 | Command | Does | Exit |
 | --- | --- | --- |
-| `install [--dry-run] [--force]` | copies the three scripts into `opsbot.d/`, executable. A file that already matches is left; one that differs is left unless `--force`. Prints what it wrote and left, then the `streams.slack` block and `wake.files` entry to merge (it never writes `opsbot.json`), and the manifest's path | 0 · 2 |
-| `status` | one row each, `ok`, `missing` or `differs`, with the fix: the app-level token file (present, mode 600, `xapp-`; never printed), slack-axi signed in in bot mode, slack-axi 1.6.0 or later (the `audience` command), each script present and matching its template, `bot_user` and `escalate_dm` in `streams.slack`, the events file in `wake.files`, the listener's unit active; with `bot_user` set, the posting identity (`ok` only when `auth.test` names `bot_user`); with `screen` set, its command and policy files; with `listen_to`, `intercept` or `files` set, that setting (`listen_to: operators` with no `operators` and no `escalate_dm` is refused); with `peers` set, each peer and the bot's membership in each listed channel | 0 all ok · 1 something to fix · 2 |
+| `install [--dry-run] [--force]` | copies the three scripts into `opsbot.d/`, executable. A file that already matches is left; one that differs is left unless `--force`. Prints what it wrote and left, then the `streams.slack` block and `wake.files` entry (the object form, naming `heartbeat.d/20-slack-events` as its input) to merge (it never writes `opsbot.json`), and the manifest's path | 0 · 2 |
+| `status` | one row each, `ok`, `missing` or `differs`, with the fix: the app-level token file (present, mode 600, `xapp-`; never printed), slack-axi signed in in bot mode, slack-axi 1.6.0 or later (the `audience` command), each script present and matching its template, `bot_user` and `escalate_dm` in `streams.slack`, the events file in `wake.files` (a path or the `{file, inputs}` form; the row says whether a wake from it is fast), the listener's unit active; with `bot_user` set, the posting identity (`ok` only when `auth.test` names `bot_user`); with `screen` set, its command and policy files; with `listen_to`, `intercept` or `files` set, that setting (`listen_to: operators` with no `operators` and no `escalate_dm` is refused); with `peers` set, each peer and the bot's membership in each listed channel | 0 all ok · 1 something to fix · 2 |
 | `post <conv> [--reply <ts>] [--dry-run] [<markdown> \| -]` | classifies, runs the loop guard in a peer thread, screens when configured, checks the posting identity, posts in bot mode, logs (Posting, above) | 0 · 1 · 2 · 3 blocked · 4 screen failed · 5 not the bot · 6 loop guard |
 | `classify <conv>` | `{conv, class, why, cached}` | 0 · 2 |
 

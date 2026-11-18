@@ -7,9 +7,13 @@
 //      the session's own bounded monitor wakes on it; the heartbeat reader
 //      (heartbeat.d/20-slack-events) turns the lines into items at the next check;
 //   2. reacts with receipt_emoji (default eyes) on a message, so the sender sees it was heard;
-//   3. runs `$OPSBOT_CORE nudge --now`, the backstop that survives the session, and keeps
-//      asking every 10 s while the agent is mid-turn, until it wakes or the item was read
-//      anyway. The nudge has its own cooldown, so the repeats are cheap;
+//   3. gives the session's own monitor wake_grace_seconds (20) to start a cycle, and only if it
+//      did not (the key unseen, no check begun since the event; a cycle already running when it
+//      arrived does not count, so the listener waits for it to end and looks again; no wait while
+//      asleep) runs
+//      `$OPSBOT_CORE nudge --now`, the backstop that survives the session, and keeps asking
+//      every 10 s while the agent is mid-turn, until it wakes or the item was read anyway.
+//      Events arriving together share one pending wake;
 //   4. reacts with ack_emoji (default gear) only when the item's key appears in
 //      logs/intake/seen, which the core writes when the check reports the item to the model.
 //      So the second reaction means "read", by construction, not by promise.
@@ -38,6 +42,7 @@
 // The cycle answers; this only watches. It logs every event type it receives, so a missing
 // scope or subscription shows in the journal. Zero dependencies: Node 22's fetch and WebSocket.
 // OPSBOT_SLACK_AXI names another slack-axi binary (a pinned copy, a test double).
+// OPSBOT_SLACK_TICK_MS (1000) is one grace second; the seen poll is 2 ticks, the nudge repeat 10.
 // `10-slack-listener --check` prints one status row per optional setting and exits; it is what
 // `opsbot-slack status` runs.
 //
@@ -48,7 +53,7 @@
 //     "operators": ["<an operator's user id>"], "escalate_dm": "<the bot's DM with its operator>",
 //     "app_token_file": "~/.config/<bot>/slack-app-token",
 //     "events_file": "~/.cache/<bot>/slack-events.jsonl",
-//     "receipt_emoji": "eyes", "ack_emoji": "gear", "ack_timeout_minutes": 30,
+//     "receipt_emoji": "eyes", "ack_emoji": "gear", "ack_timeout_minutes": 30, "wake_grace_seconds": 20,
 //     "team": "<team id, when slack-axi holds more than one workspace>",
 //     "listen_to": "anyone" | "operators",
 //     "intercept": [{ "prefix": "+ ", "command": ["bin/capture"], "kinds": ["dm"], "timeout_seconds": 30 }],
@@ -58,8 +63,8 @@
 //     "peers": [{ "name": "<label>", "user": "<peer bot's user id>", "bot_id": "<optional>", "channels": ["C..."] }],
 //     "peer_receipt_emoji": "robot_face", "peer_turns": 6, "peer_posts_per_hour": 20
 //   } }
-import { execFile, spawn } from "node:child_process";
-import { accessSync, appendFileSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { execFile, execFileSync, spawn } from "node:child_process";
+import { accessSync, appendFileSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -123,6 +128,7 @@ export function settings(cfg) {
     receiptEmoji: s.receipt_emoji || "eyes",
     ackEmoji: s.ack_emoji || "gear",
     ackTimeoutMs: (Number(s.ack_timeout_minutes) || 30) * 60000,
+    wakeGraceSeconds: graceSeconds(s.wake_grace_seconds) ?? 20,
     team: s.team || "",
     listenTo: s.listen_to === "operators" ? "operators" : "anyone",
     intercept: s.intercept,
@@ -489,6 +495,10 @@ export function checkRows(cfg, root) {
     else if (raw.listen_to === "operators") rows.push(`ok listen_to operators: ${[s.operators.length ? s.operators.join(", ") : "", s.escalateDm ? `anyone in ${s.escalateDm}` : ""].filter(Boolean).join(", and ")}`);
     else rows.push("ok listen_to anyone");
   }
+  if (raw.wake_grace_seconds !== undefined) {
+    if (graceSeconds(raw.wake_grace_seconds) === null) rows.push(`differs wake_grace_seconds ${JSON.stringify(raw.wake_grace_seconds)} is not a whole number of seconds, 0 or more; the listener uses 20`);
+    else rows.push(`ok wake_grace_seconds ${raw.wake_grace_seconds === 0 ? "0: nudges at once" : `${raw.wake_grace_seconds}: nudges only if the monitor has not started a cycle by then`}`);
+  }
   if (raw.intercept !== undefined) {
     const { rules, problems } = interceptRules(raw.intercept, root);
     for (const r of rules) {
@@ -539,6 +549,7 @@ function main() {
   const core = process.env.OPSBOT_CORE || join(root, ".agents/skills/opsbot-core/scripts/opsbot-core");
   const teamArgs = s.team ? ["--team", s.team] : [];
   const axi = process.env.OPSBOT_SLACK_AXI || "slack-axi";
+  const tick = Number(process.env.OPSBOT_SLACK_TICK_MS) > 0 ? Number(process.env.OPSBOT_SLACK_TICK_MS) : 1000;
 
   const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
   const fail = (m) => { console.error(m); process.exit(1); };
@@ -641,24 +652,21 @@ function main() {
     log("own thread roots pruned to", kept.split("\n").length - 1);
   }
 
-  async function wake(key, reason) {
-    const until = Date.now() + s.ackTimeoutMs;
-    while (Date.now() < until) {
-      const r = await run(core, ["nudge", "--now", "--reason", reason]);
-      const line = r.out.split("\n")[0] || "";
-      if (/woke/.test(line)) { log("nudge:", line.slice(0, 120)); return; }
-      if (isSeen(key)) return;
-      log("nudge pending:", line.slice(0, 120));
-      await sleep(10000);
-    }
-    log("!", "wake timed out for", key);
-  }
+  const lockFile = gitPath(root, "opsbot-cycle.lock");
+  const sleepFile = gitPath(root, "opsbot-sleep");
+  const waker = makeWaker({
+    graceS: s.wakeGraceSeconds, tick, ackTimeoutMs: s.ackTimeoutMs, isSeen, log,
+    nudge: async (reason) => (await run(core, ["nudge", "--now", "--reason", reason])).out || "",
+    begunSince: (t) => cycleBegunSince(root, t),
+    cycleRunning: () => existsSync(lockFile),
+    asleep: () => existsSync(sleepFile),
+  });
 
   async function ackWhenSeen(conv, ts, key) {
     const until = Date.now() + s.ackTimeoutMs;
     while (Date.now() < until) {
       if (isSeen(key)) { await run(axi, ["react", conv, ts, `:${s.ackEmoji}:`, ...teamArgs]); log("read:", key); return; }
-      await sleep(2000);
+      await sleep(2 * tick);
     }
     log("!", "never seen within the timeout:", key);
   }
@@ -708,7 +716,7 @@ function main() {
       await run(axi, ["react", item.conv, item.ts, `:${item.from_peer ? s.peerReceiptEmoji : s.receiptEmoji}:`, ...teamArgs]);
       ackWhenSeen(item.conv, item.ts, item.key).catch((e) => log("!", "ack:", e.message));
     }
-    wake(item.key, `slack ${item.event} from ${item.from}${item.conv ? ` in ${item.conv}` : ""}`).catch((e) => log("!", "wake:", e.message));
+    waker.add(item.key, `slack ${item.event} from ${item.from}${item.conv ? ` in ${item.conv}` : ""}`);
   }
 
   let backoff = 5;
@@ -745,6 +753,123 @@ function main() {
 
   log(`listening for ${cfg.name}; events to ${s.eventsFile}; receipt :${s.receiptEmoji}:, read :${s.ackEmoji}: once in ${seenFile}`);
   connect();
+}
+
+// ------------------------------------------------------------------ the wake: monitor first, nudge second
+// The same block is in both kit listeners (opsbot-slack's 10-slack-listener, opsbot-whatsapp's
+// 20-whatsapp-waker); keep them in step.
+
+/** wake_grace_seconds: a whole number 0 or more, else null (the caller uses 20 and status says differs). Pure. */
+export const graceSeconds = (v) => (v === undefined ? 20 : typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null);
+
+/** A path in the git dir (worktree-aware), as the core resolves it; <root>/.git/<name> when git cannot say. */
+function gitPath(root, name) {
+  try {
+    return execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-path", name], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || join(root, ".git", name);
+  } catch { return join(root, ".git", name); }
+}
+
+/**
+ * Whether a check has begun since `t` (ms): a check line (outcome nothing-new, new or degraded)
+ * in logs/cycle.jsonl whose `at` is later than `t`. `at` is whole seconds, the moment the check
+ * started, so a check begun in the same second as the event does not count: it may have read
+ * the stream just before the event landed. A finish line, a sleep line or the cycle lock never
+ * counts: a cycle already running when the event arrived may have checked before it. Reads the
+ * log's tail only.
+ */
+export function cycleBegunSince(root, t) {
+  let fd;
+  try {
+    const file = join(root, "logs/cycle.jsonl");
+    const size = statSync(file).size;
+    const n = Math.min(size, 65536);
+    const buf = Buffer.alloc(n);
+    fd = openSync(file, "r");
+    readSync(fd, buf, 0, n, size - n);
+    const lines = buf.toString("utf8").trim().split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      let l;
+      try { l = JSON.parse(lines[i]); } catch { continue; }
+      if (!l || !["nothing-new", "new", "degraded"].includes(l.outcome)) continue;
+      const at = Date.parse(l.at);
+      return Number.isFinite(at) && at > t;
+    }
+    return false;
+  } catch { return false; } finally { if (fd !== undefined) closeSync(fd); }
+}
+
+/**
+ * One pending wake at a time. `add(key, reason)` after an event is recorded: the first event
+ * starts a wake, later ones join it. The session's own monitor gets the first chance: the wake
+ * waits graceS ticks (none while asleep), checking each tick, and stops with no nudge once every
+ * key is seen or a check has begun since the newest event. While a cycle holds the lock
+ * (`cycleRunning`) it waits for the cycle to end, a wait that counts against neither the grace
+ * nor the timeout, since a busy session cannot be nudged and that cycle may have checked before
+ * the event; then it looks again and, if neither, nudges at once. Else, after the grace, it runs
+ * `nudge` every 10 ticks while it reports busy, until it wakes, every key is seen or a newer check
+ * begins, or ackTimeoutMs pass; a refusal is logged once per wake (a mid-turn session reaches
+ * `cycle end`, which reports the arrival), not at every try. One journal line says which path woke it. Events that joined
+ * after the deciding check start a new wake.
+ */
+export function makeWaker({ graceS, tick, ackTimeoutMs, nudge, isSeen, begunSince, cycleRunning = () => false, asleep, log }) {
+  let batch = null;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const keysSeen = (evs) => evs.some((e) => e.key) && evs.every((e) => !e.key || isSeen(e.key));
+  async function run(b) {
+    const t0 = b.events[0].at;
+    const done = () => b.events.length;
+    let decided = 0;
+    let afterCycle = false;
+    let pending = null;
+    try {
+      const answered = () => { decided = done(); const evs = b.events.slice(0, decided); return keysSeen(evs) || begunSince(evs[evs.length - 1].at); };
+      if (graceS > 0 && asleep()) log("asleep: nudging at once");
+      else if (graceS > 0) {
+        for (let i = 0; ; i++) {
+          if (answered()) { log("woken by monitor"); return; }
+          if (cycleRunning()) {
+            log("a cycle is running: waiting for it to end");
+            while (cycleRunning()) await sleep(tick);
+            if (answered()) { log("woken by monitor"); return; }
+            afterCycle = true;
+            break;
+          }
+          if (i >= graceS) break;
+          await sleep(tick);
+        }
+      }
+      const until = Date.now() + ackTimeoutMs;
+      while (Date.now() < until) {
+        decided = done();
+        // the core's reply carries `outcome: <word>`; the prose is for people, never tested
+        const out = await nudge(b.reason);
+        const line = out.split("\n")[0] || "";
+        const outcome = (/^outcome: "?([a-z-]+)"?$/m.exec(out) || [])[1] || "";
+        if (outcome === "woke") { log(afterCycle ? "nudged after cycle" : `nudged after ${Math.round((Date.now() - t0) / 1000)}s`); return; }
+        // another wake typed the prompt moments ago: this one is satisfied by it
+        if (outcome === "cooldown") { log("already woken"); return; }
+        if (answered()) { log("woken by monitor"); return; }
+        // a session mid-turn reaches `cycle end`, which reports the arrival: one line per wake
+        const why = /mid-turn/.test(line) ? "mid-turn" : line;
+        if (why !== pending) { pending = why; log("nudge pending:", line.slice(0, 120)); }
+        await sleep(10 * tick);
+      }
+      decided = done();
+      log("!", "wake timed out for", b.events.map((e) => e.key || "-").join(" "));
+    } finally {
+      const late = b.events.slice(decided);
+      batch = null;
+      if (late.length) { batch = { events: late, reason: late[0].reason }; run(batch).catch((e) => log("!", "wake:", e.message)); }
+    }
+  }
+  return {
+    add(key, reason) {
+      const ev = { key, reason, at: Date.now() };
+      if (batch) { batch.events.push(ev); return; }
+      batch = { events: [ev], reason };
+      run(batch).catch((e) => log("!", "wake:", e.message));
+    },
+  };
 }
 
 const self = fileURLToPath(import.meta.url);

@@ -53,8 +53,10 @@ From the bot's repo checkout:
 .agents/skills/opsbot-slack/scripts/opsbot-slack install
 ```
 
-It copies three scripts into `opsbot.d/` and prints two blocks to add to `opsbot.json`. Fill
-in two ids:
+It copies three scripts into `opsbot.d/` and prints two blocks to add to `opsbot.json`. The
+`wake` block names the events file and the script that reads it, so a Slack message wakes a
+fast cycle that checks only Slack. If your `opsbot.json` already lists the events file as a plain
+path, replace it with the object form `install` prints. Fill in two ids:
 
 - `bot_user`: the bot's own user id (`U…`). `slack-axi doctor` shows it, or the app's
   **App Home** page.
@@ -165,6 +167,13 @@ says so.
 If the bot does not react to an @mention, the listener's log says which events reach it:
 `journalctl --user -u opsbot-<bot>-monitor-10-slack-listener`. No `app_mention` lines there
 usually means the `app_mentions:read` scope or the `app_mention` event is missing.
+
+The same log says how each event woke the bot: `woken by monitor` when the session started a
+cycle on its own within `wake_grace_seconds` (20), or `nudged after <n>s` when the listener had
+to type a prompt into the session as a backstop. `nudged after cycle` means the event landed while
+a cycle was already running and that cycle did not pick it up, so the listener nudged as soon as
+it ended. Frequent nudges mean the session's own monitor is not armed. `nudge pending` once for an
+event means the session was busy; it picks the event up when its cycle ends.
 
 To take a token back, revoke it on the app's pages, then delete the file or run
 `slack-axi auth revoke <team>`.

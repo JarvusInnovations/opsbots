@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+# opsbot-whatsapp: install the WhatsApp pieces into an ops bot's repo, and check them.
+#
+#   opsbot-whatsapp install [--dry-run] [--force]  copy the templates into opsbot.d/; print the
+#                                                  opsbot.json blocks to merge and the
+#                                                  whatsapp-axi command to run (never writes
+#                                                  opsbot.json, never changes the account)
+#   opsbot-whatsapp status                         one row per piece: ok, missing or differs
+#   opsbot-whatsapp post <chat> [--reply <id>] [--file <path>] [--retry-id <send id>] [--dry-run] [<text> | -]
+#                                                  the only way the bot posts: classify the
+#                                                  destination, guard a peer chat, screen the
+#                                                  draft when configured, send, log the decision
+#   opsbot-whatsapp classify <chat>                the destination's class alone
+#
+# Run from the bot's repo checkout, as the bot's user. install and status: exit 0 all ok,
+# 1 something to fix, 2 bad usage or not in a bot's repo. post: 0 posted, 1 whatsapp-axi refused
+# or failed the send, 2 bad usage or setting, 3 blocked, 4 the screen failed, 6 the loop guard
+# refused it (see SKILL.md). The skill holds no credential and never talks to WhatsApp itself:
+# every call goes through the account's whatsapp-axi daemon.
+set -uo pipefail
+
+SKILL="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+TEMPLATES="$SKILL/templates"
+PIECES=(monitor.d/20-whatsapp-waker heartbeat.d/25-whatsapp-events escalate.d/20-whatsapp-dm)
+
+usage() {
+  cat <<'EOF'
+usage: opsbot-whatsapp <command> [flags]
+commands:
+  install [--dry-run] [--force]  copy the waker, the reader and the escalation sink into
+                                 opsbot.d/ (a file that differs is left unless --force), then
+                                 print the opsbot.json blocks to merge and the whatsapp-axi
+                                 command that points the daemon at the wake file
+  status                         check whatsapp-axi, the account, its daemon and settings, the
+                                 scripts, opsbot.json and the waker's unit; exit 0 all ok,
+                                 1 something to fix
+  post <chat> [--reply <id>] [--file <path>] [--retry-id <send id>] [--dry-run] [<text> | -]
+                                 the only way the bot posts. The first arguments are an item's
+                                 reply column, whole; the text is the last argument, or stdin
+                                 (a file's caption, with --file). Classifies the destination,
+                                 runs the loop guard in a peer's chat, screens the draft when
+                                 streams.whatsapp.screen names a policy for its class, sends,
+                                 logs the decision. Exit 0 posted, 1 whatsapp-axi refused or
+                                 failed it (posted "unknown" with OUTCOME_UNKNOWN: run the
+                                 printed retry, which adds --retry-id <send id> so it cannot
+                                 send twice), 2 bad usage or setting, 3 blocked, 4 the screen
+                                 failed, 6 the loop guard refused it
+  classify <chat>                the destination's class: operator-dm, internal, external or
+                                 unknown, and why
+EOF
+}
+
+die_usage() { echo "error: $1" >&2; usage >&2; exit 2; }
+
+ROOT="${OPSBOT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+CONFIG="$ROOT/opsbot.json"
+
+need_bot_repo() {
+  [ -f "$CONFIG" ] || { echo "error: no opsbot.json at $ROOT; run this from the bot's repo checkout" >&2; exit 2; }
+  command -v node >/dev/null || { echo "error: node is not on PATH (the WhatsApp scripts need Node 22)" >&2; exit 2; }
+}
+
+# A value from opsbot.json by dotted path; empty when absent. Arrays print one entry per line.
+cfg() {
+  node -e '
+    let v = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    for (const k of process.argv[2].split(".")) v = v == null ? undefined : v[k];
+    if (Array.isArray(v)) process.stdout.write(v.join("\n"));
+    else if (v && typeof v === "object") process.stdout.write(JSON.stringify(v));
+    else if (v !== undefined && v !== null) process.stdout.write(String(v));
+  ' "$CONFIG" "$1" 2>/dev/null
+}
+
+expand() { case "$1" in "~"*) printf '%s' "$HOME${1#\~}" ;; *) printf '%s' "$1" ;; esac; }
+
+# ------------------------------------------------------------------------------------ install
+
+cmd_install() {
+  local dry=0 force=0
+  for a in "$@"; do
+    case "$a" in
+      --dry-run) dry=1 ;;
+      --force) force=1 ;;
+      -h|--help) usage; exit 0 ;;
+      *) die_usage "unknown flag for install: $a" ;;
+    esac
+  done
+  need_bot_repo
+  local name; name=$(cfg name)
+  [ -n "$name" ] || { echo "error: opsbot.json has no name" >&2; exit 2; }
+
+  local p src dst
+  for p in "${PIECES[@]}"; do
+    src="$TEMPLATES/$p"; dst="$ROOT/opsbot.d/$p"
+    if [ ! -e "$dst" ]; then
+      if [ $dry = 1 ]; then echo "would write  opsbot.d/$p"
+      else mkdir -p "$(dirname "$dst")" && cp "$src" "$dst" && chmod 755 "$dst" && echo "wrote        opsbot.d/$p"; fi
+    elif cmp -s "$src" "$dst"; then
+      if [ ! -x "$dst" ]; then
+        if [ $dry = 1 ]; then echo "would chmod  opsbot.d/$p (not executable)"; else chmod 755 "$dst" && echo "made executable opsbot.d/$p"; fi
+      else echo "left         opsbot.d/$p (already current)"; fi
+    elif [ $force = 1 ]; then
+      if [ $dry = 1 ]; then echo "would replace opsbot.d/$p (differs from the template)"
+      else cp "$src" "$dst" && chmod 755 "$dst" && echo "replaced     opsbot.d/$p (it differed from the template)"; fi
+    else
+      echo "left         opsbot.d/$p (differs from the template; --force replaces it)"
+    fi
+  done
+
+  local account wake_cfg wake_abs acct_arg
+  account=$(cfg streams.whatsapp.account)
+  wake_cfg=$(cfg streams.whatsapp.wake_file); wake_cfg=${wake_cfg:-"~/.cache/$name/whatsapp-wake.jsonl"}
+  wake_abs=$(expand "$wake_cfg")
+  acct_arg=${account:-<account>}
+
+  cat <<EOF
+
+Merge into opsbot.json yourself (this command never writes it), then commit:
+
+  "streams": {
+    "whatsapp": {
+      "account": "${account:-<the whatsapp-axi account name: whatsapp-axi accounts>}",
+      "operators": ["<the operator's number in E.164 form, +1555...; as in whatsapp-axi operators list>"],
+      "escalate_chat": "<the operator's direct chat: their number, +1555...>",
+      "wake_file": "$wake_cfg"
+    }
+  },
+  "wake": { "files": [{ "file": "$wake_cfg", "inputs": ["25-whatsapp-events"] }] }
+
+(The object form names the input that reads the file, so a wake from it checks only that input:
+a fast cycle. An entry already there as a plain path works, with a full check at every wake.)
+
+Optional keys under streams.whatsapp: listen_to, mark_read, trusted, peers, peer_turns,
+peer_posts_per_hour, screen, post_log, lookback, ack_timeout_minutes, wake_grace_seconds (see the skill's SKILL.md).
+
+Point the account's daemon at the wake file (the operator runs this; install never does):
+
+  whatsapp-axi settings set wake_file $wake_abs --account $acct_arg
+
+The account's scope and operators are the operator's to set in whatsapp-axi (whatsapp-axi
+scope show, whatsapp-axi operators list); this skill only reports them. Then:
+opsbot-core infra install, and opsbot-whatsapp status.
+EOF
+  return 0
+}
+
+# ------------------------------------------------------------------------------------ status
+
+ROWS=0; BAD=0
+row() { # state piece detail [fix]
+  ROWS=$((ROWS + 1))
+  printf '%-8s %-24s %s\n' "$1" "$2" "$3"
+  if [ "$1" != ok ]; then BAD=$((BAD + 1)); [ -n "${4:-}" ] && printf '%-8s %-24s fix: %s\n' "" "" "$4"; fi
+}
+
+cmd_status() {
+  for a in "$@"; do
+    case "$a" in
+      -h|--help) usage; exit 0 ;;
+      *) die_usage "unknown flag for status: $a" ;;
+    esac
+  done
+  need_bot_repo
+  local name; name=$(cfg name)
+  [ -n "$name" ] || { echo "error: opsbot.json has no name" >&2; exit 2; }
+
+  # whatsapp-axi, the account, its daemon and settings, opsbot.json: the node helper's rows
+  local line state piece detail fix out
+  out=$(OPSBOT_ROOT="$ROOT" OPSBOT_CONFIG="$CONFIG" node "$SKILL/scripts/whatsapp-post.mjs" status-rows 2>&1)
+  while IFS=$'\t' read -r state piece detail fix; do
+    [ -n "$state" ] || continue
+    case "$state" in
+      ok|missing|differs) row "$state" "$piece" "$detail" "$fix" ;;
+      *) row missing status "could not check: $state $piece $detail" ;;
+    esac
+  done <<< "$out"
+
+  # the scripts
+  local p dst
+  for p in "${PIECES[@]}"; do
+    dst="$ROOT/opsbot.d/$p"
+    if [ ! -e "$dst" ]; then row missing "$p" "not installed" "opsbot-whatsapp install"
+    elif ! cmp -s "$TEMPLATES/$p" "$dst"; then row differs "$p" "differs from the template" "opsbot-whatsapp install --force   (after keeping any change you meant)"
+    elif [ ! -x "$dst" ]; then row differs "$p" "not executable" "chmod 755 opsbot.d/$p"
+    else row ok "$p" "matches the template"; fi
+  done
+
+  # the waker's unit, as opsbot-core infra install names it
+  local unit="opsbot-$name-monitor-20-whatsapp-waker.service"
+  if ! command -v systemctl >/dev/null; then row missing waker "$unit: no systemctl on this host" "opsbot-core infra install (on a systemd host)"
+  else
+    local st; st=$(systemctl --user is-active "$unit" 2>/dev/null | head -1); st=${st:-unknown}
+    if [ "$st" = active ]; then row ok waker "$unit active"
+    else row missing waker "$unit $st" "opsbot-core infra install; journalctl --user -u $unit"; fi
+  fi
+
+  echo
+  if [ $BAD = 0 ]; then echo "status: all $ROWS ok"; return 0; fi
+  echo "status: $BAD of $ROWS to fix"
+  return 1
+}
+
+# ------------------------------------------------------------------------------------ dispatch
+
+[ $# -gt 0 ] || { usage >&2; exit 2; }
+cmd="$1"; shift
+case "$cmd" in
+  install) cmd_install "$@" ;;
+  status) cmd_status "$@" ;;
+  post|classify)
+    case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+    need_bot_repo
+    OPSBOT_ROOT="$ROOT" OPSBOT_CONFIG="${OPSBOT_CONFIG:-$CONFIG}" exec node "$SKILL/scripts/whatsapp-post.mjs" "$cmd" "$@" ;;
+  -h|--help|help) usage; exit 0 ;;
+  *) die_usage "unknown command: $cmd" ;;
+esac

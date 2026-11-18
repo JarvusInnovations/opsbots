@@ -29,7 +29,8 @@ the CLI is not on PATH.
    live cycle's lock) and prints `wait · <who> · next <seconds> <reason>`, exit 30: schedule
    the next wake for those seconds and stop. Otherwise it takes the lock, records an outage
    if the last one was abandoned or the loop was stopped, runs `opsbot.d/cycle.d/begin/`,
-   and runs the check.
+   and runs the check. A wake from a wake file that names its inputs runs a **fast check**
+   (see *A fast cycle* below); `cycle begin --full` forces the full one.
    - **Exit 0, nothing new.** One line ending `next <seconds> <reason>`. The check already
      logged, committed and advanced the watermark; the lock is released. Schedule the wake
      and stop.
@@ -47,15 +48,23 @@ the CLI is not on PATH.
    cycle with no check since the lock was taken. It runs `opsbot.d/cycle.d/end/`, logs
    `finished`, commits the log and watermark with `--only`, pushes, releases the lock, and
    prints the closing line, what the end scripts printed (due promises, fixes not yet told),
-   and `next <seconds> <reason>`.
+   and `next <seconds> <reason>`. When a wake file gained lines while you worked it prints
+   `arrived: <n> on <file>` and `next 0 arrived` and no `wake` field: run `cycle begin`
+   again in the same turn and arm nothing. When the work of a cycle is one command, chain
+   `cycle end` after it in the same call (`<the command> && scripts/opsbot-core cycle end
+   --records 1`), and end the turn with one short line at most.
 4. **Wake.** `loop.schedule` in `opsbot.json` says how. There is one clock either way:
    never create a cron or a second loop. The nudge is the only thing that restarts a
    stopped loop.
    - **`self`** (the default). Schedule the next wake with the session's own self-pacing
      call, using the loop prompt verbatim.
    - **`monitor`**. `cycle begin` (on 0 or 30) and `cycle end` print a `wake` field with one
-     `Monitor` call. Make it exactly as printed. It exits on a new line in a wake file or
-     with `cycle due` when the next cycle is due; either way, run `cycle begin`. Never call
+     `Monitor` call, `Monitor({ command: "<path>/opsbot-core wake wait --until <epoch>",
+     description: "<bot> schedule", timeout_ms: … })`. Make it exactly as printed. The
+     poller is the core's own `wake wait`. It exits on a new line in a wake file or
+     with `cycle due` when the next cycle is due; either way, run `cycle begin`. It starts
+     from where the last check read to, so a line that arrived after that check began, while
+     you worked or before you armed it, is delivered the moment it is armed. Never call
      ScheduleWakeup and never start `/loop`; the loop prompt is a plain message. Never two
      monitors. If none is armed (after a start, a compaction, an error), run `cycle begin`.
 5. **Sleep** (only with `sleep` set, which needs `loop.schedule: monitor`). After
@@ -66,6 +75,27 @@ the CLI is not on PATH.
    `(woken: <reason>)` after it: a wake-file line, a stream that `check --peek` finds new or
    failing, the due time, or `max_minutes`. Treat the wake as any other: read the pack if
    the gate asks, then run `cycle begin`.
+
+### A fast cycle
+
+A wake from a chat line should be answered in seconds, not after every other input has been
+read. An entry of `wake.files` may name the `heartbeat.d/` scripts that read it:
+`{ "file": "<path>", "inputs": ["20-slack-events"] }` (a bare path names none; the channel
+skills' `install` prints the object form). `cycle begin` then runs a fast check when all of
+these hold: a wake file has lines past the count the last check recorded, and every such file
+names its inputs; the last full check began less than `check.full_minutes` ago (10; `0` turns
+fast checks off); and the last check failed no input. Otherwise, and on `cycle due`, on
+`--full`, and when an input it names is not installed, it runs the full check.
+
+A fast check runs only the named inputs (not the `routines` input, not the other scripts), gives
+them the `OPSBOT_SINCE` of the last full check, records seen keys, and leaves the watermark
+alone: only a full check moves it, so an input that was skipped loses nothing, and the seen keys
+drop what a fast check already reported. Its log line says `fast: true` with the inputs it ran;
+every check a cycle runs logs `check: "fast"` or `check: "full: <why>"`. The digest carries one
+more line, `fast: <inputs>; full check due <HH:MMZ>`. Only `cycle.d/begin/` scripts whose name
+ends `.fast` run on a fast cycle: keep a repository sync un-suffixed and it runs at every full
+check. The watchdog, the outage record, `next-delay` and the sleep timer count a fast cycle as a
+cycle.
 
 `scripts/opsbot-core next-delay` prints the wake on its own. The defaults: something arrived
 in the last 15 minutes, 3 min; night, 45 min; something in the last hour, 10 min; quiet in
@@ -100,7 +130,7 @@ skipped. A kit skill or the bot's own `bin/` extends the loop by dropping a scri
 | --- | --- | --- |
 | `heartbeat.d/` | every check | one stream: print NDJSON items `{key, at, conv, kind: "group"\|"dm", from, text, …}`; `key` is the typed seen key (`chat:<conv>:<msg>`, `mail:<id>`, `log:<service>:<id>`); optional `keys` lists more seen keys the item stands for (a digest row for a group of events; new when any key is unseen, all recorded when reported); optional `report: false` records the keys as seen without showing the item (the bot's own messages); no lines = nothing new; non-zero = this input failed (its first stderr line is the reason) |
 | `monitor.d/` | always on | a watcher (`<name>`, a service) or a probe (`<name>@5m`, a timer); wakes the loop with `$OPSBOT_CORE nudge --now` |
-| `cycle.d/begin/` | after the lock, before the check | housekeeping such as a repo sync; non-zero aborts the cycle as degraded |
+| `cycle.d/begin/` | after the lock, before the check | housekeeping such as a repo sync; non-zero aborts the cycle as degraded. On a fast cycle only scripts named `*.fast` run |
 | `cycle.d/end/` | before the commit | what to show at the close; its stdout follows the closing line |
 | `wake.d/` | every cold start | one section of the pack each |
 | `escalate.d/` | when the core must reach the operator | the message on stdin; every script runs; at least one must succeed |
@@ -168,7 +198,6 @@ match `opsbot.json`, and with `sleep` set, the sleep state. The session must run
 nudge to reach it.
 
 ## Commands
-
 
 ## What the kit puts in every cold start
 
@@ -256,10 +285,11 @@ record.** They live apart.
 
 ### The cycle
 
-- `scripts/opsbot-core cycle begin` — Refuse while another writer holds the checkout (exit 30, `wait · … · next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it. With `loop.schedule: monitor`, on 0 and 30 the `wake` field holds the schedule monitor's state and the one Monitor call to make now. With `sleep` set, a nothing-new begin that finds the loop quiet for `after_minutes` prints a `sleep` field in place of `wake`: arm nothing, end the turn. A begin that finds `.git/opsbot-sleep` removes it and logs the wake.
+- `scripts/opsbot-core cycle begin [--full]` — Refuse while another writer holds the checkout (exit 30, `wait · … · next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. A wake from a wake file whose `wake.files` entry names its inputs (`{file, inputs}`) runs a fast check: only those inputs, the last full check's window, the watermark left alone, only `cycle.d/begin/` scripts named `*.fast`, and a `fast` field naming the inputs and when the next full check is due; a quiet deadline, a full check older than `check.full_minutes` (10; 0 turns fast checks off), a failed last check or `--full` runs the full check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it. With `loop.schedule: monitor`, on 0 and 30 the `wake` field holds the schedule monitor's state and the one Monitor call to make now. With `sleep` set, a nothing-new begin that finds the loop quiet for `after_minutes` prints a `sleep` field in place of `wake`: arm nothing, end the turn. A begin that finds `.git/opsbot-sleep` removes it and logs the wake.
 - `scripts/opsbot-core check [--no-commit]` — Run every `opsbot.d/heartbeat.d/` script and the core's `routines` input (one item per due routine occurrence), record seen keys, log, commit. Exit 0 nothing new · 10 new (digest) · 20 degraded (failed inputs named) · 2 cannot run.
-- `scripts/opsbot-core cycle end --records N [--degraded] [--summary TEXT]` — Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle. With `sleep` set, a `sleep` field may replace `wake`, as at `cycle begin`. When the memory review is due, one `memory` line says so with the command to run, and a `routines` field names each other due routine; neither blocks the cycle.
+- `scripts/opsbot-core cycle end --records N [--degraded] [--summary TEXT]` — Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` (or, when a wake file gained lines since this cycle's check, `arrived: <n> on <file>` and `next 0 arrived` with no `wake` field: run `cycle begin` again at once) and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle. With `sleep` set, a `sleep` field may replace `wake`, as at `cycle begin`. When the memory review is due, one `memory` line says so with the command to run, and a `routines` field names each other due routine; neither blocks the cycle.
 - `scripts/opsbot-core check --peek` — Run every heartbeat script and the `routines` input as a check does (each script also gets `OPSBOT_PEEK=1`) and print the count of new items per input. Records, logs and commits nothing; the watermark and seen keys are untouched, so the next check sees the same items. Exit 0 · 10 · 20 · 2 as `check`.
+- `scripts/opsbot-core wake wait --until <epoch seconds>` — The schedule monitor's poller, run by the one `Monitor` call `cycle begin` and `cycle end` print and by nothing else. From the line counts the last check recorded, polls every 2 s; prints the new lines of any wake file (each prefixed with the file's basename, cut to 300 characters, at most 20) or `cycle due` when the time passes, and exits 0. Refuses a time more than 1800 s ahead (exit 2).
 - `scripts/opsbot-core next-delay` — Seconds until the next cycle and why, from the cycle log and the cadence table. With `loop.schedule: monitor`, never over 1740 (29 min), and the reason says when that cap applied.
 
 ### Cold start
@@ -291,7 +321,7 @@ record.** They live apart.
 ### Liveness (run by system timers)
 
 - `scripts/opsbot-core watchdog [--dry-run]` — When no cycle has logged within `watchdog_minutes`, tell the operator once per outage through `escalate.d/` and record it. Stands down while the bot sleeps.
-- `scripts/opsbot-core nudge [--now [--reason TEXT]] [--dry-run]` — Re-issue `loop.prompt` to the named agent when the loop is quiet, unlocked, past cooldown and idle. `--now` (for listeners) skips the quiet test. A `working` agent whose own session log shows its turn ended (background work only) is prompted anyway, with a note. While the bot sleeps only `--now` acts, and it wakes it.
+- `scripts/opsbot-core nudge [--now [--reason TEXT]] [--dry-run]` — Re-issue `loop.prompt` to the named agent when the loop is quiet, unlocked, past cooldown and idle. `--now` (for listeners) skips the quiet test. A `working` agent whose own session log shows its turn ended (background work only) is prompted anyway, with a note. While the bot sleeps only `--now` acts, and it wakes it. Every reply ends with `outcome:`, the word to test (the prose is for people): `woke` or `nudged` when the prompt was typed, `cooldown` when another nudge typed it moments ago or is typing it now (one nudge at a time holds the marker), `refused` for any other reason not to (lock, mid-turn, blocked, asleep, quiet), `cannot` (exit 1) when the runtime failed, `dry-run`.
 - `scripts/opsbot-core sleep tick [--dry-run]` — The sleep timer's tick (only with `sleep` set; a no-op while awake). Going down: types `/compact` once the session is idle. Asleep: wakes it with `<loop.prompt> (woken: <reason>)` on an operator message, a wake-file line, the due time, `max_minutes`, or a `check --peek` exit of 10 or 20. A wake no `cycle begin` answers within `watchdog_minutes` is told once through `escalate.d/`. Exit 1 when the runtime or the operator could not be reached.
 - `scripts/opsbot-core infra install|uninstall|status [--dry-run]` — Render the watchdog and nudge timers, one unit per `monitor.d/` script, and with `sleep` set the sleep timer, from `opsbot.json`; `status` names stale units and the sleep state.
 
