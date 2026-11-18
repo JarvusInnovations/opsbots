@@ -6,13 +6,10 @@
 // that survives the session. For each new line it:
 //   1. resolves the line's seq to the event's key with `whatsapp-axi events --after <seq-1>
 //      --limit 1`, reading only the chat, the id and the sender's marks, never the text;
-//   2. waits wake_grace_seconds (20) for the session's own monitor, and stops without a nudge
-//      once the key is seen or a check has begun since the line (a cycle already running when
-//      the line arrived does not count: it waits for that cycle to end, then looks again; no wait
-//      while asleep); only
-//      then runs `$OPSBOT_CORE nudge --now --reason whatsapp`, again every 10 s while the nudge
-//      does not report a wake, until it wakes, the key is seen, or ack_timeout_minutes (30)
-//      pass. Lines arriving together share one pending wake;
+//   2. runs `$OPSBOT_CORE wake backstop` for it, detached, one at a time (lines arriving while
+//      one is pending join it): the core's one wake routine, which gives the session's own
+//      monitor wake_grace_seconds (20) and nudges only when no check began since the line and the
+//      key was not seen. Its notes and its one line go to the journal;
 //   3. with mark_read "seen" (the default), waits for the key to appear in logs/intake/seen,
 //      which the core writes when the check reports the item to the model, then runs
 //      `whatsapp-axi mark-read <chat>/<id>`. So the blue ticks mean the session has the item,
@@ -26,9 +23,10 @@
 // it is missing, and exits non-zero, so the unit restarts, when the file cannot be read.
 // No model is called anywhere here; the cycle answers.
 // OPSBOT_WHATSAPP_AXI names another whatsapp-axi binary. OPSBOT_WHATSAPP_TICK_MS (1000) is the
-// file poll; the seen poll is 2 ticks, the nudge repeat 10 and a grace second 1, so tests can run it fast.
-import { execFile, execFileSync } from "node:child_process";
-import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, statSync } from "node:fs";
+// file poll; the seen poll is 2 ticks, and when set it is passed on to the backstop as its tick
+// (a grace second), so tests can run it fast.
+import { execFile, spawn } from "node:child_process";
+import { chmodSync, closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -58,118 +56,65 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ------------------------------------------------------------------ the wake: monitor first, nudge second
-// The same block is in both kit listeners (opsbot-slack's 10-slack-listener, opsbot-whatsapp's
-// 20-whatsapp-waker); keep them in step.
+// The routine is the core's (`opsbot-core wake backstop`); this block only runs it. The same block
+// is in both kit listeners (opsbot-slack's 10-slack-listener, opsbot-whatsapp's 20-whatsapp-waker);
+// keep them in step.
 
 /** wake_grace_seconds: a whole number 0 or more, else null (the caller uses 20 and status says differs). Pure. */
 export const graceSeconds = (v) => (v === undefined ? 20 : typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null);
 
-/** A path in the git dir (worktree-aware), as the core resolves it; <root>/.git/<name> when git cannot say. */
-function gitPath(root, name) {
-  try {
-    return execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-path", name], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || join(root, ".git", name);
-  } catch { return join(root, ".git", name); }
-}
-
 /**
- * Whether a check has begun since `t` (ms): a check line (outcome nothing-new, new or degraded)
- * in logs/cycle.jsonl whose `at` is later than `t`. `at` is whole seconds, the moment the check
- * started, so a check begun in the same second as the event does not count: it may have read
- * the stream just before the event landed. A finish line, a sleep line or the cycle lock never
- * counts: a cycle already running when the event arrived may have checked before it. Reads the
- * log's tail only.
+ * One pending wake at a time. `add(key, reason)` after an event is recorded: the first event runs
+ * `<core> wake backstop --key <key> --at <now> --grace <graceS> --reason <reason>` detached, and
+ * events that arrive while it is pending join it, covered by the same test (a check begun since,
+ * or the nudge it types). Its progress notes (stderr) and its one line (`backstop: <what>`) go to
+ * the journal as they come. When it ends `woken by monitor` and events joined it, one more runs
+ * for the newest of them: the check that answered may have begun before they arrived.
+ * `tickMs` (tests only) is passed on as OPSBOT_WAKE_TICK_MS.
  */
-export function cycleBegunSince(root, t) {
-  let fd;
-  try {
-    const file = join(root, "logs/cycle.jsonl");
-    const size = statSync(file).size;
-    const n = Math.min(size, 65536);
-    const buf = Buffer.alloc(n);
-    fd = openSync(file, "r");
-    readSync(fd, buf, 0, n, size - n);
-    const lines = buf.toString("utf8").trim().split("\n");
-    for (let i = lines.length - 1; i >= 0; i--) {
-      let l;
-      try { l = JSON.parse(lines[i]); } catch { continue; }
-      if (!l || !["nothing-new", "new", "degraded"].includes(l.outcome)) continue;
-      const at = Date.parse(l.at);
-      return Number.isFinite(at) && at > t;
-    }
-    return false;
-  } catch { return false; } finally { if (fd !== undefined) closeSync(fd); }
-}
-
-/**
- * One pending wake at a time. `add(key, reason)` after an event is recorded: the first event
- * starts a wake, later ones join it. The session's own monitor gets the first chance: the wake
- * waits graceS ticks (none while asleep), checking each tick, and stops with no nudge once every
- * key is seen or a check has begun since the newest event. While a cycle holds the lock
- * (`cycleRunning`) it waits for the cycle to end, a wait that counts against neither the grace
- * nor the timeout, since a busy session cannot be nudged and that cycle may have checked before
- * the event; then it looks again and, if neither, nudges at once. Else, after the grace, it runs
- * `nudge` every 10 ticks while it reports busy, until it wakes, every key is seen or a newer check
- * begins, or ackTimeoutMs pass; a refusal is logged once per wake (a mid-turn session reaches
- * `cycle end`, which reports the arrival), not at every try. One journal line says which path woke it. Events that joined
- * after the deciding check start a new wake.
- */
-export function makeWaker({ graceS, tick, ackTimeoutMs, nudge, isSeen, begunSince, cycleRunning = () => false, asleep, log }) {
-  let batch = null;
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const keysSeen = (evs) => evs.some((e) => e.key) && evs.every((e) => !e.key || isSeen(e.key));
-  async function run(b) {
-    const t0 = b.events[0].at;
-    const done = () => b.events.length;
-    let decided = 0;
-    let afterCycle = false;
-    let pending = null;
+export function makeBackstop({ core, root, graceS, tickMs, log, env = process.env }) {
+  let pending = false;
+  let joined = null;
+  function start(ev) {
+    pending = true;
+    joined = null;
+    const args = ["wake", "backstop", "--key", ev.key, "--at", new Date(ev.at).toISOString(), "--grace", String(graceS), "--reason", ev.reason];
+    const childEnv = { ...env, OPSBOT_ROOT: root, ...(tickMs ? { OPSBOT_WAKE_TICK_MS: String(tickMs) } : {}) };
+    let out = "", err = "", ended = false;
+    const end = (code, why) => {
+      if (ended) return;
+      ended = true;
+      const m = /^backstop: "?(.*?)"?$/m.exec(out);
+      const said = m ? m[1] : "";
+      if (said === "gave up") log("!", "wake gave up for", ev.key);
+      else if (said) log(said);
+      else log("!", "wake backstop:", why || out.trim().split("\n")[0] || `exit ${code}`);
+      pending = false;
+      const next = joined;
+      joined = null;
+      if (next && said === "woken by monitor") start(next);
+    };
+    let child;
     try {
-      const answered = () => { decided = done(); const evs = b.events.slice(0, decided); return keysSeen(evs) || begunSince(evs[evs.length - 1].at); };
-      if (graceS > 0 && asleep()) log("asleep: nudging at once");
-      else if (graceS > 0) {
-        for (let i = 0; ; i++) {
-          if (answered()) { log("woken by monitor"); return; }
-          if (cycleRunning()) {
-            log("a cycle is running: waiting for it to end");
-            while (cycleRunning()) await sleep(tick);
-            if (answered()) { log("woken by monitor"); return; }
-            afterCycle = true;
-            break;
-          }
-          if (i >= graceS) break;
-          await sleep(tick);
-        }
+      child = spawn(core, args, { cwd: root, env: childEnv, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    } catch (e) { end(null, e.code || e.message); return; }
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => {
+      err += d;
+      for (let i = err.indexOf("\n"); i >= 0; i = err.indexOf("\n")) {
+        const l = err.slice(0, i).trim();
+        err = err.slice(i + 1);
+        if (l) log(l);
       }
-      const until = Date.now() + ackTimeoutMs;
-      while (Date.now() < until) {
-        decided = done();
-        // the core's reply carries `outcome: <word>`; the prose is for people, never tested
-        const out = await nudge(b.reason);
-        const line = out.split("\n")[0] || "";
-        const outcome = (/^outcome: "?([a-z-]+)"?$/m.exec(out) || [])[1] || "";
-        if (outcome === "woke") { log(afterCycle ? "nudged after cycle" : `nudged after ${Math.round((Date.now() - t0) / 1000)}s`); return; }
-        // another wake typed the prompt moments ago: this one is satisfied by it
-        if (outcome === "cooldown") { log("already woken"); return; }
-        if (answered()) { log("woken by monitor"); return; }
-        // a session mid-turn reaches `cycle end`, which reports the arrival: one line per wake
-        const why = /mid-turn/.test(line) ? "mid-turn" : line;
-        if (why !== pending) { pending = why; log("nudge pending:", line.slice(0, 120)); }
-        await sleep(10 * tick);
-      }
-      decided = done();
-      log("!", "wake timed out for", b.events.map((e) => e.key || "-").join(" "));
-    } finally {
-      const late = b.events.slice(decided);
-      batch = null;
-      if (late.length) { batch = { events: late, reason: late[0].reason }; run(batch).catch((e) => log("!", "wake:", e.message)); }
-    }
+    });
+    child.on("error", (e) => end(null, e.code === "ENOENT" ? `${core} not found` : e.code || e.message));
+    child.on("close", (code) => end(code));
   }
   return {
     add(key, reason) {
       const ev = { key, reason, at: Date.now() };
-      if (batch) { batch.events.push(ev); return; }
-      batch = { events: [ev], reason };
-      run(batch).catch((e) => log("!", "wake:", e.message));
+      if (pending) { joined = ev; return; }
+      start(ev);
     },
   };
 }
@@ -242,15 +187,7 @@ async function resolveSeq(seq) {
 const isSeen = (key) => { try { return readFileSync(seenFile, "utf8").split("\n").includes(key); } catch { return false; } };
 
 const graceS = graceSeconds(wa.wake_grace_seconds) ?? 20;
-const lockFile = gitPath(root, "opsbot-cycle.lock");
-const sleepFile = gitPath(root, "opsbot-sleep");
-const waker = makeWaker({
-  graceS, tick, ackTimeoutMs, isSeen, log,
-  nudge: async (reason) => (await run(core, ["nudge", "--now", "--reason", reason])).out || "",
-  begunSince: (t) => cycleBegunSince(root, t),
-  cycleRunning: () => existsSync(lockFile),
-  asleep: () => existsSync(sleepFile),
-});
+const waker = makeBackstop({ core, root, graceS, tickMs: process.env.OPSBOT_WHATSAPP_TICK_MS ? tick : 0, log });
 
 /**
  * `mark-read`: {chat, marked, already_marked, failed, reason?, read_receipts}, answered with HTTP
@@ -291,7 +228,8 @@ async function handle(line) {
   if (w.account && account && w.account !== account) { log("!", "wake line for another account, seq", w.seq); return; }
   const r = await resolveSeq(w.seq);
   log("wake seq", w.seq, w.kind || "-", r.key || "-", r.why);
-  waker.add(r.key, "whatsapp");
+  // a line with no key of its own still gets a wake, under a key no check ever records
+  waker.add(r.key || `whatsapp:seq:${w.seq}`, "whatsapp");
   if (r.ref) await markWhenSeen(w.seq, r.key, r.ref);
 }
 
