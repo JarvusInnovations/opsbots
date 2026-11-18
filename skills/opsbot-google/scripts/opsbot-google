@@ -1,0 +1,230 @@
+#!/usr/bin/env bash
+# opsbot-google: install the Google push pieces into an ops bot's repo, sign in, and check them.
+#
+#   opsbot-google install [--source gmail|meet|both] [--dry-run] [--force]
+#                          copy that source's scripts into opsbot.d/; print the opsbot.json blocks
+#                          to merge and the next commands (never writes opsbot.json)
+#   opsbot-google login --source … --client <file> [--paste]
+#                          the installed-app sign-in for the listener's own grant
+#   opsbot-google ensure [--source …] [--dry-run]
+#                          create or renew the Gmail watch now
+#   opsbot-google status [--source …]
+#                          one row per piece: ok, missing or differs, with the fix
+#
+# Run from the bot's repo checkout, as the bot's user. Exit 0 all ok, 1 something to fix or a
+# failed call, 2 bad usage or not in a bot's repo. The Meet source is not in this build: each
+# command says "meet: not yet available" for it.
+set -uo pipefail
+
+SKILL="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+TEMPLATES="$SKILL/templates"
+LIB="$SKILL/scripts/google-push.mjs"
+GMAIL_PIECES=(monitor.d/30-gmail-push heartbeat.d/15-gmail-push)
+
+usage() {
+  cat <<'EOF'
+usage: opsbot-google <command> [flags]
+commands:
+  install [--source gmail|meet|both] [--dry-run] [--force]
+                                 copy the source's listener and heartbeat into opsbot.d/ (a file
+                                 that differs is left unless --force), then print the opsbot.json
+                                 blocks to merge (streams.gmail_push and the wake.files entry)
+                                 and the next commands; never writes opsbot.json
+  login --source gmail|meet|both --client <client.json> [--paste]
+                                 sign in with the OAuth client (a Desktop app) for the
+                                 listener's own grant: gmail.metadata and pubsub for Gmail. It
+                                 prints the consent URL and waits on a 127.0.0.1 port for the
+                                 redirect; with --paste, paste the redirect's address instead
+                                 (a headless host). Writes the token file, 0600
+  ensure [--source …] [--dry-run]
+                                 create or renew the Gmail watch now
+  status [--source …]            check the settings, the token file, the subscription, the watch,
+                                 the last pull, standing problems, the scripts, the unit and
+                                 wake.files; exit 0 all ok, 1 something to fix
+The source defaults to gmail. meet is not yet available.
+EOF
+}
+
+die_usage() { echo "error: $1" >&2; usage >&2; exit 2; }
+
+ROOT="${OPSBOT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+CONFIG="$ROOT/opsbot.json"
+
+need_bot_repo() {
+  [ -f "$CONFIG" ] || { echo "error: no opsbot.json at $ROOT; run this from the bot's repo checkout" >&2; exit 2; }
+  command -v node >/dev/null || { echo "error: node is not on PATH (the Google scripts need Node 22)" >&2; exit 2; }
+}
+
+cfg() {
+  node -e '
+    let v = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    for (const k of process.argv[2].split(".")) v = v == null ? undefined : v[k];
+    if (Array.isArray(v)) process.stdout.write(v.join("\n"));
+    else if (v && typeof v === "object") process.stdout.write(JSON.stringify(v));
+    else if (v !== undefined && v !== null) process.stdout.write(String(v));
+  ' "$CONFIG" "$1" 2>/dev/null
+}
+
+# --source: sets GMAIL (1 when gmail is asked for) and MEET (1 when meet is)
+GMAIL=1; MEET=0
+set_source() {
+  case "$1" in
+    gmail) GMAIL=1; MEET=0 ;;
+    meet) GMAIL=0; MEET=1 ;;
+    both) GMAIL=1; MEET=1 ;;
+    *) die_usage "--source is gmail, meet or both" ;;
+  esac
+}
+
+# ------------------------------------------------------------------------------------ install
+
+cmd_install() {
+  local dry=0 force=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dry-run) dry=1 ;;
+      --force) force=1 ;;
+      --source) [ $# -ge 2 ] || die_usage "--source needs a value"; set_source "$2"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die_usage "unknown flag for install: $1" ;;
+    esac
+    shift
+  done
+  need_bot_repo
+  local name; name=$(cfg name)
+  [ -n "$name" ] || { echo "error: opsbot.json has no name" >&2; exit 2; }
+  [ $MEET = 1 ] && echo "meet: not yet available"
+  [ $GMAIL = 1 ] || return 0
+
+  local p src dst
+  for p in "${GMAIL_PIECES[@]}"; do
+    src="$TEMPLATES/$p"; dst="$ROOT/opsbot.d/$p"
+    if [ ! -e "$dst" ]; then
+      if [ $dry = 1 ]; then echo "would write  opsbot.d/$p"
+      else mkdir -p "$(dirname "$dst")" && cp "$src" "$dst" && chmod 755 "$dst" && echo "wrote        opsbot.d/$p"; fi
+    elif cmp -s "$src" "$dst"; then
+      if [ ! -x "$dst" ]; then
+        if [ $dry = 1 ]; then echo "would chmod  opsbot.d/$p (not executable)"; else chmod 755 "$dst" && echo "made executable opsbot.d/$p"; fi
+      else echo "left         opsbot.d/$p (already current)"; fi
+    elif [ $force = 1 ]; then
+      if [ $dry = 1 ]; then echo "would replace opsbot.d/$p (differs from the template)"
+      else cp "$src" "$dst" && chmod 755 "$dst" && echo "replaced     opsbot.d/$p (it differed from the template)"; fi
+    else
+      echo "left         opsbot.d/$p (differs from the template; --force replaces it)"
+    fi
+  done
+
+  local account project topic sub wake_cfg
+  account=$(cfg streams.gmail_push.account); project=$(cfg streams.gmail_push.project)
+  topic=$(cfg streams.gmail_push.topic); sub=$(cfg streams.gmail_push.subscription)
+  wake_cfg=$(cfg streams.gmail_push.wake_file); wake_cfg=${wake_cfg:-"~/.cache/$name/gmail-push.jsonl"}
+  account=${account:-"<the bot's Google account, the mailbox to watch>"}
+  project=${project:-"<the Google Cloud project that holds the topic>"}
+  topic=${topic:-"<the Pub/Sub topic Gmail publishes to>"}
+  sub=${sub:-"<the pull subscription on that topic>"}
+
+  cat <<EOF
+
+Merge into opsbot.json yourself (this command never writes it), then commit:
+
+  "streams": {
+    "gmail_push": {
+      "enabled": true,
+      "account": "$account",
+      "project": "$project",
+      "topic": "$topic",
+      "subscription": "$sub"
+    }
+  },
+  "wake": { "files": [{ "file": "$wake_cfg", "inputs": ["15-gmail-push", "<the bot's own inbox reader, e.g. 20-mail>"] }] }
+
+(The wake line says only that mail arrived and how much: the bot's own inbox reader, named in
+inputs, fetches it. Keep any wake.files entries already there.)
+
+Optional keys under streams.gmail_push: labels (["INBOX"]), renew_hours (24), renew_before_hours
+(24), wake_grace_seconds (20), problem_after_minutes (5), stale_minutes (15), token_file,
+wake_file, state_file (see the skill's SKILL.md). Nothing has a default naming a project or an
+address.
+
+Then, in order:
+  1. the cloud objects: templates/infra/ in the skill, or the README's list
+  2. opsbot-google login --source gmail --client <the Desktop app client's JSON>   (--paste on a headless host)
+  3. opsbot-google ensure
+  4. opsbot-core infra install
+  5. opsbot-google status
+EOF
+  return 0
+}
+
+# ------------------------------------------------------------------------------------ status
+
+ROWS=0; BAD=0
+row() { # state piece detail [fix]
+  ROWS=$((ROWS + 1))
+  printf '%-8s %-26s %s\n' "$1" "$2" "$3"
+  if [ "$1" != ok ]; then BAD=$((BAD + 1)); [ -n "${4:-}" ] && printf '%-8s %-26s fix: %s\n' "" "" "$4"; fi
+}
+
+cmd_status() {
+  local srcarg=gmail
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --source) [ $# -ge 2 ] || die_usage "--source needs a value"; set_source "$2"; srcarg="$2"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die_usage "unknown flag for status: $1" ;;
+    esac
+    shift
+  done
+  need_bot_repo
+  local name; name=$(cfg name)
+  [ -n "$name" ] || { echo "error: opsbot.json has no name" >&2; exit 2; }
+  [ $MEET = 1 ] && echo "meet: not yet available"
+  [ $GMAIL = 1 ] || return 0
+
+  local state piece detail fix out
+  out=$(OPSBOT_ROOT="$ROOT" OPSBOT_CONFIG="$CONFIG" node "$LIB" status-rows --source gmail 2>&1)
+  while IFS=$'\t' read -r state piece detail fix; do
+    [ -n "$state" ] || continue
+    case "$state" in
+      ok|missing|differs) row "$state" "$piece" "$detail" "$fix" ;;
+      *) row missing status "could not check: $state $piece $detail" ;;
+    esac
+  done <<< "$out"
+
+  local p dst
+  for p in "${GMAIL_PIECES[@]}"; do
+    dst="$ROOT/opsbot.d/$p"
+    if [ ! -e "$dst" ]; then row missing "$p" "not installed" "opsbot-google install"
+    elif ! cmp -s "$TEMPLATES/$p" "$dst"; then row differs "$p" "differs from the template" "opsbot-google install --force   (after keeping any change you meant)"
+    elif [ ! -x "$dst" ]; then row differs "$p" "not executable" "chmod 755 opsbot.d/$p"
+    else row ok "$p" "matches the template"; fi
+  done
+
+  local unit="opsbot-$name-monitor-30-gmail-push.service"
+  if ! command -v systemctl >/dev/null; then row missing listener "$unit: no systemctl on this host" "opsbot-core infra install (on a systemd host)"
+  else
+    local st; st=$(systemctl --user is-active "$unit" 2>/dev/null | head -1); st=${st:-unknown}
+    if [ "$st" = active ]; then row ok listener "$unit active"
+    else row missing listener "$unit $st" "opsbot-core infra install; journalctl --user -u $unit"; fi
+  fi
+
+  echo
+  if [ $BAD = 0 ]; then echo "status: all $ROWS ok"; return 0; fi
+  echo "status: $BAD of $ROWS to fix"
+  return 1
+}
+
+# ------------------------------------------------------------------------------------ dispatch
+
+[ $# -gt 0 ] || { usage >&2; exit 2; }
+cmd="$1"; shift
+case "$cmd" in
+  install) cmd_install "$@" ;;
+  status) cmd_status "$@" ;;
+  login|ensure)
+    case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+    need_bot_repo
+    OPSBOT_ROOT="$ROOT" OPSBOT_CONFIG="${OPSBOT_CONFIG:-$CONFIG}" exec node "$LIB" "$cmd" "$@" ;;
+  -h|--help|help) usage; exit 0 ;;
+  *) die_usage "unknown command: $cmd" ;;
+esac

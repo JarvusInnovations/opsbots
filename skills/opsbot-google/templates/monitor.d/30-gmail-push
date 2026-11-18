@@ -1,0 +1,26 @@
+#!/usr/bin/env node
+// monitor.d: the Gmail push listener, installed by the opsbot-google skill. `opsbot-core infra
+// install` runs it as a user service. It hears, within seconds, that mail reached the watched
+// labels of streams.gmail_push.account, through a Pub/Sub pull subscription Gmail publishes to:
+//   1. keeps a Gmail watch on the topic (at start, every renew_hours, or near its expiry);
+//   2. per batch of notifications, reads the mailbox history since its cursor and counts the
+//      messages newly added with a watched label and neither SENT nor DRAFT;
+//   3. appends one line to the wake file, {key, type: "inbox", account, count, recorded_at}:
+//      never a sender, a subject, a snippet, a thread or a message id;
+//   4. then writes its state (temporary file, rename), then acknowledges the batch;
+//   5. then runs `$OPSBOT_CORE wake backstop`, detached, one at a time.
+// A failure is a problem by kind (sign-in, watch, pull, history, write), raised once in the wake
+// file after problem_after_minutes (sign-in at once) and kept in the state file until a success.
+// The logic is the skill's scripts/google-push.mjs (OPSBOT_GOOGLE_PUSH names another copy).
+// No model is called here; the bot's own inbox reader fetches what arrived.
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+
+const root = process.env.OPSBOT_ROOT || process.cwd();
+const lib = process.env.OPSBOT_GOOGLE_PUSH || join(root, ".agents/skills/opsbot-google/scripts/google-push.mjs");
+let m;
+try { m = await import(pathToFileURL(lib).href); } catch (e) {
+  console.error(`cannot load ${lib}: ${e.code || e.message}; install the opsbot-google skill (npx skills add JarvusInnovations/opsbots --skill opsbot-google)`);
+  process.exit(1);
+}
+process.exitCode = await m.main(["listen", "gmail"]);
