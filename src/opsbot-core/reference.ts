@@ -46,6 +46,11 @@ export const COMMAND_GROUPS: CommandGroup[] = [
         summary:
           "The schedule monitor's poller, run by the one `Monitor` call `cycle begin` and `cycle end` print and by nothing else. From the line counts the last check recorded, polls every 2 s; prints the new lines of any wake file (each prefixed with the file's basename, cut to 300 characters, at most 20) or `cycle due` when the time passes, and exits 0. Refuses a time more than 1800 s ahead (exit 2).",
       },
+      {
+        usage: "wake backstop --key <key> --at <ISO time> [--grace <seconds>] --reason <text>",
+        summary:
+          "The listeners' one wake routine, so no listener carries its own; a listener runs it detached, one at a time, and logs its line. Waits `--grace` (default 20 s) for a check begun after `--at` or the key in `logs/intake/seen`; waits out a cycle already running and looks again; skips the wait while the bot is asleep; then runs `nudge --now`, again every 10 s, until its outcome is `woke` or `cooldown`, a newer check begins, the key is seen, or 30 minutes pass. Prints one line, `backstop:` with `woken by monitor`, `nudged after <n>s`, `nudged after cycle`, `already woken`, `asleep: nudged` or `gave up`, and exits 0; its progress notes go to stderr. Exit 2 on a missing key, time or reason.",
+      },
       { usage: "next-delay", summary: "Seconds until the next cycle and why, from the cycle log and the cadence table. With `loop.schedule: monitor`, never over 1740 (29 min), and the reason says when that cap applied." },
     ],
   },
