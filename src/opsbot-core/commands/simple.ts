@@ -12,6 +12,7 @@ import { POINTS, POINT_DIRS, discover, parsePoint, type Point } from "../lifecyc
 import { nowMs, parseIso, requireRoot, showHead } from "../repo.js";
 import { SETTINGS_FILE, loadSettings, parseSettingsText, withDefaults } from "../settings.js";
 import { routineProblems } from "./routines.js";
+import { queryRecall, recallSheetProblems } from "../record.js";
 import { judgeLock, pidAlive, readCycleLog, readLock, releaseLock, type LogLine } from "../state.js";
 
 // ------------------------------------------------------------ next-delay
@@ -197,6 +198,18 @@ export function settingsCommand(args: string[]): Record<string, unknown> {
   }
   // the routine definitions are the bot's program: validated with its settings
   if (raw && problems.length === 0) problems.push(...routineProblems(root, withDefaults(raw), flags.head === true));
+  // every recall names a sheet that exists, and its query runs (read only: nothing is written)
+  if (raw && problems.length === 0) {
+    const s = withDefaults(raw);
+    const missing = recallSheetProblems(root, s.record.recall, flags.head === true);
+    problems.push(...missing);
+    if (missing.length === 0) {
+      s.record.recall.forEach((r, i) => {
+        const q = queryRecall(root, r, nowMs(), s.timezone);
+        if ("error" in q) problems.push(`record.recall[${i}] (${r.sheet}) cannot run: ${q.error}`);
+      });
+    }
+  }
   if (problems.length) {
     setExit(1);
     return { settings: `invalid · ${where} · ${problems.length} problem${problems.length === 1 ? "" : "s"}`, problems };

@@ -21,7 +21,8 @@ import { parseArgs, setExit } from "../args.js";
 import { cliInvocation } from "../invocation.js";
 import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
 import { blockedBy, changedCommitPaths, commitOnly, firstLine, hasHead, iso, nowMs, parseIso, requireRoot } from "../repo.js";
-import { loadSettings } from "../settings.js";
+import { loadSettings, type Settings } from "../settings.js";
+import { cappedRows, queryRecall, recallCommand, recallFields, rowMatches } from "../record.js";
 import { changedMemoryFiles } from "../memory.js";
 import { changedRunFiles } from "../routine-store.js";
 import { loadRoutines, routineItems } from "../routines.js";
@@ -105,7 +106,32 @@ export function itemKeys(it: Item): string[] {
   return [it.key, ...(it.keys ?? [])];
 }
 
-function renderItem(it: Item, n: number, total: number, gateWord: string | null): Record<string, unknown> {
+/**
+ * The `item` recalls: for each new item, the rows whose `match` field equals its `from` or `conv`,
+ * capped per recall with "… N more". Each recall's query runs once per check, and only when there
+ * are new items. A recall that cannot run is one line in `failed`, never an empty field.
+ */
+export function itemRecall(root: string, s: Settings, ms: number, items: Item[]): { byItem: string[][]; failed: string[] } {
+  const byItem: string[][] = items.map(() => []);
+  const failed: string[] = [];
+  for (const r of s.record.recall.filter((x) => x.at === "item")) {
+    const q = queryRecall(root, r, ms, s.timezone);
+    if ("error" in q) {
+      failed.push(`recall of ${r.sheet} could not run: ${q.error}`);
+      continue;
+    }
+    const fields = recallFields(root, r, q.rows);
+    items.forEach((it, i) => {
+      const hits = q.rows.filter((row) => rowMatches(row, it));
+      if (!hits.length) return;
+      const key = typeof it.from === "string" && hits.some((h) => rowMatches(h, { from: it.from })) ? it.from : String(it.conv);
+      byItem[i]!.push(`${r.title} (${r.sheet}): ${hits.length}`, ...cappedRows(hits, fields, r.limit, recallCommand(r, [...q.clauses, `match=${key}`])).map((l) => `  ${l}`));
+    });
+  }
+  return { byItem, failed };
+}
+
+function renderItem(it: Item, n: number, total: number, gateWord: string | null, recall: string[] = []): Record<string, unknown> {
   const out: Record<string, unknown> = { n: `${n}/${total}`, input: it.input };
   for (const f of CORE_FIELDS) {
     if (it[f] === undefined) continue;
@@ -120,6 +146,7 @@ function renderItem(it: Item, n: number, total: number, gateWord: string | null)
     if (k === "input" || k === "text" || k === "report" || k === "gate_word_void" || CORE_FIELDS.includes(k)) continue;
     out[k] = v;
   }
+  if (recall.length) out.recall = recall;
   if (it.text !== undefined) out.text = it.text;
   return out;
 }
@@ -350,7 +377,11 @@ function sweep(
       : `new · ${NEW} new · ${n} inputs · watermark ${cur ?? "none"} (not advanced)`;
   const output: Record<string, unknown> = { check: line };
   if (fl.length) output.failed = fl;
-  if (NEW > 0) output.items = items.map((it, i) => renderItem(it, i + 1, NEW, settings.gate_word));
+  if (NEW > 0) {
+    const deco = itemRecall(root, settings, startMs, items);
+    output.items = items.map((it, i) => renderItem(it, i + 1, NEW, settings.gate_word, deco.byItem[i]));
+    if (deco.failed.length) output.recall = deco.failed;
+  }
   return { check: { code, outcome, line, output } };
 }
 

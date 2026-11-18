@@ -43,6 +43,7 @@ import { CHECK_OUTCOMES, CYCLE_OUTCOMES, outages, readCycleLog } from "../state.
 import { activeSleep, sleepSpans, sleepStatusLine } from "../sleep.js";
 import { memoryDueLine } from "../memory.js";
 import { loadRoutines, routineDueLines, type Routines } from "../routines.js";
+import { runRecall } from "../record.js";
 
 /** The most due routines the pack names one by one; the rest are counted. */
 const PACK_ROUTINES = 5;
@@ -226,12 +227,12 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
   const head = `═══ Cold start, ${nowIso()}. Read all of this before acting. Until you have, what you remember is untrusted.\n`;
 
   let card: string;
-  if (!s.rule_card) card = "═══ 1. The rule card\n(no rule_card is set in opsbot.json: say so to the operator)";
+  if (!s.rule_card) card = "═══ 1. The rule card\n(no rule_card is set in opsbot.json: say so to the operator in their channel)";
   else {
     const text = showHead(root, s.rule_card);
     card =
       text === null
-        ? `═══ 1. The rule card (${s.rule_card})\n(the rule card is not committed at HEAD: say so to the operator)`
+        ? `═══ 1. The rule card (${s.rule_card})\n(the rule card is not committed at HEAD: say so to the operator in their channel)`
         : `═══ 1. The rule card (${s.rule_card})\n${text.replace(/\n+$/, "")}`;
   }
 
@@ -262,7 +263,8 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
   }
 
   const scripts = discover(root, "wake").scripts;
-  const summaryNo = 2 + scripts.length;
+  const recalls = s.record.recall.filter((r) => r.at === "cold-start");
+  const summaryNo = 2 + scripts.length + recalls.length;
   const memoryDue = memoryDueLine(root, s, now, cliInvocation());
   const due = routines ? routineDueLines(routines, s, cliInvocation()) : [];
   const routineLines: string[] = [];
@@ -274,26 +276,44 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
   const summary = `═══ ${summaryNo}. The cycle log, last 48 hours\n${[...logSummary(root, now), ...(memoryDue ? [memoryDue] : []), ...routineLines].join("\n")}`;
   const foot = "═══ What you remember is untrusted, your memory files included; the record and your session log are sources, and the operator's own words in them outrank everything else. Open the source before saying what a record holds, what was decided, or what was sent.";
 
-  const room = WAKE_BUDGET;
-  const sections: string[] = [];
+  // the wake.d sections, then each cold-start recall's rows: one budget across them all
+  const producers: Array<{ title: string; body: () => string }> = [];
   if (scripts.length) {
     const configPath = settingsText !== null ? configSnapshot(root, settingsText) : join(root, SETTINGS_FILE);
-    let remaining = room;
-    scripts.forEach((sc, i) => {
-      const title = `═══ ${i + 2}. ${sc.name.replace(/^\d+[-_]/, "")}`;
-      const share = Math.max(MIN_SECTION, Math.floor(remaining / (scripts.length - i)) - bytes(title) - 1);
-      const r = runScript(sc, root, baseEnv(root, s, configPath, "wake"));
-      let body = r.stdout.trim();
-      if (r.code !== 0) {
-        body = `(wake.d/${sc.name} failed, exit ${r.code}: ${firstLine(r.stderr) || "no message"})${body ? `\n${body}` : ""}`;
-      }
-      if (!body) body = "(nothing)";
-      const capped = capSection(body, share);
-      const section = `${title}\n${capped}`;
-      remaining -= bytes(section) + 2;
-      sections.push(section);
+    for (const sc of scripts) {
+      producers.push({
+        title: sc.name.replace(/^\d+[-_]/, ""),
+        body: () => {
+          const r = runScript(sc, root, baseEnv(root, s, configPath, "wake"));
+          let body = r.stdout.trim();
+          if (r.code !== 0) {
+            body = `(wake.d/${sc.name} failed, exit ${r.code}: ${firstLine(r.stderr) || "no message"})${body ? `\n${body}` : ""}`;
+          }
+          return body || "(nothing)";
+        },
+      });
+    }
+  }
+  for (const rc of recalls) {
+    producers.push({
+      title: `${rc.title} (the record: ${rc.sheet})`,
+      body: () => {
+        const o = runRecall(root, rc, now, s.timezone);
+        if (!o.ok) return o.lines.join("\n");
+        if (o.count === 0) return `(no rows in ${rc.sheet} match ${o.filter})`;
+        return [`${o.count} row${o.count === 1 ? "" : "s"} in ${rc.sheet} match ${o.filter}`, ...o.lines].join("\n");
+      },
     });
   }
+  const sections: string[] = [];
+  let remaining = WAKE_BUDGET;
+  producers.forEach((p, i) => {
+    const title = `═══ ${i + 2}. ${p.title}`;
+    const share = Math.max(MIN_SECTION, Math.floor(remaining / (producers.length - i)) - bytes(title) - 1);
+    const section = `${title}\n${capSection(p.body(), share)}`;
+    remaining -= bytes(section) + 2;
+    sections.push(section);
+  });
   return [head, card, ...kit, ...sections, summary, foot].join("\n\n").replace(/\n{3,}/g, "\n\n") + "\n";
 }
 
@@ -324,7 +344,7 @@ export async function coldStartCommand(args: string[]): Promise<string> {
   }
   s ??= trySettings(root);
   if (!s) {
-    return `cold-start: ${SETTINGS_FILE} is missing or invalid at HEAD, so the pack cannot be built. Say so to the operator, and run \`settings validate\`.`;
+    return `cold-start: ${SETTINGS_FILE} is missing or invalid at HEAD, so the pack cannot be built. Say so to the operator in their channel, and run \`settings validate\`.`;
   }
   // The library's section when it can read the log; the kit's own reader otherwise.
   const libSection = transcript ? await sessionLogSectionLib(transcript, { loopPrompt: s.loop.prompt }) : null;
