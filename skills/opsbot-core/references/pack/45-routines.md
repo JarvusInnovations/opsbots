@@ -12,7 +12,7 @@ the schedule in the frontmatter, the instructions in the body. Each run is a rec
   Add `--outcome partial`, `skipped` or `blocked` when that is the truth, `--checked` for
   each item done, and `--handed-to` when a person got something. A skip says why.
 - A routine is satisfied only by a run. Never record a run you did not do to quiet a routine.
-  If a routine asks for the wrong thing, or at the wrong time, tell the operator.
+  If a routine asks for the wrong thing, or at the wrong time, tell the operator in their channel.
 - The definitions are your program, reviewed like the rule card. Never edit, add or delete a
   file in `routines/` on your own: propose the change to the operator, or as a pull request
   where the repo takes them.

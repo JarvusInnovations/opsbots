@@ -44,7 +44,12 @@ describe("cold-start", () => {
     const out = r.out;
     const i1 = out.indexOf("═══ 1. The rule card");
     const k1 = out.indexOf("═══ 1.1 Writing (the kit's; updates with the skill)");
-    const k2 = out.indexOf("═══ 1.2 Delegation (the kit's; updates with the skill)");
+    const kc = out.indexOf("═══ 1.2 Your terminal is a log, not a channel (the kit's; updates with the skill)");
+    const kr = out.indexOf("═══ 1.3 What must outlive a compaction goes in a record (the kit's; updates with the skill)");
+    const k2 = out.indexOf("═══ 1.4 Delegation (the kit's; updates with the skill)");
+    expect(kc).toBeGreaterThan(k1);
+    expect(kr).toBeGreaterThan(kc);
+    expect(k2).toBeGreaterThan(kr);
     const i2 = out.indexOf("═══ 2. owed");
     expect(k1).toBeGreaterThan(i1);
     expect(k2).toBeGreaterThan(k1);

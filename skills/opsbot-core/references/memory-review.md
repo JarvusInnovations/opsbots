@@ -58,7 +58,7 @@ pruned two duplicates".
   the memory, or prune it. When the record is the one that is wrong, fix the record through
   its normal path first.
 - **No secrets, no personal data the repo may not hold.** If you find one, delete the file
-  and its index line, and tell the operator in the same cycle: git history keeps what was
+  and its index line, and tell the operator in their channel in the same cycle: git history keeps what was
   committed, and only a person can decide whether it must be scrubbed or a credential
   rotated.
 - **A standing instruction is folded at the first review.** A memory that records an
