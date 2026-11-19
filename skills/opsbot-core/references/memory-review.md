@@ -52,6 +52,23 @@ prune both delete the file, so the count cannot tell them apart. The note can: n
 fold and where it went, such as "folded the export paging quirk into protocols/exports.md;
 pruned two duplicates".
 
+## Where a note goes: the rings
+
+A note leaves memory by being folded into the ring where it will be read when it matters
+(the kit's principles, "Every rule lives in a ring"):
+
+| The note is | Fold it into |
+| --- | --- |
+| a fact about the state of the work, a person or a system | a record: a row in a sheet with a recall (ring 5, but structured) |
+| how to do one kind of work | that work's skill, or the protocol it points at (rings 2 and 3) |
+| something that must hold on every turn, and has been broken more than once | a proposal for the rule card, retiring a line (ring 0) |
+| something every bot on the kit should do | a proposal to the kit, for its pack (ring 1) |
+| something that did harm when it was forgotten | a proposal for a guard in code |
+| still only a hunch | leave it in memory, and say so in the note |
+
+A proposal goes to the operator by the bot's usual route for changing itself. Until it is
+accepted, the note stays.
+
 ## Rules
 
 - **The record wins.** Never keep a memory that contradicts the record or a protocol. Fix

@@ -135,6 +135,36 @@ at the close of a cycle, when a date arrives, when a named thing comes up).
 > that cannot be asked "what is open, what is due, what did I promise this person" is a diary.
 > Structure is what lets code do the remembering.
 
+## Every rule lives in a ring
+
+Where a rule is written decides how often it is in front of the session, and that is the only
+thing that makes a rule hold. A bot's guidance lives in rings, ordered by how often it is read:
+
+| Ring | Where | It belongs here when |
+| --- | --- | --- |
+| Guard | code: a command that refuses, a hook, a check | breaking it once does harm. It is enforced, not read |
+| 0 | `CLAUDE.md` and the rule card | it must hold on every turn. One page; adding a rule retires one |
+| 1 | the cold-start pack | it shapes every cycle and is the same for any bot: how to write, the console, the record, the loop's mode |
+| 2 | skills | it is the procedure for one kind of work, loaded when that work comes up |
+| 3 | protocols and references | it is detail a rule or a skill points at, read at the moment of need |
+| 4 | specs and plans | it says what should be true and why, read when the system is being changed |
+| 5 | records and memory | it is a fact or a lesson, recalled by code or reviewed upward |
+
+Three things place a rule: how often it is needed, what forgetting it once costs, and how much
+room it takes. A rule goes in the outermost ring that still puts it in front of the session
+when it matters, because the inner rings are small and every line there displaces another.
+
+Rules move. A lesson starts in memory (ring 5). The memory review folds it into the protocol
+or skill it belongs to (3 or 2). If it keeps being broken there, it earns a line on the rule
+card (0), and if a line is not enough, it becomes a guard. A rule that has a guard no longer
+needs its line. A rule in ring 0 that is only needed for one kind of work moves out to that
+work's skill.
+
+> Why: an operator told one bot to keep its terminal quiet. The bot saved the instruction in
+> its own memory, where it was read at the model's discretion and by no other bot, and the
+> operator had to say it again a week later to a different one. The instruction was right
+> and in the wrong ring: it belonged in the pack every bot reads at every start.
+
 ## The loop's context is the scarcest thing it has
 
 The mother loop runs on the class its work needs (next principle), and its context window
