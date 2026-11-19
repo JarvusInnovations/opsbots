@@ -47,7 +47,9 @@ run on it.
 ## Watermark
 
 The watermark is a trailer on the log commit, `Watermark: <ISO time>`, with
-`Check: full|fast` beside it. The newest log commit's trailer is the watermark a cold start
+`Check: full|fast` and `Program: <commit>` (the program commit the cycle ran on) beside it.
+The `Program` trailer is on every log commit, so deciding whether the program's head moved
+needs only the tip. The newest log commit's trailer is the watermark a cold start
 resumes from. It is always in git: no cycle advances the watermark anywhere else.
 
 ## Quiet cycles
@@ -69,7 +71,8 @@ A run of cycles that found nothing is one commit, amended as it grows.
 ## Pushing
 
 The log branch is pushed at `cycle end` with a plain push, never forced. An open quiet commit
-is not pushed: the push sends the branch up to the newest sealed commit, so a commit that has
+is not pushed: the push sends the branch up to the newest sealed commit (gitsheets' push to a
+named commit), so a commit that has
 reached the remote is never rewritten. At most the current hour's quiet run exists only on
 the host. The log has one writer, so a refused push means another host is running the same
 bot: that is a failed check, said out loud.
@@ -85,7 +88,9 @@ bot: that is a failed check, said out loud.
 ## What it needs
 
 - gitsheets with headless data branches on the host, installed by `opsbot-host`.
-- Three things gitsheets does not offer on a write today, to be added there first: trailers
+- Being added to gitsheets first (its commit-options change): a push of a branch up to a
+  named commit, a read of the tip commit with its trailers and parent roles, and three things
+  on a write: trailers
   on the commit, additional parents on the commit, and replacing the branch tip (an amend)
   when the tip is the commit the caller expects. Also a commit that changes no record, for a
   quiet cycle.
