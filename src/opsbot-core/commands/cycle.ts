@@ -48,6 +48,7 @@ import { lastModel, readEvents } from "../transcript.js";
 import { driftReport, sessionDrift } from "../drift.js";
 import { basename, grownFiles, readWakeBase, readWakeRecord, recordWakeBase, scheduleLines, wakeCounts, wakeFiles, wakeLines } from "../wake.js";
 import { decideFast } from "../fast.js";
+import { runRecall } from "../record.js";
 import { existsSync, rmSync } from "node:fs";
 import { clearSleep, decideSleep, readSleep, silenceFrom, sleepFieldLines, sleepLogLine, wakeLogLine, writeSleep, type SleepState } from "../sleep.js";
 
@@ -376,6 +377,8 @@ function cycleEnd(args: string[]): Record<string, unknown> {
     cycle: `finished · ${records} records · watermark ${wm ?? "none"}${degraded ? " (held: degraded)" : ""}${pushed ? ` · not pushed: ${pushed}` : ""}`,
   };
   if (notes.length) out.notes = notes;
+  const recall = cycleEndRecall(root, settings);
+  if (recall.length) out.recall = recall;
   if (arrived.length) {
     out.arrived = arrived.map((a) => `${a.n} on ${basename(a.file)}`).join(", ");
     out.next = "0 arrived";
@@ -397,6 +400,18 @@ function cycleEnd(args: string[]): Record<string, unknown> {
   if (arrived.length) return out;
   const wake = wakeReport(root, settings, true);
   if (wake.length) out.wake = wake;
+  return out;
+}
+
+/** Each `cycle-end` recall's rows, under a heading; a recall with no rows prints nothing, and one
+ * that cannot run prints the one line saying why. Read only. */
+function cycleEndRecall(root: string, s: Settings): string[] {
+  const out: string[] = [];
+  for (const r of s.record.recall.filter((x) => x.at === "cycle-end")) {
+    const o = runRecall(root, r, nowMs(), s.timezone);
+    if (!o.ok) out.push(...o.lines);
+    else if (o.count > 0) out.push(`${o.head}: ${o.count}`, ...o.lines.map((l) => `  ${l}`));
+  }
   return out;
 }
 

@@ -30,6 +30,15 @@ Two kinds of skill, installed with the [`skills`](https://skills.sh/) CLI:
   address, a message to the operator for escalations, a guarded post command, and an install
   and status command.
 
+- **`opsbot-google`**: push from Google into the loop. A Gmail listener hears within seconds
+  that mail reached the bot's inbox, through a Gmail watch and a Pub/Sub pull subscription, and
+  writes a line that says only how much arrived; the bot's own inbox reader fetches it. A Meet
+  listener hears that a transcript was written for a meeting the bot's account organized,
+  through a Workspace Events subscription, and its reader turns each into an item with the
+  meeting's times, code and document, never the text. It ships the listeners with their own
+  narrow sign-in, health heartbeats, OpenTofu modules for the cloud objects, and an install,
+  login, ensure and status command. It only listens.
+
 Setting up a fresh machine for agent work, bot or not, is one line with no root:
 
 ```bash
@@ -44,6 +53,7 @@ npx skills add JarvusInnovations/opsbots --skill opsbot-core   # in a bot's repo
 npx skills add JarvusInnovations/opsbots --skill opsbot-host   # in a bot's repo
 npx skills add JarvusInnovations/opsbots --skill opsbot-slack  # in a bot's repo
 npx skills add JarvusInnovations/opsbots --skill opsbot-whatsapp  # in a bot's repo
+npx skills add JarvusInnovations/opsbots --skill opsbot-google  # in a bot's repo
 npx skills add JarvusInnovations/opsbots --skill mothership    # in a mothership
 ```
 

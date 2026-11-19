@@ -1,0 +1,49 @@
+# A starting point for a bot's record of what it promised: one row per promise, written in the
+# cycle it is made. Copy to .gitsheets/promises.toml, adjust, commit, and add its recalls to
+# record.recall in opsbot.json: what is due comes back at the close of every cycle, and a
+# person's open promises come back on the item when they write:
+#
+#   { "sheet": "promises", "filter": ["status=open", "due<=today"], "at": "cycle-end", "title": "Due" }
+#   { "sheet": "promises", "filter": "status=open", "at": "item", "title": "Promised to them" }
+#
+# `match` is the from (or conv) the person's stream items carry, so the item recall finds their
+# rows. A promise is open until it is kept or broken; set status and settled_by in the cycle that
+# settles it. Write rows with `gitsheets-axi upsert promises --data '{...}'`.
+[gitsheet]
+root = 'records/promises'
+path = '${{ id }}'
+
+[gitsheet.schema]
+type = 'object'
+additionalProperties = false
+required = ['to', 'what', 'due', 'status', 'id']
+
+[gitsheet.schema.properties.to]
+type = 'string'
+description = 'Who it was promised to'
+
+[gitsheet.schema.properties.what]
+type = 'string'
+description = 'What was promised, as said'
+
+[gitsheet.schema.properties.due]
+type = 'string'
+format = 'date'
+description = "When it is due, YYYY-MM-DD in the bot's timezone"
+
+[gitsheet.schema.properties.status]
+type = 'string'
+enum = ['open', 'kept', 'broken', 'released']
+
+[gitsheet.schema.properties.settled_by]
+type = 'string'
+description = 'What settled it: the message that delivered it, or who released it'
+
+[gitsheet.schema.properties.id]
+type = 'string'
+pattern = '^[a-z0-9][a-z0-9-]{1,60}$'
+description = 'A short slug, the file name'
+
+[gitsheet.schema.properties.match]
+type = 'string'
+description = "The from or conv of the person's stream items, for the item recall"

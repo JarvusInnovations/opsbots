@@ -1,0 +1,20 @@
+#!/usr/bin/env node
+// heartbeat.d: the health of the Gmail push, installed by the opsbot-google skill. It prints no
+// items: the bot's own inbox reader turns mail into items. It reads the listener's state file
+// only (no Google call, no write, so it is the same under OPSBOT_PEEK=1) and exits 1 with one
+// reason per line when: there is no state; a problem stands; the watch is missing or lapsed; the
+// last pull is older than stale_minutes; or the history cursor was resynchronized since the
+// watermark (once: the bot's reader should look back further). Nothing when
+// streams.gmail_push.enabled is not true.
+// The logic is the skill's scripts/google-push.mjs (OPSBOT_GOOGLE_PUSH names another copy).
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+
+const root = process.env.OPSBOT_ROOT || process.cwd();
+const lib = process.env.OPSBOT_GOOGLE_PUSH || join(root, ".agents/skills/opsbot-google/scripts/google-push.mjs");
+let m;
+try { m = await import(pathToFileURL(lib).href); } catch (e) {
+  console.error(`cannot load ${lib}: ${e.code || e.message}; install the opsbot-google skill`);
+  process.exit(1);
+}
+process.exitCode = await m.main(["heartbeat", "gmail"]);

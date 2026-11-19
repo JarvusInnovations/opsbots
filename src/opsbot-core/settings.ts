@@ -13,6 +13,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AxiError } from "axi-sdk-js";
 import { isValidTimeZone, showHead } from "./repo.js";
+import { recallEntries, recordProblems, type Recall } from "./record.js";
 
 export const SETTINGS_FILE = "opsbot.json";
 
@@ -152,6 +153,8 @@ export interface Settings {
   memory: Memory | null;
   /** Always set; absent directories mean no routines of the bot's own. */
   routines: Routines;
+  /** The recalls that put record rows back in front of the session; empty when none. */
+  record: { recall: Recall[] };
 }
 
 /** The kit's defaults (specs/architecture.md, Next wake; specs/skills/opsbot-core.md). */
@@ -257,6 +260,7 @@ export function validateSettings(raw: unknown): string[] {
     "memory",
     "routines",
     "check",
+    "record",
   ]);
   str(raw, "name", "", true, NAME_RE, "must be lowercase letters, digits and dashes, starting with a letter");
   str(raw, "mark", "", true);
@@ -384,6 +388,7 @@ export function validateSettings(raw: unknown): string[] {
       if (routines[k] !== undefined) problems.push(...repoDirProblems(routines[k], `routines.${k}`));
     }
   }
+  if (raw.record !== undefined) problems.push(...recordProblems(raw.record));
   const sleep = obj(raw, "sleep", "", false);
   if (sleep) {
     allow(sleep, "sleep.", ["after_minutes", "probe_minutes", "max_minutes", "compact"]);
@@ -536,6 +541,7 @@ export function withDefaults(raw: Json): Settings {
       dir: cleanDir(isObj(raw.routines) ? raw.routines.dir : undefined, DEFAULT_ROUTINES.dir),
       runs_dir: cleanDir(isObj(raw.routines) ? raw.routines.runs_dir : undefined, DEFAULT_ROUTINES.runs_dir),
     },
+    record: { recall: recallEntries(raw.record) },
   };
 }
 

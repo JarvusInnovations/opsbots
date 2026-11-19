@@ -804,10 +804,11 @@ describe("scripts/opsbot-slack", () => {
  * The running listener with Slack, slack-axi and the core all stubbed: a preload stands in for
  * fetch and the WebSocket and delivers `events` one at a time, then waits `settleMs` and exits;
  * slack-axi is a script that logs its calls and, for `download`, writes a file into --out (or
- * fails for an id starting F0FAIL); the core logs every nudge and says it woke (`outcome: woke`). HOME is the
+ * fails for an id starting F0FAIL); the core logs every call (a `wake backstop` run) and, after
+ * `coreDelayS`, prints `coreNotes` on stderr and `coreSays` (default `backstop: nudged after 0s`). HOME is the
  * temp dir. Returns what each stub saw.
  */
-function runListener(slack: Record<string, unknown>, events: unknown[], opts: { settleMs?: number; tickMs?: number; setup?: (repo: string, dir: string) => void; coreSays?: string } = {}) {
+function runListener(slack: Record<string, unknown>, events: unknown[], opts: { settleMs?: number; tickMs?: number; setup?: (repo: string, dir: string) => void; coreSays?: string; coreNotes?: string; coreDelayS?: number } = {}) {
   const dir = tmp();
   const repo = join(dir, "repo");
   mkdirSync(repo);
@@ -828,7 +829,7 @@ exit 0
 `);
   chmodSync(axi, 0o755);
   const core = join(dir, "core");
-  writeFileSync(core, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${dir}/core.log"\necho -e ${JSON.stringify(opts.coreSays ?? 'nudge: "woke stand-in"\noutcome: woke')}\n`);
+  writeFileSync(core, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${dir}/core.log"\nprintf 'tick=%s root=%s\\n' "$OPSBOT_WAKE_TICK_MS" "$OPSBOT_ROOT" >> "${dir}/core-env.log"\n${opts.coreNotes ? `echo -e ${JSON.stringify(opts.coreNotes)} >&2\n` : ""}${opts.coreDelayS ? `sleep ${opts.coreDelayS}\n` : ""}echo -e ${JSON.stringify(opts.coreSays ?? "backstop: nudged after 0s")}\n`);
   chmodSync(core, 0o755);
   opts.setup?.(repo, dir);
   const preload = join(dir, "fake-slack.mjs");
@@ -865,132 +866,64 @@ exit 0
   };
 }
 
-describe("the wake: the monitor first, the nudge second", () => {
-  // A 50 ms tick, so wake_grace_seconds 10 is half a second here.
+describe("the wake: the core's backstop, one at a time", () => {
+  // The routine itself (grace, a newer check, a running cycle, asleep, the nudge loop) is the
+  // core's `wake backstop`, tested in backstop.test.ts. Here: the listener runs it with the right
+  // arguments, one at a time, logs what it says, and the ack still waits for the seen key.
   const now = Math.floor(Date.now() / 1000);
   const dm = (n: number) => ({ ...DM_TOP, ts: `${now}.00010${n}` });
   const key = (n: number) => `slack:${DM}:${now}.00010${n}:msg`;
   const seen = (repo: string, k: string) => { mkdirSync(join(repo, "logs/intake"), { recursive: true }); writeFileSync(join(repo, "logs/intake/seen"), k + "\n"); };
-  const gitFile = (repo: string, name: string, body = "") => { mkdirSync(join(repo, ".git"), { recursive: true }); writeFileSync(join(repo, ".git", name), body); };
 
-  test("key seen during the grace: no nudge, the ack still lands, one line says the monitor woke it", () => {
-    const r = runListener({ wake_grace_seconds: 10 }, [dm(1)], { tickMs: 50, settleMs: 1200, setup: (repo) => seen(repo, key(1)) });
-    expect(r.nudges).toEqual([]);
-    expect(r.axi).toContain(`react ${DM} ${now}.000101 :gear:`);
+  test("each event runs `wake backstop` with its key, time, grace and reason, in the repo, and logs its line", () => {
+    const t0 = Date.now();
+    const r = runListener({ wake_grace_seconds: 10 }, [dm(1)], { tickMs: 50, settleMs: 800, coreSays: 'backstop: woken by monitor' });
+    expect(r.nudges).toHaveLength(1);
+    const argv = r.nudges[0]!.split(" ");
+    expect(argv.slice(0, 4)).toEqual(["wake", "backstop", "--key", key(1)]);
+    expect(argv[4]).toBe("--at");
+    expect(Date.parse(argv[5]!)).toBeGreaterThanOrEqual(t0 - 1000);
+    expect(argv.slice(6, 9)).toEqual(["--grace", "10", "--reason"]);
+    expect(argv.slice(9).join(" ")).toBe(`slack message from ${ANN} in ${DM}`);
+    expect(r.read("core-env.log")).toEqual([`tick=50 root=${r.repo}`]);
     expect(r.out.match(/woken by monitor/g)).toHaveLength(1);
   });
 
-  const future = () => new Date(Date.now() + 60000).toISOString().slice(0, 19) + "Z";
-  const checkLine = (at: string, outcome = "new") => JSON.stringify({ at, outcome }) + "\n";
-  /** In the background while the listener runs: `ms` after the event is recorded, a shell command in the repo. */
-  const later = (repo: string, ms: number, cmd: string) =>
-    spawn("sh", ["-c", `i=0; until [ -s ../slack-events.jsonl ] || [ $i -ge 400 ]; do sleep 0.05; i=$((i+1)); done; sleep ${ms / 1000}; ${cmd}`], { cwd: repo, detached: true, stdio: "ignore" }).unref();
-
-  test("a check begun after the event (a newer check line): no nudge; a newer finish line does not count", () => {
-    const logged = runListener({ wake_grace_seconds: 10 }, [dm(1)], {
-      tickMs: 50, settleMs: 1200,
-      setup: (repo) => {
-        mkdirSync(join(repo, "logs"), { recursive: true });
-        // an older line, then a check newer than the event
-        writeFileSync(join(repo, "logs/cycle.jsonl"), checkLine("2020-01-01T00:00:00Z", "finished") + checkLine(future()));
-      },
-    });
-    expect(logged.nudges).toEqual([]);
-    expect(logged.out).toContain("woken by monitor");
-    const finished = runListener({ wake_grace_seconds: 4 }, [dm(1)], {
-      tickMs: 50, settleMs: 1200,
-      setup: (repo) => {
-        mkdirSync(join(repo, "logs"), { recursive: true });
-        writeFileSync(join(repo, "logs/cycle.jsonl"), checkLine("2020-01-01T00:00:00Z") + checkLine(future(), "finished"));
-      },
-    });
-    expect(finished.nudges).toHaveLength(1);
-  });
-
-  test("an event that lands while a cycle holds the lock is not woken by it: no nudge while the lock is held", () => {
-    const r = runListener({ wake_grace_seconds: 4 }, [dm(1)], { tickMs: 50, settleMs: 1200, setup: (repo) => gitFile(repo, "opsbot-cycle.lock", "{}") });
-    expect(r.nudges).toEqual([]);
-    expect(r.out).not.toContain("woken by monitor");
+  test("its progress notes and its line reach the journal; `gave up` is a ! line naming the key", () => {
+    const r = runListener({}, [dm(1)], { settleMs: 800, coreNotes: "a cycle is running: waiting for it to end", coreSays: "backstop: gave up" });
     expect(r.out).toContain("a cycle is running: waiting for it to end");
+    expect(r.out).toContain(`! wake gave up for ${key(1)}`);
+    const noisy = runListener({}, [dm(1)], { settleMs: 800, coreNotes: "nudge pending: nothing · examplebot is working (mid-turn since 15:00Z)", coreSays: 'backstop: "nudged after cycle"' });
+    expect(noisy.out).toContain("nudge pending: nothing · examplebot is working (mid-turn since 15:00Z)");
+    expect(noisy.out).toMatch(/\d nudged after cycle$/m);
   });
 
-  test("the lock clears with the key unseen and no newer check: nudges at once, after the cycle", () => {
-    // the grace is long; the wait for the cycle does not count against it, and the nudge follows the release at once
-    const r = runListener({ wake_grace_seconds: 600 }, [dm(1)], {
-      tickMs: 50, settleMs: 1500,
-      setup: (repo) => { gitFile(repo, "opsbot-cycle.lock", "{}"); later(repo, 500, "rm -f .git/opsbot-cycle.lock"); },
-    });
-    expect(r.nudges).toHaveLength(1);
-    expect(r.out).toContain("a cycle is running: waiting for it to end");
-    expect(r.out).toContain("nudged after cycle");
-    expect(r.out).not.toContain("woken by monitor");
-  });
-
-  test("the lock clears with the key seen, or a newer check line: no nudge", () => {
-    const seenAfter = runListener({ wake_grace_seconds: 600 }, [dm(1)], {
-      tickMs: 50, settleMs: 1500,
-      setup: (repo) => {
-        gitFile(repo, "opsbot-cycle.lock", "{}");
-        mkdirSync(join(repo, "logs/intake"), { recursive: true });
-        later(repo, 500, `printf '%s\\n' '${key(1)}' > logs/intake/seen; rm -f .git/opsbot-cycle.lock`);
-      },
-    });
-    expect(seenAfter.nudges).toEqual([]);
-    expect(seenAfter.out).toContain("a cycle is running: waiting for it to end");
-    expect(seenAfter.out).toContain("woken by monitor");
-    const checked = runListener({ wake_grace_seconds: 600 }, [dm(1)], {
-      tickMs: 50, settleMs: 1500,
-      setup: (repo) => {
-        gitFile(repo, "opsbot-cycle.lock", "{}");
-        mkdirSync(join(repo, "logs"), { recursive: true });
-        later(repo, 500, `printf '%s' '${checkLine(future())}' >> logs/cycle.jsonl; rm -f .git/opsbot-cycle.lock`);
-      },
-    });
-    expect(checked.nudges).toEqual([]);
-    expect(checked.out).toContain("a cycle is running: waiting for it to end");
-    expect(checked.out).toContain("woken by monitor");
-  });
-
-  test("the grace expires with neither: the nudge loop runs as before", () => {
-    const r = runListener({ wake_grace_seconds: 4 }, [dm(1)], {
-      tickMs: 50, settleMs: 1200,
-      setup: (repo) => { mkdirSync(join(repo, "logs"), { recursive: true }); writeFileSync(join(repo, "logs/cycle.jsonl"), JSON.stringify({ at: "2020-01-01T00:00:00Z", outcome: "finished" }) + "\n"); },
-    });
-    expect(r.nudges).toHaveLength(1);
-    expect(r.out).toMatch(/nudged after \d+s/);
-    expect(r.axi).toContain(`react ${DM} ${now}.000101 :eyes:`);
-  });
-
-  test("asleep: nudges at once, however long the grace", () => {
-    const r = runListener({ wake_grace_seconds: 600 }, [dm(1)], { tickMs: 50, settleMs: 800, setup: (repo) => gitFile(repo, "opsbot-sleep") });
-    expect(r.nudges).toHaveLength(1);
-    expect(r.out).toContain("asleep: nudging at once");
-  });
-
-  test("a nudge refused because the session is mid-turn is logged once per wake, and the listener keeps waiting", () => {
-    const r = runListener({ wake_grace_seconds: 0 }, [dm(1)], { tickMs: 50, settleMs: 2500, coreSays: "nothing · examplebot is working (mid-turn since 15:00Z)" });
-    expect(r.nudges.length).toBeGreaterThanOrEqual(3); // it kept trying
-    expect(r.out.match(/nudge pending:/g)).toHaveLength(1);
-    expect(r.out).toContain("nudge pending: nothing · examplebot is working (mid-turn since 15:00Z)");
-  });
-
-  test("a cooldown refusal (another wake typed the prompt moments ago) is 'already woken', not a nudge, and ends the wake", () => {
-    const r = runListener({ wake_grace_seconds: 0 }, [dm(1)], { tickMs: 50, settleMs: 1500, coreSays: 'nudge: "nothing · woke 0 min ago for: slack"\noutcome: cooldown' });
-    expect(r.nudges).toHaveLength(1);
-    expect(r.out).toContain("already woken");
-    expect(r.out).not.toContain("nudged after");
-  });
-
-  test("wake_grace_seconds 0 nudges at once", () => {
-    const r = runListener({ wake_grace_seconds: 0 }, [dm(1)], { settleMs: 600 });
-    expect(r.nudges).toHaveLength(1);
-  });
-
-  test("a burst of three events: one pending wake, at most one nudge", () => {
-    const r = runListener({ wake_grace_seconds: 20 }, [dm(1), dm(2), dm(3)], { tickMs: 50, settleMs: 1800 });
+  test("a burst of three events: one backstop at a time; those that joined it start no second one when it nudged", () => {
+    const r = runListener({ wake_grace_seconds: 20 }, [dm(1), dm(2), dm(3)], { tickMs: 50, settleMs: 1800, coreDelayS: 1 });
     expect(r.recorded).toHaveLength(3);
     expect(r.nudges).toHaveLength(1);
     expect(r.out.match(/nudged after/g)).toHaveLength(1);
+  });
+
+  test("a burst answered by the monitor: one more backstop runs, for the newest event that joined", () => {
+    const r = runListener({}, [dm(1), dm(2), dm(3)], { settleMs: 2200, coreDelayS: 1, coreSays: "backstop: woken by monitor" });
+    expect(r.nudges).toHaveLength(2);
+    expect(r.nudges[0]).toContain(`--key ${key(1)} `);
+    expect(r.nudges[1]).toContain(`--key ${key(3)} `);
+  });
+
+  test("a core that cannot run is one ! line, and the next event still gets its own run", () => {
+    const r = runListener({}, [dm(1), dm(2)], { settleMs: 800, coreSays: "error: stand-in" });
+    expect(r.nudges).toHaveLength(2);
+    expect(r.out.match(/! wake backstop: error: stand-in/g)).toHaveLength(2);
+  });
+
+  test("the ack reaction waits for the seen key, whatever the backstop said", () => {
+    const unseen = runListener({}, [dm(1)], { tickMs: 50, settleMs: 800 });
+    expect(unseen.axi).toEqual([`react ${DM} ${now}.000101 :eyes:`]);
+    const r = runListener({}, [dm(1)], { tickMs: 50, settleMs: 800, setup: (repo) => seen(repo, key(1)) });
+    expect(r.axi).toEqual([`react ${DM} ${now}.000101 :eyes:`, `react ${DM} ${now}.000101 :gear:`]);
+    expect(r.out).toContain(`read: ${key(1)}`);
   });
 
   test("a wake_grace_seconds that is not a whole number 0 or more falls back to 20", () => {

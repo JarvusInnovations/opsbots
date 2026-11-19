@@ -52,13 +52,30 @@ prune both delete the file, so the count cannot tell them apart. The note can: n
 fold and where it went, such as "folded the export paging quirk into protocols/exports.md;
 pruned two duplicates".
 
+## Where a note goes: the rings
+
+A note leaves memory by being folded into the ring where it will be read when it matters
+(the kit's principles, "Every rule lives in a ring"):
+
+| The note is | Fold it into |
+| --- | --- |
+| a fact about the state of the work, a person or a system | a record: a row in a sheet with a recall (ring 5, but structured) |
+| how to do one kind of work | that work's skill, or the protocol it points at (rings 2 and 3) |
+| something that must hold on every turn, and has been broken more than once | a proposal for the rule card, retiring a line (ring 0) |
+| something every bot on the kit should do | a proposal to the kit, for its pack (ring 1) |
+| something that did harm when it was forgotten | a proposal for a guard in code |
+| still only a hunch | leave it in memory, and say so in the note |
+
+A proposal goes to the operator by the bot's usual route for changing itself. Until it is
+accepted, the note stays.
+
 ## Rules
 
 - **The record wins.** Never keep a memory that contradicts the record or a protocol. Fix
   the memory, or prune it. When the record is the one that is wrong, fix the record through
   its normal path first.
 - **No secrets, no personal data the repo may not hold.** If you find one, delete the file
-  and its index line, and tell the operator in the same cycle: git history keeps what was
+  and its index line, and tell the operator in their channel in the same cycle: git history keeps what was
   committed, and only a person can decide whether it must be scrubbed or a credential
   rotated.
 - **A standing instruction is folded at the first review.** A memory that records an
