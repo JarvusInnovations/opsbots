@@ -25,6 +25,8 @@ jobs:
         with:
           bun-version-file: .tool-versions
       - run: bun install --frozen-lockfile
+      # the log-branch tests write through the real gitsheets-axi (its commit options: 2.15)
+      - run: npm install -g gitsheets-axi@2.15.0
       - run: bun run type-check
       - run: bun run check
       - run: bun test

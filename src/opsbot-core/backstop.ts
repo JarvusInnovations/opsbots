@@ -16,6 +16,7 @@
  * the tick and the 30-minute limit.
  */
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { branchCycleLines, branchSeen, logBranch } from "./log.js";
 import { join } from "node:path";
 
 export const BACKSTOP_GRACE_S = 20;
@@ -30,6 +31,16 @@ export const BACKSTOP_LIMIT_MS = 30 * 60_000;
  * log's tail only.
  */
 export function cycleBegunSince(root: string, t: number): boolean {
+  const branch = logBranch(root);
+  if (branch) {
+    const lines = branchCycleLines(root, branch);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (!["nothing-new", "new", "degraded"].includes(String(lines[i]!.outcome))) continue;
+      const at = Date.parse(String(lines[i]!.at));
+      return Number.isFinite(at) && at > t;
+    }
+    return false;
+  }
   let fd: number | undefined;
   try {
     const file = join(root, "logs/cycle.jsonl");
@@ -56,6 +67,8 @@ export function cycleBegunSince(root: string, t: number): boolean {
 
 /** Whether `key` is a line of logs/intake/seen. */
 export function keySeen(root: string, key: string): boolean {
+  const branch = logBranch(root);
+  if (branch) return branchSeen(root, branch).has(key);
   try { return readFileSync(join(root, "logs/intake/seen"), "utf8").split("\n").includes(key); } catch { return false; }
 }
 
