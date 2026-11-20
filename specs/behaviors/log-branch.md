@@ -1,12 +1,17 @@
 # Behavior: the loop's log lives on its own branch
 
-> Draft, on a planning PR. Decisions still open are marked **Open**.
+> Draft, on a planning PR.
 
 ## Rule
 
-The loop's own log (what each cycle checked, what it found, what it posted) is written to a
-branch of its own, `opsbot/log` by default, which is never checked out. The branch people
-read and work on carries the bot's program and its records, and no cycle commits.
+Everything the loop writes that no person edits is written to a branch of its own,
+`opsbot/log` by default, which is never checked out: what each cycle checked and found, what
+it posted, what its scripts did, and what its checks remember between runs. The branch people
+read and work on carries the bot's program and its records, and no commit made by a cycle for
+its own bookkeeping.
+
+The test for which side a file belongs on: **would a person ever open it to change it?** If
+not, it is the loop's, and it goes on the log branch.
 
 > Why: on an adopting bot, 1,731 of 1,749 commits ahead of the main branch were cycle commits,
 > 717 of them "nothing new". A bot whose repo people also work in needed a second branch and a
@@ -23,6 +28,26 @@ no second clone:
 | `cycles` | cycle that found or did something | `cycles/YYYY/MM/DD/HH/<mmss>-<outcome>` |
 | `seen` | key reported to the session | `seen/YYYY/MM/DD/<key hash>` |
 | `posts/<channel>` | post attempt | `posts/<channel>/YYYY/MM/DD/<mmss>-<hash>` |
+| `outages` | outage a check accounted for | `outages/YYYY/MM/DD/<mmss>-<input>` |
+| `routines` | routine run | `routines/<routine>/YYYY/MM/DD/<mmss>` |
+| `ledgers/<name>` | action a script took (a label applied, a mail sent, a row written) | `ledgers/<name>/YYYY/MM/DD/<mmss>-<hash>` |
+| `state/<name>` | baseline a check compares against (one record, replaced) | `state/<name>` |
+
+The first three and `outages` and `routines` are the kit's. A bot declares its own `ledgers`
+and `state` names in `opsbot.json` under `log.ledgers` and `log.state`, each with the fields
+a record must carry.
+
+- **Scripts never touch the branch themselves.** A hook or skill script writes with
+  `opsbot-core log append <ledger>` (a JSON record on stdin) or `opsbot-core log state set
+  <name>`, and reads with `opsbot-core log read <sheet> [--since <time>] [--filter …]` and
+  `opsbot-core log state get <name>`. Writes made during a cycle ride that cycle's commit.
+  A write made outside a cycle (a person running a script by hand) is its own commit.
+- **A ledger record that changes later is a record, not a log line.** A ledger is
+  append-only. Something a script goes back and edits (a request that is opened and then
+  closed) belongs in a sheet on the program branch, with a recall if it must come back.
+- **Another bot's log is read from its branch.** A bot that needs another bot's ledger
+  fetches that bot's log branch and reads it with `opsbot-core log read --repo <path or
+  remote>`; it never depends on a file in the other bot's working tree.
 
 - **Time is in the path, never in the body.** Two cycles with the same outcome and counts are
   the same blob.
@@ -79,23 +104,39 @@ bot: that is a failed check, said out loud.
 
 ## What this removes
 
-- `chore(cycle): …` commits on the program branch, and `commit_paths` for the loop's logs.
+- `chore(cycle): …` commits on the program branch.
+- The `commit_paths` setting, entirely: every file it listed (cycle log, seen keys, post logs,
+  action ledgers, baselines, outages, routine runs) is on the log branch.
+- The commit-then-roll-back paths in `check` and `cycle end`.
+- Per-bot repo-sync hooks. With nothing of the loop's in the working tree, `cycle begin`
+  fast-forwards the checkout itself (`repo_sync: pull`, the default; `never` to turn it
+  off). A checkout that cannot fast-forward (a person's unpushed work, a diverged branch) is
+  a heartbeat item naming the two commits, and the cycle goes on with what it has.
 - For a bot whose repo people work in: the second "live" branch, its rebase, its promotion
   commit and its repair tool. Its checkout follows the default branch like any clone, and the
   few files it writes there itself (records, memory) are ordinary small commits.
 - A dirty log file blocking a pull.
 
+## Readers
+
+Nothing reads `logs/*.jsonl` from the working tree any more. The watchdog, `next-delay`, the
+sleep timer, the cold-start pack's "before this start", the fast-check window, the wake
+backstop and the memory review read the tip's trailers and the `cycles` sheet. The channel
+listeners ask `opsbot-core log seen <key>` instead of reading the seen file. A read of the
+tip's trailers is one git call and opens no sheet.
+
 ## What it needs
 
 - gitsheets with headless data branches on the host, installed by `opsbot-host`.
-- Being added to gitsheets first (its commit-options change): a push of a branch up to a
-  named commit, a read of the tip commit with its trailers and parent roles, and three things
-  on a write: trailers
-  on the commit, additional parents on the commit, and replacing the branch tip (an amend)
-  when the tip is the commit the caller expects. Also a commit that changes no record, for a
-  quiet cycle.
-- A migration: at the first cycle after an update, the existing `logs/` content becomes the
-  log branch's root, and the files leave the program branch in one commit a person merges.
+- gitsheets 2.15 or later, for its commit options: a push of a branch up to a named commit, a
+  read of the tip commit with its trailers and parents, trailers and additional parents on a
+  write's commit, replacing the branch tip when it is the commit the caller expects and has
+  not been pushed, and a commit that changes no record, for a quiet cycle.
+- A migration, `opsbot-core log migrate`: it writes the existing log files (everything
+  `commit_paths` listed, plus the kit's own) to the log branch as its root, and prepares one
+  commit on the program branch that removes those files and the `commit_paths` setting, for
+  a person to merge. Until that commit is merged the loop keeps writing the old way; it
+  never runs half in each.
 
 ## Tests
 
@@ -110,3 +151,9 @@ bot: that is a failed check, said out loud.
   quiet run is re-checked and reports nothing twice.
 - The watchdog, `next-delay` and the sleep timer read liveness without a commit per cycle.
 - A refused push fails the check and loses nothing.
+- A ledger write and a state write made in a cycle land in that cycle's commit; one made
+  outside a cycle is its own commit; neither changes the working tree.
+- After the migration, a full cycle with ledger and baseline writes leaves `git status` clean
+  on the program branch, and `cycle begin` fast-forwards a checkout that is behind.
+- A checkout that cannot fast-forward is reported and does not stop the cycle.
+- A second bot reads the first bot's ledger from its fetched log branch.
