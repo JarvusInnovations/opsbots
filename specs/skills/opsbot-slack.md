@@ -66,7 +66,7 @@ In the repo:
 | `sender_lookup` | a repo path to the sender hook (below) | unset |
 | `operators` | the operator's user ids; a DM with one of them is `operator-dm`; an app's post as one of them is heard like their own ([Posts through an app](#posts-through-an-app)) | none; `escalate_dm` alone still counts |
 | `screen` | the screen ([Posting](#posting-opsbot-slack-post)) | unset: nothing is screened |
-| `post_log` | the post command's decision log, a repo path | `logs/slack-posts.jsonl` |
+| `post_log` | the post command's decision log, a repo path; with `log.branch` set in opsbot.json it is unused: each line is a record of `posts/slack` on the log branch, written with `opsbot-core log append posts/slack` and counted for the loop guard with `opsbot-core log read`. A line that cannot be written after the send is a warning on stderr and the post still reports what happened | `logs/slack-posts.jsonl` |
 | `listen_to` | `anyone` or `operators`: whose events the listener keeps ([Owner-only listening](#owner-only-listening)) | `anyone` |
 | `intercept` | a list of rules that hand a matching message to a command before it is recorded ([The intercept](#the-intercept)) | none |
 | `intercept_emoji` | the reaction on a message a command took | `white_check_mark` |

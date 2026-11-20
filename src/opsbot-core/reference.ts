@@ -82,6 +82,10 @@ export const COMMAND_GROUPS: CommandGroup[] = [
         summary: "Record, close or list outages: failed-turn, refused, plan-limit, session-ended, stopped.",
       },
       { usage: "log tail [--n N]", summary: "The last N cycle-log lines (default 10)." },
+      { usage: "log append <ledger> | posts/<channel>", summary: "With `log.branch`: append the JSON record(s) on stdin to a ledger declared in `log.ledgers` (each must carry its declared fields) or to a channel's post log. Inside a cycle it rides the cycle's commit; outside, it is its own commit. Never the working tree." },
+      { usage: "log state get <name> [--json-out PATH] | log state set <name>", summary: "With `log.branch`: read a baseline, or replace it with the JSON object on stdin (a name declared in `log.state`, carrying its declared fields). An unchanged value writes nothing." },
+      { usage: "log read <sheet> [--since ISO] [--filter CLAUSE]... [--repo PATH|REMOTE] [--branch NAME] [--json-out PATH]", summary: "Records of `cycles`, `seen`, `outages`, `routines`, `posts/<channel>` or `ledgers/<name>`, oldest first, staged ones included; `--since` walks only the days from then on; `--repo` fetches another bot's log branch (`opsbot/log`, or `--branch`) into a private copy under the git directory and reads it." },
+      { usage: "log seen <key>", summary: "Exit 0 when the key was reported to the session (from the log branch with `log.branch`, else the seen file), 1 when not: the listeners ask this." },
     ],
   },
   {
@@ -163,7 +167,7 @@ export const COMMAND_GROUPS: CommandGroup[] = [
         summary: "Register the SessionStart (`cold-start --write`) and PreToolUse (`gate check`) hooks; project scope by default.",
       },
       { usage: "hooks list [--point P]", summary: "Every script that will run at each lifecycle point, in order, with its source." },
-      { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails; and a `log.branch` that names the branch checked out, or with no `gitsheets-axi` 2.15.0 or later to write it." },
+      { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails; and a `log.branch` that names the branch checked out, or with no `gitsheets-axi` 2.15.0 or later to write it; and `log.ledgers` or `log.state` that is not names with lists of field names, or is set without `log.branch`." },
     ],
   },
 ];
