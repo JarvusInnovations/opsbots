@@ -18,6 +18,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { ISO_RE, gitPath, nowIso, nowMs, parseIso } from "./repo.js";
+import { branchCycleLines, branchLastCycleAt, branchOutageLines, branchSeen, branchWatermark, logBranch, stage } from "./log.js";
 
 export const CYCLE_LOG = "logs/cycle.jsonl";
 export const SEEN_FILE = "logs/intake/seen";
@@ -81,8 +82,25 @@ export function truncateTo(file: string, size: number): void {
   else truncateSync(file, size);
 }
 
+/** The cycle log: the file, or with `log.branch` set the log branch read as the same lines. */
 export function readCycleLog(root: string): LogLine[] {
+  const b = logBranch(root);
+  if (b) return branchCycleLines(root, b) as LogLine[];
   return readJsonl(paths(root).log);
+}
+
+/** Add one line to the cycle log: appended to the file, or staged for the next log commit. */
+export function appendCycleLine(root: string, line: Record<string, unknown>): void {
+  const b = logBranch(root);
+  if (b) stage(root, { cycles: [line] });
+  else appendJsonl(paths(root).log, line);
+}
+
+/** When the last cycle logged. On the log branch, from the tip alone (and anything staged). */
+export function lastCycleTime(root: string): string | null {
+  const b = logBranch(root);
+  if (b) return branchLastCycleAt(root, b);
+  return lastCycleAt(readCycleLog(root));
 }
 
 /** The time of the last line a cycle wrote (a check's line or a finish), or null. */
@@ -112,6 +130,8 @@ export interface Outage {
 }
 
 export function outageLines(root: string): LogLine[] {
+  const b = logBranch(root);
+  if (b) return (branchOutageLines(root, b) as LogLine[]).filter((l) => l.outcome === "outage" || l.outcome === "outage-end");
   const p = paths(root);
   const lines = [...readJsonl(p.log), ...readJsonl(p.outages)].filter(
     (l) => l.outcome === "outage" || l.outcome === "outage-end",
@@ -155,19 +175,29 @@ export function recordOutage(
     ended: o.ended ?? null,
     note: o.note,
   };
-  appendJsonl(paths(root).outages, line);
+  appendOutage(root, line);
   return line;
 }
 
 export function recordOutageEnd(root: string, started: string, ended: string): LogLine {
   const line = { at: nowIso(), outcome: "outage-end", started, ended };
-  appendJsonl(paths(root).outages, line);
+  appendOutage(root, line);
   return line;
+}
+
+/** An outage line to the outages file, or staged for the next log commit (`kind` names the
+ * record's path, so an end is kind `end`). */
+function appendOutage(root: string, line: Record<string, unknown>): void {
+  const b = logBranch(root);
+  if (b) stage(root, { outages: [{ kind: "end", ...line }] });
+  else appendJsonl(paths(root).outages, line);
 }
 
 // -------------------------------------------------------------- watermark
 
 export function readWatermark(root: string): string | null {
+  const b = logBranch(root);
+  if (b) return branchWatermark(root, b);
   const f = paths(root).watermark;
   if (!existsSync(f)) return null;
   const line = readFileSync(f, "utf8").split("\n")[0]?.trim() ?? "";
@@ -187,6 +217,8 @@ export function writeWatermark(root: string, wm: string): void {
 // ------------------------------------------------------------------- seen
 
 export function readSeen(root: string): Set<string> {
+  const b = logBranch(root);
+  if (b) return branchSeen(root, b);
   const f = paths(root).seen;
   if (!existsSync(f)) return new Set();
   return new Set(

@@ -125,6 +125,12 @@ export function baseEnv(
 
 export const SCRIPT_TIMEOUT_MS = 300_000;
 
+/** The limit on one script; OPSBOT_TEST_SCRIPT_TIMEOUT_MS replaces it in tests only. */
+function scriptTimeoutMs(): number {
+  const t = Number(process.env.OPSBOT_TEST_SCRIPT_TIMEOUT_MS);
+  return Number.isInteger(t) && t > 0 ? t : SCRIPT_TIMEOUT_MS;
+}
+
 export function runScript(script: Script, root: string, env: NodeJS.ProcessEnv, input?: string): RunResult {
-  return run(script.path, [], { cwd: root, env, input, timeoutMs: SCRIPT_TIMEOUT_MS });
+  return run(script.path, [], { cwd: root, env, input, timeoutMs: scriptTimeoutMs() });
 }
