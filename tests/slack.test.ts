@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, st
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { encode } from "@toon-format/toon";
+import { OLD_SEEN } from "../src/opsbot-core/legacy";
 
 const SKILL = resolve(import.meta.dir, "..", "skills", "opsbot-slack");
 const LISTENER = join(SKILL, "templates/monitor.d/10-slack-listener");
@@ -24,7 +25,7 @@ const CHAN = "C0CHAN0001";
 const NODE = spawnSync("node", ["-p", "process.execPath"], { encoding: "utf8" }).stdout.trim();
 
 // Several tests run the listener as a process for a few seconds each; a slow runner needs room.
-setDefaultTimeout(60000);
+setDefaultTimeout(120000);
 
 let dirs: string[] = [];
 afterEach(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); dirs = []; });
@@ -829,7 +830,7 @@ exit 0
 `);
   chmodSync(axi, 0o755);
   const core = join(dir, "core");
-  // \`log seen <key>\` (asked with log.branch) answers from branch-seen and is logged apart
+  // \`log seen <key>\` answers from branch-seen and is logged apart
   writeFileSync(core, `#!/usr/bin/env bash\nif [ "$1 $2" = "log seen" ]; then printf '%s\\n' "$3" >> "${dir}/seen-asked.log"; grep -qxF -- "$3" "${dir}/branch-seen" 2>/dev/null && exit 0; exit 1; fi\nprintf '%s\\n' "$*" >> "${dir}/core.log"\nprintf 'tick=%s root=%s\\n' "$OPSBOT_WAKE_TICK_MS" "$OPSBOT_ROOT" >> "${dir}/core-env.log"\n${opts.coreNotes ? `echo -e ${JSON.stringify(opts.coreNotes)} >&2\n` : ""}${opts.coreDelayS ? `sleep ${opts.coreDelayS}\n` : ""}echo -e ${JSON.stringify(opts.coreSays ?? "backstop: nudged after 0s")}\n`);
   chmodSync(core, 0o755);
   opts.setup?.(repo, dir);
@@ -874,7 +875,10 @@ describe("the wake: the core's backstop, one at a time", () => {
   const now = Math.floor(Date.now() / 1000);
   const dm = (n: number) => ({ ...DM_TOP, ts: `${now}.00010${n}` });
   const key = (n: number) => `slack:${DM}:${now}.00010${n}:msg`;
-  const seen = (repo: string, k: string) => { mkdirSync(join(repo, "logs/intake"), { recursive: true }); writeFileSync(join(repo, "logs/intake/seen"), k + "\n"); };
+  // the core stand-in answers `log seen` from this list, as the core does from the log branch
+  const seen = (dir: string, k: string) => writeFileSync(join(dir, "branch-seen"), k + "\n");
+  /** The key written where the seen file used to be: no one reads it there. */
+  const fileSeen = (repo: string, k: string) => { mkdirSync(join(repo, OLD_SEEN, ".."), { recursive: true }); writeFileSync(join(repo, OLD_SEEN), k + "\n"); };
 
   test("each event runs `wake backstop` with its key, time, grace and reason, in the repo, and logs its line", () => {
     const t0 = Date.now();
@@ -922,21 +926,17 @@ describe("the wake: the core's backstop, one at a time", () => {
   test("the ack reaction waits for the seen key, whatever the backstop said", () => {
     const unseen = runListener({}, [dm(1)], { tickMs: 50, settleMs: 800 });
     expect(unseen.axi).toEqual([`react ${DM} ${now}.000101 :eyes:`]);
-    const r = runListener({}, [dm(1)], { tickMs: 50, settleMs: 800, setup: (repo) => seen(repo, key(1)) });
+    const r = runListener({}, [dm(1)], { tickMs: 50, settleMs: 800, setup: (_repo, dir) => seen(dir, key(1)) });
     expect(r.axi).toEqual([`react ${DM} ${now}.000101 :eyes:`, `react ${DM} ${now}.000101 :gear:`]);
     expect(r.out).toContain(`read: ${key(1)}`);
   });
 
-  test("with log.branch the ack asks the core's `log seen`, and no seen file is read or made", () => {
-    const branch = (repo: string) => {
-      const p = join(repo, "opsbot.json");
-      writeFileSync(p, JSON.stringify({ ...JSON.parse(readFileSync(p, "utf8")), log: { branch: "opsbot/log" } }));
-    };
-    // a seen file says yes, but the branch does not: no ack
-    const unseen = runListener({}, [dm(1)], { tickMs: 50, settleMs: 800, setup: (repo) => { branch(repo); seen(repo, key(1)); } });
+  test("the ack asks the core's `log seen`, and no seen file is read or made", () => {
+    // a seen file where the old one was says yes, but the branch does not: no ack
+    const unseen = runListener({}, [dm(1)], { tickMs: 50, settleMs: 800, setup: (repo) => fileSeen(repo, key(1)) });
     expect(unseen.axi).toEqual([`react ${DM} ${now}.000101 :eyes:`]);
     expect(unseen.read("seen-asked.log")[0]).toBe(key(1));
-    const r = runListener({}, [dm(1)], { tickMs: 50, settleMs: 800, setup: (repo, dir) => { branch(repo); writeFileSync(join(dir, "branch-seen"), key(1) + "\n"); } });
+    const r = runListener({}, [dm(1)], { tickMs: 50, settleMs: 800, setup: (_repo, dir) => seen(dir, key(1)) });
     expect(r.axi).toEqual([`react ${DM} ${now}.000101 :eyes:`, `react ${DM} ${now}.000101 :gear:`]);
     expect(r.out).toContain(`read: ${key(1)}`);
     expect(r.nudges.every((l) => l.startsWith("wake backstop"))).toBe(true);

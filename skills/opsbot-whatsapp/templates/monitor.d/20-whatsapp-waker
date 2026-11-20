@@ -10,10 +10,9 @@
 //      one is pending join it): the core's one wake routine, which gives the session's own
 //      monitor wake_grace_seconds (20) and nudges only when no check began since the line and the
 //      key was not seen. Its notes and its one line go to the journal;
-//   3. with mark_read "seen" (the default), waits for the key to appear in logs/intake/seen
-//      (with log.branch set, until `$OPSBOT_CORE log seen <key>` says yes: the keys are on the
-//      log branch, never in the working tree), which the core writes when the check reports the
-//      item to the model, then runs
+//   3. with mark_read "seen" (the default), waits until `$OPSBOT_CORE log seen <key>` says the
+//      key is seen (the keys are on the log branch, never in the working tree), which the core
+//      records when the check reports the item to the model, then runs
 //      `whatsapp-axi mark-read <chat>/<id>`. So the blue ticks mean the session has the item,
 //      by construction; `read` is logged only when the answer's `failed` is 0 and a message was
 //      marked or already marked, else `mark failed: <reason>`, retried at the next seen-check at
@@ -41,7 +40,6 @@ const account = typeof wa.account === "string" ? wa.account : "";
 const markRead = wa.mark_read !== "off";
 const ackTimeoutMs = (Number(wa.ack_timeout_minutes) || 30) * 60000;
 const tick = Number(process.env.OPSBOT_WHATSAPP_TICK_MS) > 0 ? Number(process.env.OPSBOT_WHATSAPP_TICK_MS) : 1000;
-const seenFile = join(root, "logs/intake/seen");
 const core = process.env.OPSBOT_CORE || join(root, ".agents/skills/opsbot-core/scripts/opsbot-core");
 const bin = process.env.OPSBOT_WHATSAPP_AXI || "whatsapp-axi";
 
@@ -186,13 +184,9 @@ async function resolveSeq(seq) {
   return { why: `${ev.kind}, not an item` };
 }
 
-const logBranch = cfg.log && typeof cfg.log === "object" && typeof cfg.log.branch === "string" && cfg.log.branch ? cfg.log.branch : null;
-/** Whether the core has reported the key to the session: the seen file, or with log.branch the
- * core's `log seen` (exit 0 seen; anything else, an error included, is not yet). */
-const isSeen = (key) => {
-  if (logBranch) return new Promise((done) => execFile(core, ["log", "seen", key], { cwd: root, timeout: 60000, env: { ...process.env, OPSBOT_ROOT: root } }, (e) => done(!e)));
-  try { return readFileSync(seenFile, "utf8").split("\n").includes(key); } catch { return false; }
-};
+/** Whether the core has reported the key to the session: the core's `log seen` (exit 0 seen;
+ * anything else, an error included, is not yet). */
+const isSeen = (key) => new Promise((done) => execFile(core, ["log", "seen", key], { cwd: root, timeout: 60000, env: { ...process.env, OPSBOT_ROOT: root } }, (e) => done(!e)));
 
 const graceS = graceSeconds(wa.wake_grace_seconds) ?? 20;
 const waker = makeBackstop({ core, root, graceS, tickMs: process.env.OPSBOT_WHATSAPP_TICK_MS ? tick : 0, log });
