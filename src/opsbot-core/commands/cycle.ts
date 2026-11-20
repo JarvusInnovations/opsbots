@@ -84,10 +84,12 @@ function sessionEvents(root: string) {
 }
 
 /** With `sleep` set: whether this quiet moment starts a sleep. The state is returned, not written:
- * the caller writes it once the log line that records it is committed. */
+ * the caller writes it once the log line that records it is committed. Its wake counts are the
+ * ones this cycle's check recorded as it started, never "now": a line that landed while the check
+ * ran wakes the sleeper at the timer's first look. */
 function sleepDecision(root: string, s: Settings, text: string, by: SleepState["by"]): SleepState | null {
   if (!s.sleep) return null;
-  const d = decideSleep(root, s, text, readCycleLog(root), nowMs(), sessionEvents(root), by);
+  const d = decideSleep(root, s, text, readCycleLog(root), nowMs(), sessionEvents(root), by, readWakeBase(root));
   return d.sleep ? d.state : null;
 }
 
