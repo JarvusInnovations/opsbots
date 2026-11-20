@@ -320,7 +320,7 @@ which customer they belong to. That knowledge is the bot's own, so the reader ta
 | `sender_lookup` | the hook above | unset |
 | `operators` | the operator's user ids; a DM with one is `operator-dm`, and an app's post as one is heard as theirs | none; `escalate_dm` still counts |
 | `screen` | the screen (Posting, above) | unset: nothing screened, the class still logged |
-| `post_log` | the post command's decision log, a repo path | `logs/slack-posts.jsonl` |
+| `post_log` | the post command's decision log, a repo path; with `log.branch` set, unused: the log is `posts/slack` on the log branch (`opsbot-core log read posts/slack`) | `logs/slack-posts.jsonl` |
 | `listen_to` | `anyone`, or `operators`: keep only operators' events, silently | `anyone` |
 | `intercept` | rules that hand a prefixed message to a command before it is recorded | none |
 | `intercept_emoji` | the reaction on a message a command took | `white_check_mark` |

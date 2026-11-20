@@ -829,7 +829,8 @@ exit 0
 `);
   chmodSync(axi, 0o755);
   const core = join(dir, "core");
-  writeFileSync(core, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${dir}/core.log"\nprintf 'tick=%s root=%s\\n' "$OPSBOT_WAKE_TICK_MS" "$OPSBOT_ROOT" >> "${dir}/core-env.log"\n${opts.coreNotes ? `echo -e ${JSON.stringify(opts.coreNotes)} >&2\n` : ""}${opts.coreDelayS ? `sleep ${opts.coreDelayS}\n` : ""}echo -e ${JSON.stringify(opts.coreSays ?? "backstop: nudged after 0s")}\n`);
+  // \`log seen <key>\` (asked with log.branch) answers from branch-seen and is logged apart
+  writeFileSync(core, `#!/usr/bin/env bash\nif [ "$1 $2" = "log seen" ]; then printf '%s\\n' "$3" >> "${dir}/seen-asked.log"; grep -qxF -- "$3" "${dir}/branch-seen" 2>/dev/null && exit 0; exit 1; fi\nprintf '%s\\n' "$*" >> "${dir}/core.log"\nprintf 'tick=%s root=%s\\n' "$OPSBOT_WAKE_TICK_MS" "$OPSBOT_ROOT" >> "${dir}/core-env.log"\n${opts.coreNotes ? `echo -e ${JSON.stringify(opts.coreNotes)} >&2\n` : ""}${opts.coreDelayS ? `sleep ${opts.coreDelayS}\n` : ""}echo -e ${JSON.stringify(opts.coreSays ?? "backstop: nudged after 0s")}\n`);
   chmodSync(core, 0o755);
   opts.setup?.(repo, dir);
   const preload = join(dir, "fake-slack.mjs");
@@ -924,6 +925,22 @@ describe("the wake: the core's backstop, one at a time", () => {
     const r = runListener({}, [dm(1)], { tickMs: 50, settleMs: 800, setup: (repo) => seen(repo, key(1)) });
     expect(r.axi).toEqual([`react ${DM} ${now}.000101 :eyes:`, `react ${DM} ${now}.000101 :gear:`]);
     expect(r.out).toContain(`read: ${key(1)}`);
+  });
+
+  test("with log.branch the ack asks the core's `log seen`, and no seen file is read or made", () => {
+    const branch = (repo: string) => {
+      const p = join(repo, "opsbot.json");
+      writeFileSync(p, JSON.stringify({ ...JSON.parse(readFileSync(p, "utf8")), log: { branch: "opsbot/log" } }));
+    };
+    // a seen file says yes, but the branch does not: no ack
+    const unseen = runListener({}, [dm(1)], { tickMs: 50, settleMs: 800, setup: (repo) => { branch(repo); seen(repo, key(1)); } });
+    expect(unseen.axi).toEqual([`react ${DM} ${now}.000101 :eyes:`]);
+    expect(unseen.read("seen-asked.log")[0]).toBe(key(1));
+    const r = runListener({}, [dm(1)], { tickMs: 50, settleMs: 800, setup: (repo, dir) => { branch(repo); writeFileSync(join(dir, "branch-seen"), key(1) + "\n"); } });
+    expect(r.axi).toEqual([`react ${DM} ${now}.000101 :eyes:`, `react ${DM} ${now}.000101 :gear:`]);
+    expect(r.out).toContain(`read: ${key(1)}`);
+    expect(r.nudges.every((l) => l.startsWith("wake backstop"))).toBe(true);
+    expect(existsSync(join(r.repo, "logs"))).toBe(false);
   });
 
   test("a wake_grace_seconds that is not a whole number 0 or more falls back to 20", () => {
