@@ -15,7 +15,7 @@ import { parseArgs, setExit, usageError } from "../args.js";
 import { cliInvocation, skillDir } from "../invocation.js";
 import { nowIso, nowMs, requireRoot } from "../repo.js";
 import { loadSettings, trySettings, type Settings } from "../settings.js";
-import { appendJsonl, paths } from "../state.js";
+import { appendCycleLine } from "../state.js";
 import { writeRun } from "../routine-store.js";
 import {
   MEMORY_INDEX,
@@ -164,7 +164,7 @@ function review(args: string[]): Record<string, unknown> {
     checked: [],
     handed_to: null,
   });
-  appendJsonl(paths(root).log, line);
+  appendCycleLine(root, line);
   clearSnapshot(root);
   const out: Record<string, unknown> = {
     review: `done · ${counts}`,
