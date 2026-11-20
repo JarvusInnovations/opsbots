@@ -165,7 +165,7 @@ commit also take when they exist and have changes: a baseline an adapter updates
 append-only log a helper script writes between cycles. Nothing else is added to those
 commits. It refuses an absolute path, a `..` segment, and a path under `.git/` or `.claude/`.
 
-`log` (optional) is `{branch}`, unset by default. With `log.branch` set (such as
+`log` (optional) is `{branch, ledgers, state}`, unset by default. With `log.branch` set (such as
 `"opsbot/log"`), the loop's own log is written to that branch through `gitsheets-axi` (2.15.0
 or later), never the working tree: each cycle that found or did something is one commit there
 with `Program`, `Watermark` and `Check` trailers, a run of quiet cycles is one commit amended
@@ -174,6 +174,19 @@ until the hour turns, and the branch is pushed at `cycle end` up to its newest s
 and `commit_paths` files the cycle changed are still committed there. A refused push of the
 log is a failed check: another host is running the same bot. Turn it on only on a fresh log
 until `log migrate` moves an existing one.
+
+With `log.branch` set, a bot's scripts keep what they did and what they compare against on the
+branch too, never in a file of their own. `log.ledgers` and `log.state` each map a name to the
+fields its record must carry: `{"ledgers": {"labels": ["thread", "label"]}, "state":
+{"inbox": ["cursor"]}}`. A script appends with `opsbot-core log append <ledger>` (a JSON
+record on stdin; `at`, an ISO time in UTC, defaults to now; `ledger` and `hash` are the log's
+own fields), reads with `opsbot-core log read ledgers/<ledger> [--since <time>] [--filter
+<clause>] [--json-out <path>]`, and keeps a baseline with `opsbot-core log state set|get
+<name>`. A write made while a cycle holds the checkout rides that cycle's commit; one made
+outside a cycle is its own commit. A ledger is append-only: something a script edits later is a
+record on the program branch. `log read ... --repo <path or remote>` reads another bot's log
+from its branch. The listeners ask `opsbot-core log seen <key>`, and the post commands of
+opsbot-slack and opsbot-whatsapp write their decision log to `posts/<channel>`.
 
 `memory` (optional) is `{dir, review_days}`, defaults `memory` and `7`, or `false`. See
 *Auto memory* below.
@@ -371,6 +384,10 @@ record.** They live apart.
 - `scripts/opsbot-core lock status | lock release [--abandon]` — Show the writer lock, or release it (another live process's only with `--abandon`).
 - `scripts/opsbot-core outage record <kind> [--note TEXT] [--started ISO] [--ended ISO] | outage end | outage list` — Record, close or list outages: failed-turn, refused, plan-limit, session-ended, stopped.
 - `scripts/opsbot-core log tail [--n N]` — The last N cycle-log lines (default 10).
+- `scripts/opsbot-core log append <ledger> | posts/<channel>` — With `log.branch`: append the JSON record(s) on stdin to a ledger declared in `log.ledgers` (each must carry its declared fields) or to a channel's post log. Inside a cycle it rides the cycle's commit; outside, it is its own commit. Never the working tree.
+- `scripts/opsbot-core log state get <name> [--json-out PATH] | log state set <name>` — With `log.branch`: read a baseline, or replace it with the JSON object on stdin (a name declared in `log.state`, carrying its declared fields). An unchanged value writes nothing.
+- `scripts/opsbot-core log read <sheet> [--since ISO] [--filter CLAUSE]... [--repo PATH|REMOTE] [--branch NAME] [--json-out PATH]` — Records of `cycles`, `seen`, `outages`, `routines`, `posts/<channel>` or `ledgers/<name>`, oldest first, staged ones included; `--since` walks only the days from then on; `--repo` fetches another bot's log branch (`opsbot/log`, or `--branch`) into a private copy under the git directory and reads it.
+- `scripts/opsbot-core log seen <key>` — Exit 0 when the key was reported to the session (from the log branch with `log.branch`, else the seen file), 1 when not: the listeners ask this.
 
 ### The record
 
@@ -401,6 +418,6 @@ record.** They live apart.
 
 - `scripts/opsbot-core hook install|uninstall|status [--scope project|global] [--dir PATH]` — Register the SessionStart (`cold-start --write`) and PreToolUse (`gate check`) hooks; project scope by default.
 - `scripts/opsbot-core hooks list [--point P]` — Every script that will run at each lifecycle point, in order, with its source.
-- `scripts/opsbot-core settings validate [--head]` — Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails; and a `log.branch` that names the branch checked out, or with no `gitsheets-axi` 2.15.0 or later to write it.
+- `scripts/opsbot-core settings validate [--head]` — Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails; and a `log.branch` that names the branch checked out, or with no `gitsheets-axi` 2.15.0 or later to write it; and `log.ledgers` or `log.state` that is not names with lists of field names, or is set without `log.branch`.
 
 <!-- END GENERATED: command-reference -->

@@ -157,8 +157,21 @@ export interface Settings {
   record: { recall: Recall[] };
   /** The branch the loop's own log is written to (specs/behaviors/log-branch.md); null: the log
    * files in the working tree, as before. */
-  log: { branch: string | null };
+  log: LogSettings;
 }
+
+/** `log` in opsbot.json. `ledgers` and `state` map each name a bot declares to the fields a
+ * record must carry; empty when none are declared. */
+export interface LogSettings {
+  branch: string | null;
+  ledgers: Record<string, string[]>;
+  state: Record<string, string[]>;
+}
+
+/** A ledger, state or channel name: one path segment of lower-case letters, digits, `-` and `_`. */
+export const LOG_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+/** Fields the log sets on a ledger record itself; a declared field or a record may not use them. */
+export const LEDGER_RESERVED = ["ledger", "hash"];
 
 /** The kit's defaults (specs/architecture.md, Next wake; specs/skills/opsbot-core.md). */
 export const DEFAULT_CADENCE: Cadence = {
@@ -397,8 +410,27 @@ export function validateSettings(raw: unknown): string[] {
   if (raw.record !== undefined) problems.push(...recordProblems(raw.record));
   const log = obj(raw, "log", "", false);
   if (log) {
-    allow(log, "log.", ["branch"]);
+    allow(log, "log.", ["branch", "ledgers", "state"]);
     str(log, "branch", "log.", false, LOG_BRANCH_RE, `must be a branch name such as ${JSON.stringify("opsbot/log")}`);
+    for (const k of ["ledgers", "state"] as const) {
+      const v = log[k];
+      if (v === undefined) continue;
+      if (!isObj(v)) {
+        problems.push(`log.${k} must be an object: each name with the list of fields a record must carry`);
+        continue;
+      }
+      if (!(typeof log.branch === "string" && log.branch)) problems.push(`log.${k} needs log.branch: they are written to the log branch only`);
+      for (const [name, fields] of Object.entries(v)) {
+        if (name === "//") continue;
+        if (!LOG_NAME_RE.test(name)) problems.push(`log.${k} name ${JSON.stringify(name)} must be lower-case letters, digits, - and _ (64 at most)`);
+        if (!Array.isArray(fields) || !fields.every((f) => typeof f === "string" && f !== "")) {
+          problems.push(`log.${k}.${name} must be a list of field names`);
+          continue;
+        }
+        if (new Set(fields).size !== fields.length) problems.push(`log.${k}.${name} names a field twice`);
+        if (k === "ledgers") for (const f of fields) if (LEDGER_RESERVED.includes(f)) problems.push(`log.ledgers.${name}: ${f} is set by the log itself; name the field otherwise`);
+      }
+    }
   }
   const sleep = obj(raw, "sleep", "", false);
   if (sleep) {
@@ -553,8 +585,22 @@ export function withDefaults(raw: Json): Settings {
       runs_dir: cleanDir(isObj(raw.routines) ? raw.routines.runs_dir : undefined, DEFAULT_ROUTINES.runs_dir),
     },
     record: { recall: recallEntries(raw.record) },
-    log: { branch: isObj(raw.log) && typeof raw.log.branch === "string" && raw.log.branch ? raw.log.branch : null },
+    log: {
+      branch: isObj(raw.log) && typeof raw.log.branch === "string" && raw.log.branch ? raw.log.branch : null,
+      ledgers: logNames(isObj(raw.log) ? raw.log.ledgers : undefined),
+      state: logNames(isObj(raw.log) ? raw.log.state : undefined),
+    },
   };
+}
+
+function logNames(v: unknown): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  if (!isObj(v)) return out;
+  for (const [name, fields] of Object.entries(v)) {
+    if (name === "//" || !Array.isArray(fields)) continue;
+    out[name] = fields.filter((f): f is string => typeof f === "string" && f !== "");
+  }
+  return out;
 }
 
 export interface LoadedSettings {

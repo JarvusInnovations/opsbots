@@ -11,6 +11,7 @@ import { cliInvocation } from "../invocation.js";
 import { POINTS, POINT_DIRS, discover, parsePoint, type Point } from "../lifecycle.js";
 import { git, nowMs, parseIso, requireRoot, showHead } from "../repo.js";
 import { MIN_GITSHEETS, gitsheetsVersion, versionAtLeast } from "../log.js";
+import { logAppend, logRead, logSeen, logState, logUsageHelp } from "./logbranch.js";
 import { SETTINGS_FILE, loadSettings, parseSettingsText, withDefaults } from "../settings.js";
 import { routineProblems } from "./routines.js";
 import { queryRecall, recallSheetProblems } from "../record.js";
@@ -99,10 +100,12 @@ export function detail(l: LogLine): string {
 
 export function logCommand(args: string[]): Record<string, unknown> {
   const [sub, ...rest] = args;
+  if (sub === "append") return logAppend(rest);
+  if (sub === "state") return logState(rest);
+  if (sub === "read") return logRead(rest);
+  if (sub === "seen") return logSeen(rest);
   if (sub !== "tail") {
-    throw new AxiError(sub ? `unknown log subcommand ${sub}` : "log needs a subcommand", "VALIDATION_ERROR", [
-      `${cliInvocation()} log tail [--n N]`,
-    ]);
+    throw new AxiError(sub ? `unknown log subcommand ${sub}` : "log needs a subcommand", "VALIDATION_ERROR", logUsageHelp());
   }
   const usage = "log tail [--n N]";
   const { flags } = parseArgs(rest, { value: ["n"] }, usage);
