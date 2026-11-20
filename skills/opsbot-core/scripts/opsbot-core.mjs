@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "4fed60b" : "dev";
+    VERSION = true ? "c914803" : "dev";
   }
 });
 
@@ -861,7 +861,7 @@ async function defaultRunInstall(plan, stdout, context) {
   }
   stdout.write(`running: ${plan.command}
 `);
-  return new Promise((resolve10) => {
+  return new Promise((resolve11) => {
     const [command, ...args] = argv;
     const child = spawn(packageManagerExecutable(command, context.platform), args, {
       stdio: ["ignore", "pipe", "pipe"],
@@ -874,10 +874,10 @@ async function defaultRunInstall(plan, stdout, context) {
       process.stderr.write(chunk);
     });
     child.on("error", (error) => {
-      resolve10({ ok: false, message: error.message });
+      resolve11({ ok: false, message: error.message });
     });
     child.on("close", (code) => {
-      resolve10(code === 0 ? { ok: true } : { ok: false, message: `${plan.command} exited with code ${code}` });
+      resolve11(code === 0 ? { ok: true } : { ok: false, message: `${plan.command} exited with code ${code}` });
     });
   });
 }
@@ -1953,7 +1953,11 @@ var init_reference = __esm({
             usage: "outage record <kind> [--note TEXT] [--started ISO] [--ended ISO] | outage end | outage list",
             summary: "Record, close or list outages: failed-turn, refused, plan-limit, session-ended, stopped."
           },
-          { usage: "log tail [--n N]", summary: "The last N cycle-log lines (default 10)." }
+          { usage: "log tail [--n N]", summary: "The last N cycle-log lines (default 10)." },
+          { usage: "log append <ledger> | posts/<channel>", summary: "With `log.branch`: append the JSON record(s) on stdin to a ledger declared in `log.ledgers` (each must carry its declared fields) or to a channel's post log. Inside a cycle it rides the cycle's commit; outside, it is its own commit. Never the working tree." },
+          { usage: "log state get <name> [--json-out PATH] | log state set <name>", summary: "With `log.branch`: read a baseline, or replace it with the JSON object on stdin (a name declared in `log.state`, carrying its declared fields). An unchanged value writes nothing." },
+          { usage: "log read <sheet> [--since ISO] [--filter CLAUSE]... [--repo PATH|REMOTE] [--branch NAME] [--json-out PATH]", summary: "Records of `cycles`, `seen`, `outages`, `routines`, `posts/<channel>` or `ledgers/<name>`, oldest first, staged ones included; `--since` walks only the days from then on; `--repo` fetches another bot's log branch (`opsbot/log`, or `--branch`) into a private copy under the git directory and reads it." },
+          { usage: "log seen <key>", summary: "Exit 0 when the key was reported to the session (from the log branch with `log.branch`, else the seen file), 1 when not: the listeners ask this." }
         ]
       },
       {
@@ -2027,7 +2031,7 @@ var init_reference = __esm({
             summary: "Register the SessionStart (`cold-start --write`) and PreToolUse (`gate check`) hooks; project scope by default."
           },
           { usage: "hooks list [--point P]", summary: "Every script that will run at each lifecycle point, in order, with its source." },
-          { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails; and a `log.branch` that names the branch checked out, or with no `gitsheets-axi` 2.15.0 or later to write it." }
+          { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails; and a `log.branch` that names the branch checked out, or with no `gitsheets-axi` 2.15.0 or later to write it; and `log.ledgers` or `log.state` that is not names with lists of field names, or is set without `log.branch`." }
         ]
       }
     ];
@@ -2689,8 +2693,29 @@ function validateSettings(raw) {
   if (raw.record !== void 0) problems.push(...recordProblems(raw.record));
   const log = obj(raw, "log", "", false);
   if (log) {
-    allow(log, "log.", ["branch"]);
+    allow(log, "log.", ["branch", "ledgers", "state"]);
     str2(log, "branch", "log.", false, LOG_BRANCH_RE, `must be a branch name such as ${JSON.stringify("opsbot/log")}`);
+    for (const k of ["ledgers", "state"]) {
+      const v = log[k];
+      if (v === void 0) continue;
+      if (!isObj2(v)) {
+        problems.push(`log.${k} must be an object: each name with the list of fields a record must carry`);
+        continue;
+      }
+      if (!(typeof log.branch === "string" && log.branch)) problems.push(`log.${k} needs log.branch: they are written to the log branch only`);
+      for (const [name, fields] of Object.entries(v)) {
+        if (name === "//") continue;
+        if (!LOG_NAME_RE.test(name)) problems.push(`log.${k} name ${JSON.stringify(name)} must be lower-case letters, digits, - and _ (64 at most)`);
+        if (!Array.isArray(fields) || !fields.every((f) => typeof f === "string" && f !== "")) {
+          problems.push(`log.${k}.${name} must be a list of field names`);
+          continue;
+        }
+        if (new Set(fields).size !== fields.length) problems.push(`log.${k}.${name} names a field twice`);
+        if (k === "ledgers") {
+          for (const f of fields) if (LEDGER_RESERVED.includes(f)) problems.push(`log.ledgers.${name}: ${f} is set by the log itself; name the field otherwise`);
+        }
+      }
+    }
   }
   const sleep = obj(raw, "sleep", "", false);
   if (sleep) {
@@ -2819,8 +2844,21 @@ function withDefaults(raw) {
       runs_dir: cleanDir(isObj2(raw.routines) ? raw.routines.runs_dir : void 0, DEFAULT_ROUTINES.runs_dir)
     },
     record: { recall: recallEntries(raw.record) },
-    log: { branch: isObj2(raw.log) && typeof raw.log.branch === "string" && raw.log.branch ? raw.log.branch : null }
+    log: {
+      branch: isObj2(raw.log) && typeof raw.log.branch === "string" && raw.log.branch ? raw.log.branch : null,
+      ledgers: logNames(isObj2(raw.log) ? raw.log.ledgers : void 0),
+      state: logNames(isObj2(raw.log) ? raw.log.state : void 0)
+    }
   };
+}
+function logNames(v) {
+  const out = {};
+  if (!isObj2(v)) return out;
+  for (const [name, fields] of Object.entries(v)) {
+    if (name === "//" || !Array.isArray(fields)) continue;
+    out[name] = fields.filter((f) => typeof f === "string" && f !== "");
+  }
+  return out;
 }
 function parseSettingsText(text, where) {
   let raw;
@@ -2858,7 +2896,7 @@ function trySettings(root) {
   const p = join4(root, SETTINGS_FILE);
   return existsSync5(p) ? tryText(readFileSync3(p, "utf8")) : null;
 }
-var SETTINGS_FILE, LOOP_MODES, MODE_AUTOCOMPACT, LOOP_SCHEDULES, MODE_MODEL, DEFAULT_MEMORY, DEFAULT_ROUTINES, DEFAULT_CHECK, DEFAULT_SLEEP, DEFAULT_CADENCE, DEFAULT_LIVENESS, MONITOR_NUDGE_MINUTES, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR, LOG_BRANCH_RE;
+var SETTINGS_FILE, LOOP_MODES, MODE_AUTOCOMPACT, LOOP_SCHEDULES, MODE_MODEL, DEFAULT_MEMORY, DEFAULT_ROUTINES, DEFAULT_CHECK, DEFAULT_SLEEP, LOG_NAME_RE, LEDGER_RESERVED, DEFAULT_CADENCE, DEFAULT_LIVENESS, MONITOR_NUDGE_MINUTES, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR, LOG_BRANCH_RE;
 var init_settings = __esm({
   "src/opsbot-core/settings.ts"() {
     "use strict";
@@ -2874,6 +2912,8 @@ var init_settings = __esm({
     DEFAULT_ROUTINES = { dir: "routines", runs_dir: "records/routine-runs" };
     DEFAULT_CHECK = { full_minutes: 10 };
     DEFAULT_SLEEP = { after_minutes: 60, probe_minutes: 10, max_minutes: 480, compact: true };
+    LOG_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+    LEDGER_RESERVED = ["ledger", "hash"];
     DEFAULT_CADENCE = {
       hot: 180,
       warm: 600,
@@ -3007,6 +3047,9 @@ function ident(sheet, r) {
   if (sheet === "seen") return String(r.hash ?? "");
   if (sheet === "cycles") return `${at}|${String(r.outcome ?? "")}`;
   if (sheet === "outages") return `${at}|${String(r.kind ?? "")}|${String(r.edge ?? "")}`;
+  if (sheet === "posts") return `${String(r.channel ?? "")}|${at}|${String(r.hash ?? "")}`;
+  if (sheet === "ledgers") return `${String(r.ledger ?? "")}|${at}|${String(r.hash ?? "")}`;
+  if (sheet === "state") return String(r.name ?? "");
   return `${String(r.routine ?? "")}|${at}`;
 }
 function logBranch(root) {
@@ -3135,7 +3178,14 @@ function writePending(root, p) {
 }
 function stage(root, add) {
   const p = readPending(root);
-  for (const s of SHEETS) if (add[s]?.length) p[s].push(...add[s].map(clean));
+  for (const s of SHEETS) {
+    if (!add[s]?.length) continue;
+    if (s === "state") {
+      const names = new Set(add[s].map((r) => ident(s, r)));
+      p[s] = p[s].filter((r) => !names.has(ident(s, r)));
+    }
+    p[s].push(...add[s].map(clean));
+  }
   if (add.watermark) p.watermark = add.watermark;
   writePending(root, p);
 }
@@ -3167,22 +3217,34 @@ function seenRecords(keys, at) {
   return keys.map((key) => ({ at, hash: seenHash(key), key }));
 }
 function initBranch(root, b) {
+  let tip = null;
+  for (const s of SHEETS) {
+    const why = initSheet(root, b, s, ["--message", "log: the sheets of the loop's log", ...tip ? ["--replace", tip] : []]);
+    if (why) return why;
+    tip = revParse(root, ref(b));
+  }
+  return null;
+}
+function initSheet(root, b, s, commitArgs) {
   const dir = mkdtempSync2(join6(tmpdir2(), "opsbot-log-init-"));
   try {
-    let tip = null;
-    for (const s of SHEETS) {
-      const schema = join6(dir, `${s}.json`);
-      writeFileSync2(schema, JSON.stringify(SHEET_CONFIGS[s].schema));
-      const args = ["init", s, "--path", SHEET_CONFIGS[s].path, "--schema", schema, "--message", "log: the sheets of the loop's log"];
-      if (tip) args.push("--replace", tip);
-      const r = gs(root, b, args);
-      if (r.code !== 0) return `gitsheets-axi init ${s} failed: ${r.message}`;
-      tip = revParse(root, ref(b));
-    }
-    return null;
+    const schema = join6(dir, `${s}.json`);
+    writeFileSync2(schema, JSON.stringify(SHEET_CONFIGS[s].schema));
+    const r = gs(root, b, ["init", s, "--path", SHEET_CONFIGS[s].path, "--schema", schema, ...commitArgs]);
+    return r.code === 0 ? null : `gitsheets-axi init ${s} failed: ${r.message}`;
   } finally {
     rmSync2(dir, { recursive: true, force: true });
   }
+}
+function sheetConfigs(root, b) {
+  const r = git(root, ["ls-tree", "--name-only", `${ref(b)}:.gitsheets`]);
+  const out = /* @__PURE__ */ new Set();
+  if (r.code !== 0) return out;
+  for (const n of r.stdout.split("\n")) {
+    const m = n.trim().match(/^(.+)\.toml$/);
+    if (m && SHEETS.includes(m[1])) out.add(m[1]);
+  }
+  return out;
 }
 function ensureBranch(root, b) {
   if (haveLocal(root, b)) return null;
@@ -3219,6 +3281,13 @@ function writeLog(root, b, w, session = "") {
       const r = gs(root, b, ["commit", "--allow-empty", "--message", w.subject, ...also, ...trailers2]);
       if (r.code !== 0) return { ok: false, why: `gitsheets-axi commit failed: ${r.message}` };
       return { ok: true, hash: revParse(root, ref(b)) ?? "" };
+    }
+    const present = sheetConfigs(root, b);
+    for (const s of todo.filter((x) => !present.has(x))) {
+      const why2 = initSheet(root, b, s, ["--message", w.subject, ...trailers2, ...made ? ["--replace", made] : also]);
+      if (why2) return { ok: false, why: why2 };
+      const now = revParse(root, ref(b));
+      if (now && now !== (made ?? tip.hash)) made = now;
     }
     for (const s of todo) {
       const input = w.records[s].map((x) => JSON.stringify(clean(x))).join("\n");
@@ -3366,18 +3435,21 @@ function noteWritten(root, b, before, written) {
   writeCache(root, c);
 }
 function query(root, b, sheet, filter) {
+  const r = queryRecords(root, b, sheet, filter ? [filter] : []);
+  return "error" in r ? null : r.records;
+}
+function queryRecords(root, b, sheet, filters) {
   const dir = mkdtempSync2(join6(tmpdir2(), "opsbot-log-q-"));
   try {
     const out = join6(dir, "rows.json");
-    const args = ["query", sheet, "--limit", "1", `--json-out=${out}`];
-    if (filter) args.push("--filter", filter);
+    const args = ["query", sheet, "--limit", "1", `--json-out=${out}`, ...filters.flatMap((f) => ["--filter", f])];
     const r = gs(root, b, args);
-    if (r.code !== 0) return null;
-    if (!existsSync7(out)) return [];
+    if (r.code !== 0) return { error: `gitsheets-axi query ${sheet} failed: ${r.message}` };
+    if (!existsSync7(out)) return { records: [] };
     const v = JSON.parse(readFileSync4(out, "utf8"));
-    return Array.isArray(v) ? v : [];
-  } catch {
-    return null;
+    return { records: Array.isArray(v) ? v : [] };
+  } catch (e) {
+    return { error: `gitsheets-axi query ${sheet} could not be read: ${e.message}` };
   } finally {
     rmSync2(dir, { recursive: true, force: true });
   }
@@ -3483,17 +3555,18 @@ function seenFileFor(root, b) {
   }
   return f;
 }
-var MIN_GITSHEETS, PENDING, CACHE, GS_TIMEOUT_MS, PUSH_TIMEOUT_MS, SHEETS, HH, MMSS, HHMMSS, DAY, AT, SHEET_CONFIGS, branchCache, ref, CYCLE_PATH_RE, LIVE_OUTCOMES, emptyPending, DAY_IN_PATH, byAt;
+var DEFAULT_LOG_BRANCH, MIN_GITSHEETS, PENDING, CACHE, GS_TIMEOUT_MS, PUSH_TIMEOUT_MS, SHEETS, HH, MMSS, HHMMSS, DAY, AT, SHEET_CONFIGS, branchCache, ref, CYCLE_PATH_RE, LIVE_OUTCOMES, emptyPending, DAY_IN_PATH, byAt;
 var init_log = __esm({
   "src/opsbot-core/log.ts"() {
     "use strict";
     init_repo();
+    DEFAULT_LOG_BRANCH = "opsbot/log";
     MIN_GITSHEETS = "2.15.0";
     PENDING = "opsbot-log-pending.json";
     CACHE = "opsbot-log-cache.json";
     GS_TIMEOUT_MS = 12e4;
     PUSH_TIMEOUT_MS = 6e4;
-    SHEETS = ["cycles", "outages", "seen", "routines"];
+    SHEETS = ["cycles", "outages", "seen", "routines", "posts", "ledgers", "state"];
     HH = "${{ typeof at == 'string' ? at.slice(11,13) : wild }}";
     MMSS = "${{ typeof at == 'string' ? at.slice(14,16) + at.slice(17,19) : wild }}";
     HHMMSS = "${{ typeof at == 'string' ? at.slice(11,13) + at.slice(14,16) + at.slice(17,19) : wild }}";
@@ -3519,13 +3592,25 @@ var init_log = __esm({
       routines: {
         path: `\${{ routine }}/${DAY}/${HHMMSS}`,
         schema: { type: "object", required: ["at", "routine"], properties: { at: AT, routine: { type: "string" } } }
+      },
+      posts: {
+        path: `\${{ channel }}/${DAY}/${HHMMSS}-\${{ hash }}`,
+        schema: { type: "object", required: ["at", "channel", "hash"], properties: { at: AT, channel: { type: "string" }, hash: { type: "string" } } }
+      },
+      ledgers: {
+        path: `\${{ ledger }}/${DAY}/${HHMMSS}-\${{ hash }}`,
+        schema: { type: "object", required: ["at", "ledger", "hash"], properties: { at: AT, ledger: { type: "string" }, hash: { type: "string" } } }
+      },
+      state: {
+        path: "${{ name }}",
+        schema: { type: "object", required: ["name", "value"], properties: { name: { type: "string" }, at: AT, value: { type: "object" } } }
       }
     };
     branchCache = /* @__PURE__ */ new Map();
     ref = (b) => `refs/heads/${b}`;
     CYCLE_PATH_RE = /^cycles\/(\d{4})\/(\d{2})\/(\d{2})\/(\d{2})\/(\d{2})(\d{2})-(.+)\.toml$/;
     LIVE_OUTCOMES = ["nothing-new", "new", "degraded", "finished"];
-    emptyPending = () => ({ cycles: [], seen: [], outages: [], routines: [] });
+    emptyPending = () => ({ cycles: [], seen: [], outages: [], routines: [], posts: [], ledgers: [], state: [] });
     DAY_IN_PATH = /(?:^|\/)(\d{4})\/(\d{2})\/(\d{2})(?:\/|$)/;
     byAt = (a, b) => String(a.at) < String(b.at) ? -1 : String(a.at) > String(b.at) ? 1 : 0;
   }
@@ -4895,7 +4980,7 @@ async function* readLinesBackward(path, blockSize = BLOCK_SIZE) {
       return;
     let end = size;
     let carry = [];
-    const join28 = (head2) => carry.length === 0 ? head2 : Buffer.concat([head2, ...carry.reverse()]);
+    const join29 = (head2) => carry.length === 0 ? head2 : Buffer.concat([head2, ...carry.reverse()]);
     let first = true;
     const emit = (offset, bytes2) => {
       if (first) {
@@ -4913,7 +4998,7 @@ async function* readLinesBackward(path, blockSize = BLOCK_SIZE) {
         const nl = buf.lastIndexOf(NL, stop - 1);
         if (nl === -1)
           break;
-        const line2 = emit(start + nl + 1, join28(buf.subarray(nl + 1, stop)));
+        const line2 = emit(start + nl + 1, join29(buf.subarray(nl + 1, stop)));
         carry = [];
         if (line2)
           yield line2;
@@ -4923,7 +5008,7 @@ async function* readLinesBackward(path, blockSize = BLOCK_SIZE) {
         carry.push(buf.subarray(0, stop));
       end = start;
     }
-    const line = emit(0, join28(Buffer.alloc(0)));
+    const line = emit(0, join29(Buffer.alloc(0)));
     if (line)
       yield line;
   } finally {
@@ -13353,9 +13438,323 @@ var init_record2 = __esm({
   }
 });
 
+// src/opsbot-core/commands/logbranch.ts
+import { createHash as createHash5 } from "node:crypto";
+import { existsSync as existsSync24, mkdirSync as mkdirSync9, readFileSync as readFileSync21, writeFileSync as writeFileSync14 } from "node:fs";
+import { isAbsolute, join as join27, resolve as resolve10 } from "node:path";
+function needBranch(root, what) {
+  const b = logBranch(root);
+  if (!b) {
+    throw new AxiError(`${what} needs log.branch in opsbot.json: ledgers, baselines and post logs on the log branch are opt-in`, "CANNOT_RUN", [
+      `Set log.branch (such as "${DEFAULT_LOG_BRANCH}") in opsbot.json and commit it`
+    ]);
+  }
+  return b;
+}
+function cycleHolds(root, maxMinutes) {
+  const { hold } = readLock(root);
+  if (!hold) return false;
+  if (hold.pid && pidAlive(hold.pid) === "no") return false;
+  const started = parseIso(hold.started);
+  if (started === null) return false;
+  return nowMs() - started < maxMinutes * 6e4;
+}
+function write(root, b, settings, records, subject) {
+  if (cycleHolds(root, settings.lock_max_minutes)) {
+    stage(root, records);
+    return "staged: rides this cycle's commit";
+  }
+  const r = commitStaged(root, b, records, { subject }, trailers());
+  if (!r.ok) throw new AxiError(`cannot write the log: ${r.why}`, "WRITE_FAILED", ["Nothing was written; run it again once the log branch can be written"]);
+  return `committed ${r.hash.slice(0, 12)} on ${b}`;
+}
+function readStdinRecords(what, usage) {
+  let text = "";
+  try {
+    text = readFileSync21(0, "utf8");
+  } catch {
+    text = "";
+  }
+  const t = text.trim();
+  if (!t) throw usageError(`no ${what} on stdin`, usage);
+  let vals;
+  try {
+    const v = JSON.parse(t);
+    vals = Array.isArray(v) ? v : [v];
+  } catch {
+    try {
+      vals = t.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
+    } catch {
+      throw usageError(`the ${what} on stdin is not JSON (one object, an array of objects, or one object per line)`, usage);
+    }
+  }
+  if (vals.length === 0) throw usageError(`no ${what} on stdin`, usage);
+  vals.forEach((v, i) => {
+    if (!v || typeof v !== "object" || Array.isArray(v)) throw usageError(`${what} ${i + 1} is not a JSON object`, usage);
+  });
+  return vals;
+}
+function recordAt(r, i, usage) {
+  if (r.at === void 0 || r.at === null) return nowIso();
+  if (typeof r.at !== "string" || !UTC_RE.test(r.at) || parseIso(r.at) === null) {
+    throw usageError(`record ${i + 1}: at must be an ISO time in UTC such as 2026-03-02T15:04:05Z (got ${JSON.stringify(r.at)})`, usage);
+  }
+  return r.at;
+}
+function recordHash(r) {
+  return createHash5("sha256").update(canonical(r)).digest("hex").slice(0, 12);
+}
+function canonical(v) {
+  const sort = (x) => {
+    if (Array.isArray(x)) return x.map(sort);
+    if (x && typeof x === "object") {
+      const o = {};
+      for (const k of Object.keys(x).sort()) o[k] = sort(x[k]);
+      return o;
+    }
+    return x;
+  };
+  return JSON.stringify(sort(clean(v)));
+}
+function missingFields(r, fields) {
+  return fields.filter((f) => r[f] === void 0 || r[f] === null);
+}
+function logAppend(args) {
+  const { positionals } = parseArgs(args, { maxPositionals: 1 }, APPEND_USAGE);
+  const target = positionals[0];
+  if (!target) throw usageError("log append needs a ledger name, or posts/<channel>", APPEND_USAGE);
+  const root = requireRoot();
+  const { settings } = loadSettings(root);
+  const b = needBranch(root, "log append");
+  const post = target.match(/^posts\/(.+)$/);
+  const name = post ? post[1] : target.replace(/^ledgers\//, "");
+  if (!LOG_NAME_RE.test(name)) throw usageError(`${JSON.stringify(name)} is not a ${post ? "channel" : "ledger"} name (lower-case letters, digits, - and _)`, APPEND_USAGE);
+  const declared = post ? [] : settings.log.ledgers[name];
+  if (!declared) {
+    const known = Object.keys(settings.log.ledgers);
+    throw new AxiError(`no ledger ${name} in log.ledgers`, "VALIDATION_ERROR", [
+      known.length ? `Declared ledgers: ${known.join(", ")}` : 'Declare it in opsbot.json: "log": {"ledgers": {"' + name + '": ["<field>", ...]}}'
+    ]);
+  }
+  const key = post ? "channel" : "ledger";
+  const input = readStdinRecords("record", APPEND_USAGE);
+  const records = input.map((r, i) => {
+    for (const f of post ? ["channel", "hash"] : LEDGER_RESERVED) {
+      if (r[f] !== void 0) throw usageError(`record ${i + 1}: ${f} is set by the log itself; name the field otherwise`, APPEND_USAGE);
+    }
+    const miss = missingFields(r, declared);
+    if (miss.length) throw usageError(`record ${i + 1} has no ${miss.join(", ")}: ledger ${name} requires ${declared.join(", ")}`, APPEND_USAGE);
+    const at = recordAt(r, i, APPEND_USAGE);
+    const body = clean({ ...r, at });
+    return { ...body, [key]: name, hash: recordHash(body) };
+  });
+  const sheet = post ? "posts" : "ledgers";
+  const said = write(root, b, settings, { [sheet]: records }, `log: ${records.length} ${post ? `post${records.length === 1 ? "" : "s"} to ${name}` : `${name} record${records.length === 1 ? "" : "s"}`}`);
+  return { appended: `${records.length} to ${sheet}/${name} \xB7 ${said}` };
+}
+function currentState(root, b, name) {
+  const staged = readPending(root).state.filter((r) => r.name === name).pop();
+  if (staged) return staged;
+  return sheetRecords(root, b, "state").find((r) => r.name === name) ?? null;
+}
+function logState(args) {
+  const [sub, ...rest] = args;
+  if (sub !== "get" && sub !== "set") throw usageError(sub ? `unknown log state subcommand ${sub}` : "log state needs get or set", STATE_USAGE);
+  const { positionals, flags } = parseArgs(rest, { value: sub === "get" ? ["json-out"] : [], maxPositionals: 1 }, STATE_USAGE);
+  const name = positionals[0];
+  if (!name) throw usageError(`log state ${sub} needs a name`, STATE_USAGE);
+  if (!LOG_NAME_RE.test(name)) throw usageError(`${JSON.stringify(name)} is not a state name (lower-case letters, digits, - and _)`, STATE_USAGE);
+  const root = requireRoot();
+  const { settings } = loadSettings(root);
+  const b = needBranch(root, `log state ${sub}`);
+  if (sub === "get") {
+    const cur2 = currentState(root, b, name);
+    if (typeof flags["json-out"] === "string") writeJsonOut(flags["json-out"], cur2 ? cur2.value ?? null : null);
+    if (!cur2) return { state: `${name} \xB7 not set` };
+    return { state: name, at: cur2.at ?? "", value: cur2.value ?? {} };
+  }
+  const declared = settings.log.state[name];
+  if (!declared) {
+    const known = Object.keys(settings.log.state);
+    throw new AxiError(`no state ${name} in log.state`, "VALIDATION_ERROR", [
+      known.length ? `Declared state: ${known.join(", ")}` : 'Declare it in opsbot.json: "log": {"state": {"' + name + '": ["<field>", ...]}}'
+    ]);
+  }
+  const vals = readStdinRecords("value", STATE_USAGE);
+  if (vals.length !== 1) throw usageError("log state set takes one JSON object", STATE_USAGE);
+  const value2 = clean(vals[0]);
+  const miss = missingFields(value2, declared);
+  if (miss.length) throw usageError(`the value has no ${miss.join(", ")}: state ${name} requires ${declared.join(", ")}`, STATE_USAGE);
+  const cur = currentState(root, b, name);
+  if (cur && canonical(cur.value ?? {}) === canonical(value2)) return { state: `${name} \xB7 unchanged` };
+  const said = write(root, b, settings, { state: [{ name, at: nowIso(), value: value2 }] }, `log: state ${name}`);
+  return { state: `${name} \xB7 set \xB7 ${said}` };
+}
+function clauseMatches(r, clause) {
+  let m = clause.match(/^\s*([^\s:=<>!~]+)\s+in\s+\((.*)\)\s*$/);
+  if (m) return m[2].split(",").map((x) => x.trim()).includes(scalar(r[m[1]]));
+  m = clause.match(/^([^:=<>!~]+):(present|empty)$/);
+  if (m) {
+    const v2 = r[m[1]];
+    const empty = v2 === void 0 || v2 === null || v2 === "" || Array.isArray(v2) && v2.length === 0;
+    return m[2] === "present" ? !empty : empty;
+  }
+  m = clause.match(/^([^:=<>!~]+)(!=|<=|>=|=|<|>|~)(.*)$/);
+  if (!m) return false;
+  const [, k, op, want] = m;
+  const v = r[k];
+  if (op === "~") {
+    try {
+      return new RegExp(want).test(scalar(v));
+    } catch {
+      return false;
+    }
+  }
+  const have = scalar(v);
+  if (op === "=") return v !== void 0 && have === want;
+  if (op === "!=") return have !== want;
+  if (v === void 0 || v === null) return false;
+  const a = Number(have);
+  const c = Number(want);
+  const cmp = Number.isFinite(a) && Number.isFinite(c) && have.trim() !== "" && want.trim() !== "" ? a - c : have < want ? -1 : have > want ? 1 : 0;
+  return op === "<" ? cmp < 0 : op === ">" ? cmp > 0 : op === "<=" ? cmp <= 0 : cmp >= 0;
+}
+function scalar(v) {
+  if (v === void 0 || v === null) return "";
+  return typeof v === "object" ? JSON.stringify(v) : String(v);
+}
+function writeJsonOut(path, v) {
+  const abs = isAbsolute(path) ? path : resolve10(process.cwd(), path);
+  writeFileSync14(abs, `${JSON.stringify(v)}
+`);
+}
+function parseSheet(name) {
+  if (name === "cycles" || name === "seen" || name === "outages" || name === "routines" || name === "posts" || name === "ledgers") return { sheet: name };
+  const m = name.match(/^(posts|ledgers)\/(.+)$/);
+  if (m && LOG_NAME_RE.test(m[2])) return { sheet: m[1], key: m[1] === "posts" ? "channel" : "ledger", value: m[2] };
+  if (name === "state" || name.startsWith("state/")) {
+    throw usageError("a baseline is read with log state get <name>", READ_USAGE);
+  }
+  throw usageError(`unknown sheet ${name}`, READ_USAGE, "sheets: cycles, seen, outages, routines, posts/<channel>, ledgers/<name>");
+}
+function fetchPeer(root, source, branch) {
+  const src = /^[a-z][a-z0-9+.-]*:\/\//i.test(source) || /^[^/]+@[^:]+:/.test(source) ? source : resolve10(process.cwd(), source);
+  const id = createHash5("sha256").update(src).digest("hex").slice(0, 16);
+  const dir = gitPath(root, join27("opsbot-peers", `${id}.git`));
+  if (!existsSync24(join27(dir, "HEAD"))) {
+    mkdirSync9(dir, { recursive: true });
+    const init = run("git", ["init", "-q", "--bare", dir], { timeoutMs: FETCH_TIMEOUT_MS });
+    if (init.code !== 0) throw new AxiError(`cannot make a place for ${source}'s log: ${init.stderr.trim().split("\n")[0] ?? ""}`, "CANNOT_RUN");
+  }
+  const f = run("git", ["-C", dir, "fetch", "-q", "--no-tags", src, `+refs/heads/${branch}:refs/heads/${branch}`], { timeoutMs: FETCH_TIMEOUT_MS });
+  if (f.code !== 0) {
+    throw new AxiError(`cannot fetch ${branch} from ${source}: ${(f.stderr.trim().split("\n").pop() ?? "").slice(0, 200)}`, "FETCH_FAILED", [
+      `Check that ${source} has a branch ${branch} (--branch names another)`
+    ]);
+  }
+  return dir;
+}
+function logRead(args) {
+  const filters = [];
+  const rest = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--filter") {
+      const v = args[++i];
+      if (v === void 0) throw usageError("--filter needs a clause", READ_USAGE);
+      filters.push(v);
+    } else if (a.startsWith("--filter=")) filters.push(a.slice("--filter=".length));
+    else rest.push(a);
+  }
+  const { positionals, flags } = parseArgs(rest, { value: ["since", "repo", "branch", "json-out"], maxPositionals: 1 }, READ_USAGE);
+  const name = positionals[0];
+  if (!name) throw usageError("log read needs a sheet", READ_USAGE);
+  const { sheet, key, value: value2 } = parseSheet(name);
+  let since = null;
+  if (typeof flags.since === "string") {
+    const ms = parseIso(flags.since);
+    if (ms === null) throw usageError(`--since must be an ISO time (got ${flags.since})`, READ_USAGE);
+    since = new Date(ms).toISOString().replace(".000Z", "Z");
+  }
+  const root = requireRoot();
+  const peer = typeof flags.repo === "string" ? flags.repo : null;
+  let where = root;
+  let b;
+  if (peer) {
+    b = typeof flags.branch === "string" ? flags.branch : DEFAULT_LOG_BRANCH;
+    where = fetchPeer(root, peer, b);
+  } else {
+    if (typeof flags.branch === "string") throw usageError("--branch names another repo's log branch; use it with --repo", READ_USAGE);
+    b = needBranch(root, "log read");
+  }
+  const clauses = [...key ? [`${key}=${value2}`] : [], ...since ? [`at>=${since}`] : [], ...filters];
+  let records = [];
+  if (haveLocal(where, b) && git(where, ["cat-file", "-e", `refs/heads/${b}:.gitsheets/${sheet}.toml`]).code === 0) {
+    const q = queryRecords(where, b, sheet, clauses);
+    if ("error" in q) throw new AxiError(q.error, "READ_FAILED");
+    records = q.records;
+  }
+  if (sheet === "cycles") {
+    records.push(...quietRuns(where, b).flatMap(quietLines).filter((r) => clauses.every((c) => clauseMatches(r, c))));
+  }
+  if (!peer) records.push(...readPending(root)[sheet].filter((r) => clauses.every((c) => clauseMatches(r, c))));
+  records.sort(byAt2);
+  const shown = records.map((r) => {
+    const o = { ...r };
+    if (sheet === "posts" || sheet === "ledgers") {
+      delete o.hash;
+      if (key) delete o[key];
+    }
+    return o;
+  });
+  if (typeof flags["json-out"] === "string") writeJsonOut(flags["json-out"], shown);
+  const out = {
+    count: `${shown.length} record${shown.length === 1 ? "" : "s"} in ${name}${since ? ` since ${since}` : ""}${peer ? ` \xB7 ${peer} ${b}` : ""}`
+  };
+  if (shown.length) out.records = shown.slice(-PREVIEW);
+  if (shown.length > PREVIEW && typeof flags["json-out"] !== "string") {
+    out.help = [`The newest ${PREVIEW} are shown; add --json-out <path> for all ${shown.length}`];
+  }
+  return out;
+}
+function logSeen(args) {
+  const { positionals } = parseArgs(args, { maxPositionals: 1 }, SEEN_USAGE);
+  const key = positionals[0];
+  if (!key) throw usageError("log seen needs a key", SEEN_USAGE);
+  const root = requireRoot();
+  const seen = keySeen(root, key);
+  setExit(seen ? 0 : 1);
+  return { seen: seen ? "yes" : "no" };
+}
+function logUsageHelp() {
+  return [APPEND_USAGE, STATE_USAGE, READ_USAGE, SEEN_USAGE, "log tail [--n N]"].map((u) => `${cliInvocation()} ${u}`);
+}
+var APPEND_USAGE, STATE_USAGE, READ_USAGE, SEEN_USAGE, UTC_RE, FETCH_TIMEOUT_MS, PREVIEW, byAt2;
+var init_logbranch = __esm({
+  "src/opsbot-core/commands/logbranch.ts"() {
+    "use strict";
+    init_dist2();
+    init_args();
+    init_backstop();
+    init_invocation();
+    init_log();
+    init_repo();
+    init_settings();
+    init_state();
+    APPEND_USAGE = "log append <ledger> | log append posts/<channel>   (JSON on stdin: one object, an array, or one per line)";
+    STATE_USAGE = "log state get <name> [--json-out <path>] | log state set <name>   (a JSON object on stdin)";
+    READ_USAGE = "log read <sheet> [--since <ISO time>] [--filter <clause>]... [--repo <path or remote>] [--branch <name>] [--json-out <path>]";
+    SEEN_USAGE = "log seen <key>";
+    UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+    FETCH_TIMEOUT_MS = 6e4;
+    PREVIEW = 20;
+    byAt2 = (a, b) => String(a.at ?? "") < String(b.at ?? "") ? -1 : String(a.at ?? "") > String(b.at ?? "") ? 1 : 0;
+  }
+});
+
 // src/opsbot-core/commands/simple.ts
-import { existsSync as existsSync24, readFileSync as readFileSync21 } from "node:fs";
-import { join as join27 } from "node:path";
+import { existsSync as existsSync25, readFileSync as readFileSync22 } from "node:fs";
+import { join as join28 } from "node:path";
 function nextDelayCommand(args) {
   parseArgs(args, {}, "next-delay");
   const root = requireRoot();
@@ -13428,10 +13827,12 @@ function detail2(l) {
 }
 function logCommand(args) {
   const [sub, ...rest] = args;
+  if (sub === "append") return logAppend(rest);
+  if (sub === "state") return logState(rest);
+  if (sub === "read") return logRead(rest);
+  if (sub === "seen") return logSeen(rest);
   if (sub !== "tail") {
-    throw new AxiError(sub ? `unknown log subcommand ${sub}` : "log needs a subcommand", "VALIDATION_ERROR", [
-      `${cliInvocation()} log tail [--n N]`
-    ]);
+    throw new AxiError(sub ? `unknown log subcommand ${sub}` : "log needs a subcommand", "VALIDATION_ERROR", logUsageHelp());
   }
   const usage = "log tail [--n N]";
   const { flags } = parseArgs(rest, { value: ["n"] }, usage);
@@ -13488,8 +13889,8 @@ function settingsCommand(args) {
     text = showHead(root, SETTINGS_FILE);
     where = `${SETTINGS_FILE} at HEAD`;
   } else {
-    const p = join27(root, SETTINGS_FILE);
-    text = existsSync24(p) ? readFileSync21(p, "utf8") : null;
+    const p = join28(root, SETTINGS_FILE);
+    text = existsSync25(p) ? readFileSync22(p, "utf8") : null;
     where = SETTINGS_FILE;
   }
   if (text === null) {
@@ -13498,10 +13899,10 @@ function settingsCommand(args) {
     ]);
   }
   const { raw, problems } = parseSettingsText(text, where);
-  const claude = join27(root, ".claude", "settings.json");
-  if (raw && existsSync24(claude)) {
+  const claude = join28(root, ".claude", "settings.json");
+  if (raw && existsSync25(claude)) {
     try {
-      const cs = JSON.parse(readFileSync21(claude, "utf8"));
+      const cs = JSON.parse(readFileSync22(claude, "utf8"));
       const loop = raw.loop ?? {};
       for (const k of ["autoMemoryEnabled", "autoMemoryDirectory"]) {
         if (cs && cs[k] !== void 0) {
@@ -13556,6 +13957,7 @@ var init_simple = __esm({
     init_lifecycle();
     init_repo();
     init_log();
+    init_logbranch();
     init_settings();
     init_routines2();
     init_record();

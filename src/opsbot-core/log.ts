@@ -11,6 +11,12 @@
  *   seen      seen/YYYY/MM/DD/<key hash>              one record per seen key
  *   outages   outages/YYYY/MM/DD/<hhmmss>-<kind>-<start|end>   one record per outage line
  *   routines  routines/<routine>/YYYY/MM/DD/<hhmmss>            one record per routine run
+ *   posts     posts/<channel>/YYYY/MM/DD/<hhmmss>-<hash>        one record per post attempt
+ *   ledgers   ledgers/<name>/YYYY/MM/DD/<hhmmss>-<hash>         one record per action a script took
+ *   state     state/<name>                                      one baseline per name, replaced
+ *
+ * A sheet whose config is not yet on the branch (a branch made before the sheet existed) has it
+ * added by the first commit that writes the sheet, in that same commit.
  *
  * Every log commit after the root carries `Program`, `Watermark` and `Check` trailers; a quiet
  * commit adds `Quiet-Cycles`, `Quiet-Since`, `Quiet-Until` and `Since`. The second parent (the
@@ -39,8 +45,8 @@ const CACHE = "opsbot-log-cache.json";
 const GS_TIMEOUT_MS = 120_000;
 const PUSH_TIMEOUT_MS = 60_000;
 
-export type Sheet = "cycles" | "seen" | "outages" | "routines";
-export const SHEETS: Sheet[] = ["cycles", "outages", "seen", "routines"];
+export type Sheet = "cycles" | "seen" | "outages" | "routines" | "posts" | "ledgers" | "state";
+export const SHEETS: Sheet[] = ["cycles", "outages", "seen", "routines", "posts", "ledgers", "state"];
 export type Rec = Record<string, unknown>;
 
 // a path component from `at`, guarded: while gitsheets walks a range on the date bucket it
@@ -72,6 +78,18 @@ export const SHEET_CONFIGS: Record<Sheet, { path: string; schema: Rec }> = {
     path: `\${{ routine }}/${DAY}/${HHMMSS}`,
     schema: { type: "object", required: ["at", "routine"], properties: { at: AT, routine: { type: "string" } } },
   },
+  posts: {
+    path: `\${{ channel }}/${DAY}/${HHMMSS}-\${{ hash }}`,
+    schema: { type: "object", required: ["at", "channel", "hash"], properties: { at: AT, channel: { type: "string" }, hash: { type: "string" } } },
+  },
+  ledgers: {
+    path: `\${{ ledger }}/${DAY}/${HHMMSS}-\${{ hash }}`,
+    schema: { type: "object", required: ["at", "ledger", "hash"], properties: { at: AT, ledger: { type: "string" }, hash: { type: "string" } } },
+  },
+  state: {
+    path: "${{ name }}",
+    schema: { type: "object", required: ["name", "value"], properties: { name: { type: "string" }, at: AT, value: { type: "object" } } },
+  },
 };
 
 /** A record's identity within its sheet: what its path is made of. */
@@ -80,6 +98,9 @@ function ident(sheet: Sheet, r: Rec): string {
   if (sheet === "seen") return String(r.hash ?? "");
   if (sheet === "cycles") return `${at}|${String(r.outcome ?? "")}`;
   if (sheet === "outages") return `${at}|${String(r.kind ?? "")}|${String(r.edge ?? "")}`;
+  if (sheet === "posts") return `${String(r.channel ?? "")}|${at}|${String(r.hash ?? "")}`;
+  if (sheet === "ledgers") return `${String(r.ledger ?? "")}|${at}|${String(r.hash ?? "")}`;
+  if (sheet === "state") return String(r.name ?? "");
   return `${String(r.routine ?? "")}|${at}`;
 }
 
@@ -177,7 +198,7 @@ export function programHead(root: string): string | null {
  * The local log branch, taken from the remote when only the remote has it (a fresh clone resumes
  * from what was pushed). Never initialises. Returns whether the branch exists locally.
  */
-function haveLocal(root: string, b: string): boolean {
+export function haveLocal(root: string, b: string): boolean {
   if (revParse(root, ref(b))) return true;
   const remote = revParse(root, `refs/remotes/origin/${b}`);
   if (!remote) return false;
@@ -252,16 +273,12 @@ export function isOpenQuiet(tip: Tip | null, nowMs: number): boolean {
 
 // ------------------------------------------------------------------ staged lines
 
-export interface Pending {
-  cycles: Rec[];
-  seen: Rec[];
-  outages: Rec[];
-  routines: Rec[];
+export type Pending = Record<Sheet, Rec[]> & {
   /** A watermark a `check --no-commit` advanced, for the next commit's trailer. */
   watermark?: string;
-}
+};
 
-const emptyPending = (): Pending => ({ cycles: [], seen: [], outages: [], routines: [] });
+const emptyPending = (): Pending => ({ cycles: [], seen: [], outages: [], routines: [], posts: [], ledgers: [], state: [] });
 
 export function readPending(root: string): Pending {
   try {
@@ -289,7 +306,15 @@ function writePending(root: string, p: Pending): void {
 /** Stage records to ride the next log commit. */
 export function stage(root: string, add: Partial<Pending>): void {
   const p = readPending(root);
-  for (const s of SHEETS) if (add[s]?.length) p[s].push(...add[s]!.map(clean));
+  for (const s of SHEETS) {
+    if (!add[s]?.length) continue;
+    // a baseline is one record: a later set replaces the one staged before it
+    if (s === "state") {
+      const names = new Set(add[s]!.map((r) => ident(s, r)));
+      p[s] = p[s].filter((r) => !names.has(ident(s, r)));
+    }
+    p[s].push(...add[s]!.map(clean));
+  }
   if (add.watermark) p.watermark = add.watermark;
   writePending(root, p);
 }
@@ -334,22 +359,38 @@ export function seenRecords(keys: string[], at: string): Rec[] {
  * additional parent on an orphan commit, so the program commit is the second parent of the first
  * log commit after the root instead. */
 function initBranch(root: string, b: string): string | null {
+  let tip: string | null = null;
+  for (const s of SHEETS) {
+    const why = initSheet(root, b, s, ["--message", "log: the sheets of the loop's log", ...(tip ? ["--replace", tip] : [])]);
+    if (why) return why;
+    tip = revParse(root, ref(b));
+  }
+  return null;
+}
+
+/** Write one sheet's config to the branch with the given commit flags. Null, or why not. */
+function initSheet(root: string, b: string, s: Sheet, commitArgs: string[]): string | null {
   const dir = mkdtempSync(join(tmpdir(), "opsbot-log-init-"));
   try {
-    let tip: string | null = null;
-    for (const s of SHEETS) {
-      const schema = join(dir, `${s}.json`);
-      writeFileSync(schema, JSON.stringify(SHEET_CONFIGS[s].schema));
-      const args = ["init", s, "--path", SHEET_CONFIGS[s].path, "--schema", schema, "--message", "log: the sheets of the loop's log"];
-      if (tip) args.push("--replace", tip);
-      const r = gs(root, b, args);
-      if (r.code !== 0) return `gitsheets-axi init ${s} failed: ${r.message}`;
-      tip = revParse(root, ref(b));
-    }
-    return null;
+    const schema = join(dir, `${s}.json`);
+    writeFileSync(schema, JSON.stringify(SHEET_CONFIGS[s].schema));
+    const r = gs(root, b, ["init", s, "--path", SHEET_CONFIGS[s].path, "--schema", schema, ...commitArgs]);
+    return r.code === 0 ? null : `gitsheets-axi init ${s} failed: ${r.message}`;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/** The sheets whose config is on the branch tip. One git call. */
+function sheetConfigs(root: string, b: string): Set<Sheet> {
+  const r = git(root, ["ls-tree", "--name-only", `${ref(b)}:.gitsheets`]);
+  const out = new Set<Sheet>();
+  if (r.code !== 0) return out;
+  for (const n of r.stdout.split("\n")) {
+    const m = n.trim().match(/^(.+)\.toml$/);
+    if (m && (SHEETS as string[]).includes(m[1]!)) out.add(m[1] as Sheet);
+  }
+  return out;
 }
 
 /** The local branch exists after this, taken from the remote or made new. Null, or why not. */
@@ -414,6 +455,14 @@ export function writeLog(root: string, b: string, w: Write, session = ""): Write
       const r = gs(root, b, ["commit", "--allow-empty", "--message", w.subject, ...also, ...trailers]);
       if (r.code !== 0) return { ok: false, why: `gitsheets-axi commit failed: ${r.message}` };
       return { ok: true, hash: revParse(root, ref(b)) ?? "" };
+    }
+    // a sheet the branch has no config for yet (made before the sheet existed) gets one, in this commit
+    const present = sheetConfigs(root, b);
+    for (const s of todo.filter((x) => !present.has(x))) {
+      const why = initSheet(root, b, s, ["--message", w.subject, ...trailers, ...(made ? ["--replace", made] : also)]);
+      if (why) return { ok: false, why };
+      const now = revParse(root, ref(b));
+      if (now && now !== (made ?? tip.hash)) made = now;
     }
     for (const s of todo) {
       const input = w.records[s]!.map((x) => JSON.stringify(clean(x))).join("\n");
@@ -599,18 +648,26 @@ function noteWritten(root: string, b: string, before: Partial<Record<Sheet, stri
 }
 
 function query(root: string, b: string, sheet: Sheet, filter: string | null): Rec[] | null {
+  const r = queryRecords(root, b, sheet, filter ? [filter] : []);
+  return "error" in r ? null : r.records;
+}
+
+/**
+ * One `gitsheets-axi query` of a sheet on the branch, with gitsheets filter clauses. A clause on
+ * `at` (`at>=<time>`) walks only the days from that time on: the day is the path's first bucket.
+ */
+export function queryRecords(root: string, b: string, sheet: Sheet, filters: string[]): { records: Rec[] } | { error: string } {
   const dir = mkdtempSync(join(tmpdir(), "opsbot-log-q-"));
   try {
     const out = join(dir, "rows.json");
-    const args = ["query", sheet, "--limit", "1", `--json-out=${out}`];
-    if (filter) args.push("--filter", filter);
+    const args = ["query", sheet, "--limit", "1", `--json-out=${out}`, ...filters.flatMap((f) => ["--filter", f])];
     const r = gs(root, b, args);
-    if (r.code !== 0) return null;
-    if (!existsSync(out)) return [];
+    if (r.code !== 0) return { error: `gitsheets-axi query ${sheet} failed: ${r.message}` };
+    if (!existsSync(out)) return { records: [] };
     const v = JSON.parse(readFileSync(out, "utf8"));
-    return Array.isArray(v) ? (v as Rec[]) : [];
-  } catch {
-    return null;
+    return { records: Array.isArray(v) ? (v as Rec[]) : [] };
+  } catch (e) {
+    return { error: `gitsheets-axi query ${sheet} could not be read: ${(e as Error).message}` };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

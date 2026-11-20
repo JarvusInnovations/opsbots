@@ -32,6 +32,11 @@ commit, deleting its sync hooks) is that bot's work, not this plan's.
    adopting bot had an 8 MB probe log tracked, uncommitted for weeks, dirtying its tree) and
    every baseline a hook reads from the working tree, and stops until each is assigned: a
    ledger, a state record, or untracked and ignored.
+   The shapes are `log-branch-ledgers`': a baseline becomes a `state` record `{name, at, value}`,
+   a post-log line a `posts/<channel>` record keeping its own `at`, an unparsed line a record of
+   ledger `unparsed` in the `ledgers` sheet; written through the log module, not `log append`
+   (whose declared-name check does not apply). The Slack and WhatsApp skill specs' listener
+   passages still name `logs/intake/seen`; step 5 rewrites them.
 2. **One writer at a time.** A bot writes the old way until the removal commit is in its
    checkout; `cycle begin` picks the writer from `log.branch` in the checked-out settings.
 3. **`repo_sync`.** `pull` (default) fast-forwards at `cycle begin` when the tree is clean and

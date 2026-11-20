@@ -256,7 +256,7 @@ when it is settled. After two disagreements, ask the operator in the same chat w
 | `peers` | `[{name, user, chats}]`, `user` a number, `chats` group ids | none |
 | `peer_turns`, `peer_posts_per_hour` | the loop guard's limits | `6`, `20` |
 | `screen` | the screen (Posting, above) | unset: nothing screened, the class still logged |
-| `post_log` | the decision log, a repo path | `logs/whatsapp-posts.jsonl` |
+| `post_log` | the decision log, a repo path; with `log.branch` set, unused: the log is `posts/whatsapp` on the log branch (`opsbot-core log read posts/whatsapp`) | `logs/whatsapp-posts.jsonl` |
 | `lookback` | how many events before the cursor the reader re-reads | `200` |
 | `ack_timeout_minutes` | how long the waker keeps nudging and waiting for the seen key | `30` |
 | `wake_grace_seconds` | how long the waker waits for the session's own monitor before it nudges; `0` nudges at once (`status` says `differs` for anything but a whole number 0 or more) | `20` |
