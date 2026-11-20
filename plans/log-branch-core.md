@@ -50,25 +50,25 @@ unaffected.
 
 ## Validation
 
-- [ ] With `log.branch` set, a cycle that found something makes one log commit and leaves the
+- [x] With `log.branch` set, a cycle that found something makes one log commit and leaves the
       program branch's head and working tree unchanged.
 - [ ] Two records of one sheet made at the same minute and second of different hours of a day
       are two files (`outages`, `routines`).
 - [ ] The root holds only the sheet configs; the second parent is on the first log commit
       after it and on the first after the program head moved, and on no other; every log
       commit after the root has `Program`, `Watermark` and `Check`.
-- [ ] Ten quiet cycles in an hour are one commit with `Quiet-Cycles: 10`; the hour turning and
+- [x] Ten quiet cycles in an hour are one commit with `Quiet-Cycles: 10`; the hour turning and
       a non-quiet cycle each seal it; a sealed or pushed commit is never replaced.
-- [ ] `cycle end` pushes sealed commits only; the open quiet tip stays local; a refused push
+- [x] `cycle end` pushes sealed commits only; the open quiet tip stays local; a refused push
       fails the check and loses nothing.
-- [ ] A cold start in a fresh clone resumes from the newest pushed `Watermark` and reports
+- [x] A cold start in a fresh clone resumes from the newest pushed `Watermark` and reports
       nothing twice.
-- [ ] The watchdog, `next-delay`, the sleep timer, the cold-start pack, the fast-check window
+- [x] The watchdog, `next-delay`, the sleep timer, the cold-start pack, the fast-check window
       and the wake backstop give the same answers from the branch as from the files, on a
       recorded run replayed both ways.
-- [ ] A hook that times out leaves a record on the log branch before the cycle ends, and the
+- [x] A hook that times out leaves a record on the log branch before the cycle ends, and the
       watchdog message quotes it.
-- [ ] With `log.branch` unset, every existing test passes unchanged.
+- [x] With `log.branch` unset, every existing test passes unchanged.
 
 ## Risks
 
@@ -76,3 +76,44 @@ unaffected.
   one; the fast cycle's budget in `specs/skills/opsbot-core.md` must still hold.
 - Two processes writing the branch at once (a cycle and a hand-run script). The log module
   retries once on `TIP_MISMATCH` for non-quiet writes.
+
+## Notes
+
+- **Two boxes stay open, both blocked by gitsheets, not worked around.** (1) Same blob:
+  gitsheets requires every path-template field in the record (no exemption since 2.9), so a
+  record's `at` is in its body and no two cycles share a blob. (2) Second parent on the root:
+  `--also-parent` on an orphan commit is refused (`TRANSACTION_ERROR`), so the root is a
+  parentless setup commit with the sheet configs and no trailers, and the program commit is the
+  second parent of the first log commit after it. The spec needs a decision on both.
+- **Trailers the spec is silent on:** quiet commits also carry `Quiet-Until` (the last cycle's
+  time; a fast check holds `Watermark`, so it cannot say when a fast run was alive) and `Since`
+  (the window the last check read, which the fast-check window reuses). A quiet run is replaced
+  only by a quiet check of the same `Check` kind on the same `Program`, so the last full check
+  is never lost under a fast one.
+- **One record per line, not per cycle.** A cycle that found something writes its check line and
+  its finish line as two `cycles` records in its one commit (`<mmss>-new`, `<mmss>-finished`),
+  so the readers get the file writer's exact lines and liveness is the finish time. Sleep, wake
+  and memory-review lines are `cycles` records too; outage ends are `outages` records of kind
+  `end`.
+- **Staging.** What lands between `check` and `cycle end`, and what the watchdog, `outage`,
+  `memory review --done` and `routines` write outside a cycle, is staged in
+  `<git dir>/opsbot-log-pending.json` and rides the next log commit, as uncommitted log lines
+  rode the next cycle commit before. Readers include it.
+- **Reads.** The tip (liveness, watermark) is one `git log` call; when the tip is a sleep commit
+  the same call looks a few commits down. Records come from `gitsheets-axi query --json-out`,
+  cached per sheet tree in `<git dir>/opsbot-log-cache.json`; the writer updates the cache with
+  what it wrote, so a running bot never re-queries its own writes.
+- **gitsheets quirk:** an expression on the date-bucket field (`at.slice(11,13)` for the hour)
+  receives a Date while a range query walks the partitions and fails the query; the sheet
+  configs guard it with `typeof at == 'string'`. The spec's `outages` and `routines` paths have
+  no hour, so two records of one kind at the same minute and second of different hours collide.
+- **Program branch.** Memory and `commit_paths` files a cycle changed are still committed there
+  (`chore(bot): …`) until `log-branch-ledgers` and `log-branch-migrate`; with nothing changed the
+  program branch's head does not move and it is not pushed.
+- **Cost, measured** (local bare remote, a shared host under load ~12, medians of 12 runs):
+  a quiet `cycle begin` 0.5 s with the files, 0.9 s on the branch (one `gitsheets-axi commit`,
+  about 0.7 s of node start-up each, plus a push only when a sealed commit is new); a busy cycle
+  (`begin` + `end`) 0.9 s with the files, 2.7 s on the branch (one upsert per sheet written,
+  usually `cycles` and `seen`, and the push). A fast cycle stays in single seconds; the cost is
+  per gitsheets-axi process, so a sheet less per cycle or an in-process gitsheets would cut it.
+
