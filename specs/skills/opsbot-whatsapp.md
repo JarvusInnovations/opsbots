@@ -59,7 +59,7 @@ In the repo:
 | `peers` | other bots heard as peers: `[{name, user, chats}]`, `user` a phone number, `chats` the group ids where it is heard | none |
 | `peer_turns`, `peer_posts_per_hour` | the loop guard's limits, as in opsbot-slack | `6`, `20` |
 | `screen` | the screen, same keys and contract as opsbot-slack | unset: nothing is screened |
-| `post_log` | the post command's decision log | `logs/whatsapp-posts.jsonl` |
+| `post_log` | the post command's decision log; with `log.branch` set in opsbot.json it is unused: each line is a record of `posts/whatsapp` on the log branch, written with `opsbot-core log append posts/whatsapp` and counted for the loop guard with `opsbot-core log read`. A line that cannot be written after the send is a warning on stderr and the post still reports what happened | `logs/whatsapp-posts.jsonl` |
 | `wake_grace_seconds` | how long the waker waits for the session's own monitor before it nudges; `0` nudges at once | `20` |
 | `lookback` | how many events before the cursor the reader re-reads | `200` |
 
