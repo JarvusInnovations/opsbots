@@ -152,7 +152,28 @@ describe("a cycle on the log branch", () => {
     expect(rest.map((c) => c.trailers.Program)).toEqual([p1, p1, p2, p2]);
   });
 
-  test.todo("two cycles with the same outcome and counts share one blob (blocked: gitsheets keeps a path's fields in the record, so `at` is in the body)");
+  test("two records of one sheet at the same minute and second of different hours are two files", () => {
+    const b = bot();
+    begin(b, "2026-03-02T15:00:00Z");
+    for (const [h, n] of [["15", "1"], ["16", "2"]]) {
+      expect(cli(b, ["outage", "record", "refused", "--started", `2026-03-02T${h}:05:00Z`, "--ended", `2026-03-02T${h}:06:00Z`, "--note", `no ${n}`], { now: `2026-03-02T${h}:06:07Z` }).code).toBe(0);
+      expect(cli(b, ["routines", "done", "memory-review", "--notes", `run ${n}`, "--at", `2026-03-02T${h}:06:07Z`], { now: `2026-03-02T${h}:06:07Z` }).code).toBe(0);
+    }
+    expect(cli(b, ["outage", "end"], { now: "2026-03-02T16:30:00Z" }).code).toBeLessThan(2);
+    begin(b, "2026-03-02T17:00:00Z");
+    const files = git(b.root, "ls-tree", "-r", "--name-only", B).split("\n");
+    expect(files.filter((f) => f.startsWith("outages/") && f.includes("refused-start"))).toEqual([
+      "outages/2026/03/02/150607-refused-start.toml",
+      "outages/2026/03/02/160607-refused-start.toml",
+    ]);
+    expect(files.filter((f) => f.startsWith("routines/"))).toEqual([
+      "routines/memory-review/2026/03/02/150607.toml",
+      "routines/memory-review/2026/03/02/160607.toml",
+    ]);
+    const runs = cli(b, ["routines", "history", "memory-review"], { now: "2026-03-02T17:01:00Z" }).out;
+    expect(runs).toContain("run 1");
+    expect(runs).toContain("run 2");
+  });
 
   test("ten quiet cycles in an hour are one commit; the hour and a cycle that found something seal it", () => {
     const b = bot();
@@ -288,7 +309,7 @@ describe("a cycle on the log branch", () => {
     // not a quiet commit: it carries a record
     expect(tip.trailers["Quiet-Cycles"]).toBeUndefined();
     const files = git(b.root, "show", "--name-only", "--format=", tip.hash);
-    expect(files).toContain("outages/2026/03/02/0600-refused.toml");
+    expect(files).toContain("outages/2026/03/02/150600-refused-start.toml");
     expect(files).toContain("cycles/2026/03/02/15/1000-nothing-new.toml");
     expect(existsSync(join(b.root, ".git", "opsbot-log-pending.json"))).toBe(false);
   });

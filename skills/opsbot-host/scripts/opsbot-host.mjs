@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-host/version.ts"() {
     "use strict";
-    VERSION = true ? "78b0704" : "dev";
+    VERSION = true ? "72bbf8d" : "dev";
   }
 });
 
@@ -2121,7 +2121,7 @@ function versionAtLeast(a, b) {
   }
   return true;
 }
-var MIN_GITSHEETS, HH, MMSS, DAY, AT, SHEET_CONFIGS;
+var MIN_GITSHEETS, HH, MMSS, HHMMSS, DAY, AT, SHEET_CONFIGS;
 var init_log = __esm({
   "src/opsbot-core/log.ts"() {
     "use strict";
@@ -2129,6 +2129,7 @@ var init_log = __esm({
     MIN_GITSHEETS = "2.15.0";
     HH = "${{ typeof at == 'string' ? at.slice(11,13) : wild }}";
     MMSS = "${{ typeof at == 'string' ? at.slice(14,16) + at.slice(17,19) : wild }}";
+    HHMMSS = "${{ typeof at == 'string' ? at.slice(11,13) + at.slice(14,16) + at.slice(17,19) : wild }}";
     DAY = "${{ at: YYYY/MM/DD }}";
     AT = { type: "string", format: "date-time" };
     SHEET_CONFIGS = {
@@ -2141,11 +2142,15 @@ var init_log = __esm({
         schema: { type: "object", required: ["at", "hash", "key"], properties: { at: AT, hash: { type: "string" }, key: { type: "string" } } }
       },
       outages: {
-        path: `${DAY}/${MMSS}-\${{ kind }}`,
-        schema: { type: "object", required: ["at", "kind", "outcome"], properties: { at: AT, kind: { type: "string" }, outcome: { type: "string" } } }
+        path: `${DAY}/${HHMMSS}-\${{ kind }}-\${{ edge }}`,
+        schema: {
+          type: "object",
+          required: ["at", "kind", "edge", "outcome"],
+          properties: { at: AT, kind: { type: "string" }, edge: { type: "string", enum: ["start", "end"] }, outcome: { type: "string" } }
+        }
       },
       routines: {
-        path: `\${{ routine }}/${DAY}/${MMSS}`,
+        path: `\${{ routine }}/${DAY}/${HHMMSS}`,
         schema: { type: "object", required: ["at", "routine"], properties: { at: AT, routine: { type: "string" } } }
       }
     };

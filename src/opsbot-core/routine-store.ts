@@ -466,9 +466,9 @@ export function changedRunFiles(root: string, s: Settings, already: string[] = [
 
 // ------------------------------------------------------------ runs on the log branch
 
-/** Where a run's record is on the log branch: `<branch>:routines/<routine>/YYYY/MM/DD/<mmss>`. */
+/** Where a run's record is on the log branch: `<branch>:routines/<routine>/YYYY/MM/DD/<hhmmss>`. */
 function branchRunFile(branch: string, routine: string, at: string): string {
-  return `${branch}:routines/${routine}/${at.slice(0, 4)}/${at.slice(5, 7)}/${at.slice(8, 10)}/${at.slice(14, 16)}${at.slice(17, 19)}`;
+  return `${branch}:routines/${routine}/${at.slice(0, 4)}/${at.slice(5, 7)}/${at.slice(8, 10)}/${at.slice(11, 13)}${at.slice(14, 16)}${at.slice(17, 19)}`;
 }
 
 /** The `routines` records of the log branch (and those staged) as runs. */
