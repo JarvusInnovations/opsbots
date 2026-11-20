@@ -1,0 +1,128 @@
+{
+  "2026-03-02T16:16:00Z": {
+    "last": "2026-03-02T16:15:00Z",
+    "liveness": "2026-03-02T16:15:00Z",
+    "watermark": "2026-03-02T16:15:00Z",
+    "next": {
+      "seconds": 600,
+      "reason": "arrived in the last hour"
+    },
+    "silence": "2026-03-02T16:15:00Z",
+    "sleep": true,
+    "fast": {
+      "fast": true,
+      "mode": "fast",
+      "inputs": [
+        "10-file-stream"
+      ],
+      "since": "2026-03-02T15:35:00Z",
+      "fullDue": "2026-03-02T16:25:00Z",
+      "files": [
+        "w.log"
+      ]
+    },
+    "pack": [
+      "cycles 13 · nothing new 10 · new 2 · degraded 1 · items 3",
+      "longest gap 20 min, from 2026-03-02T15:45:00Z",
+      "slept 4 times, 31 min in all, asleep now",
+      "last cycle 2026-03-02T16:15:00Z · nothing-new",
+      "last degraded 2026-03-02T15:10:00Z: 10-file-stream",
+      "outages: none recorded"
+    ],
+    "outages": [],
+    "hook": null,
+    "begunSince": [
+      true,
+      false
+    ],
+    "seen": [
+      true,
+      true,
+      false
+    ]
+  },
+  "2026-03-02T16:40:00Z": {
+    "last": "2026-03-02T16:15:00Z",
+    "liveness": "2026-03-02T16:15:00Z",
+    "watermark": "2026-03-02T16:15:00Z",
+    "next": {
+      "seconds": 600,
+      "reason": "quiet, working hours"
+    },
+    "silence": "2026-03-02T16:15:00Z",
+    "sleep": true,
+    "fast": {
+      "fast": true,
+      "mode": "fast",
+      "inputs": [
+        "10-file-stream"
+      ],
+      "since": "2026-03-02T15:35:00Z",
+      "fullDue": "2026-03-02T16:25:00Z",
+      "files": [
+        "w.log"
+      ]
+    },
+    "pack": [
+      "cycles 13 · nothing new 10 · new 2 · degraded 1 · items 3",
+      "longest gap 20 min, from 2026-03-02T15:45:00Z",
+      "slept 4 times, 55 min in all, asleep now",
+      "last cycle 2026-03-02T16:15:00Z · nothing-new",
+      "last degraded 2026-03-02T15:10:00Z: 10-file-stream",
+      "outages: none recorded"
+    ],
+    "outages": [],
+    "hook": null,
+    "begunSince": [
+      true,
+      false
+    ],
+    "seen": [
+      true,
+      true,
+      false
+    ]
+  },
+  "2026-03-02T17:30:00Z": {
+    "last": "2026-03-02T16:15:00Z",
+    "liveness": "2026-03-02T16:15:00Z",
+    "watermark": "2026-03-02T16:15:00Z",
+    "next": {
+      "seconds": 1740,
+      "reason": "quiet, otherwise (capped at 29 min: a monitor's limit)"
+    },
+    "silence": "2026-03-02T16:15:00Z",
+    "sleep": true,
+    "fast": {
+      "fast": true,
+      "mode": "fast",
+      "inputs": [
+        "10-file-stream"
+      ],
+      "since": "2026-03-02T15:35:00Z",
+      "fullDue": "2026-03-02T16:25:00Z",
+      "files": [
+        "w.log"
+      ]
+    },
+    "pack": [
+      "cycles 13 · nothing new 10 · new 2 · degraded 1 · items 3",
+      "longest gap 20 min, from 2026-03-02T15:45:00Z",
+      "slept 4 times, 105 min in all, asleep now",
+      "last cycle 2026-03-02T16:15:00Z · nothing-new",
+      "last degraded 2026-03-02T15:10:00Z: 10-file-stream",
+      "outages: none recorded"
+    ],
+    "outages": [],
+    "hook": null,
+    "begunSince": [
+      true,
+      false
+    ],
+    "seen": [
+      true,
+      true,
+      false
+    ]
+  }
+}

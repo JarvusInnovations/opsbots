@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-host/version.ts"() {
     "use strict";
-    VERSION = true ? "02bb0cd" : "dev";
+    VERSION = true ? "90358f2" : "dev";
   }
 });
 
@@ -2111,6 +2111,15 @@ var init_args = __esm({
   }
 });
 
+// src/opsbot-core/legacy.ts
+var init_legacy = __esm({
+  "src/opsbot-core/legacy.ts"() {
+    "use strict";
+    init_invocation2();
+    init_repo();
+  }
+});
+
 // src/opsbot-core/log.ts
 function versionAtLeast(a, b) {
   const pa = a.split(".").map(Number);
@@ -2125,6 +2134,9 @@ var MIN_GITSHEETS, HH, MMSS, HHMMSS, DAY, AT, SHEET_CONFIGS;
 var init_log = __esm({
   "src/opsbot-core/log.ts"() {
     "use strict";
+    init_dist2();
+    init_invocation2();
+    init_legacy();
     init_repo();
     MIN_GITSHEETS = "2.15.0";
     HH = "${{ typeof at == 'string' ? at.slice(11,13) : wild }}";

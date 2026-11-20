@@ -1,14 +1,16 @@
 import { pickAgent } from "../src/opsbot-core/runtime";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { cli, cliAsync, makeBot, readLines, type Bot } from "./helpers";
+import { cli, cliAsync, makeBot, outagesOf, type Bot } from "./helpers";
+
+// every cycle writes through gitsheets-axi (the log branch): a test of several takes seconds
+setDefaultTimeout(120_000);
 
 let bot: Bot;
 afterEach(() => bot?.cleanup());
 
 const T0 = "2026-03-02T15:00:00Z";
-const outagesOf = (b: Bot) => readLines(join(b.root, "logs/outages.jsonl"));
 
 function fakeRuntime(b: Bot, state: Record<string, unknown>): string {
   const f = join(b.home, "runtime.json");
@@ -53,7 +55,8 @@ describe("watchdog", () => {
     cli(bot, ["check"], { now: "2026-03-02T16:30:00Z" });
     const alive = cli(bot, ["watchdog"], { now: "2026-03-02T16:35:00Z" });
     expect(alive.out).toContain("ended 2026-03-02T16:30:00Z");
-    expect(outagesOf(bot).at(-1)!.outcome).toBe("outage-end");
+    // the outage now has its end
+    expect(outagesOf(bot).at(-1)!.ended).toBe("2026-03-02T16:30:00Z");
   });
 
   test("with no escalation script it says it cannot tell the operator (exit 1) and will retry", () => {

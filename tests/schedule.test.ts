@@ -18,7 +18,7 @@ import {
 } from "../src/opsbot-core/wake";
 
 // Each test runs the CLI several times; a loaded runner needs more than the 5 s default.
-setDefaultTimeout(30000);
+setDefaultTimeout(120000);
 
 let bot: Bot;
 afterEach(() => bot?.cleanup());
