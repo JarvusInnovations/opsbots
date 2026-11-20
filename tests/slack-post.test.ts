@@ -13,6 +13,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { encode } from "@toon-format/toon";
+import { commitOnBranch, coreForScripts } from "./helpers";
 
 const SKILL = resolve(import.meta.dir, "..", "skills", "opsbot-slack");
 const CLI = join(SKILL, "scripts/opsbot-slack");
@@ -199,6 +200,21 @@ esac
     log: () => (existsSync(join(root, "logs/slack-posts.jsonl")) ? readFileSync(join(root, "logs/slack-posts.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)) : []),
     mode: (m: string) => writeFileSync(join(dir, "screen-mode"), m),
   };
+}
+
+/** A bot on the log branch: the real core and gitsheets-axi behind the post script. */
+function onBranch(b: ReturnType<typeof bot>) {
+  commitOnBranch(b.root, { branch: "opsbot/log" });
+  const c = coreForScripts(b.dir);
+  Object.assign(b.env, c.env, { PATH: `${b.env.PATH}:${c.path}` });
+  const read = () => {
+    const f = join(b.dir, "posts.json");
+    rmSync(f, { force: true });
+    const r = spawnSync(c.env.OPSBOT_CORE!, ["log", "read", "posts/slack", "--json-out", f], { cwd: b.root, encoding: "utf8", env: b.env });
+    expect(r.status).toBe(0);
+    return JSON.parse(readFileSync(f, "utf8")) as Array<Record<string, unknown>>;
+  };
+  return { read };
 }
 
 const SCREEN_ALL = { screen: { command: "bin/screen", policy: { internal: ["policy/internal.md"], external: ["policy/internal.md", "policy/external.md"] } } };
@@ -756,5 +772,56 @@ describe("peer bots: the loop guard", () => {
     expect(r.code).toBe(1);
     expect(r.out).toMatch(new RegExp(`^ok\\s+peers\\s+deskbot \\(${PEER}\\) in ${PCHAN}`, "m"));
     expect(bot({ escalate_dm: ESC }, { audience }).run(["status"]).out).not.toMatch(/peer/);
+  });
+
+  test("with log.branch the hourly cap counts from the branch; a log it cannot read refuses", () => {
+    const b = bot({ ...PEERS, peer_posts_per_hour: 2 }, { audience });
+    onBranch(b);
+    expect(b.run(["post", PCHAN, `<@${PEER}> can you take the batch?`]).code).toBe(0);
+    expect(b.run(["post", PCHAN, `<@${PEER}> and the next one?`]).code).toBe(0);
+    const third = b.run(["post", PCHAN, `<@${PEER}> one more?`]);
+    expect(third.code).toBe(6);
+    expect(third.json).toMatchObject({ peer_guard: "hourly", error: `2 posts to peers in ${PCHAN} in the last hour; ask the operator` });
+    const broken = join(b.dir, "broken-gitsheets");
+    writeFileSync(broken, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const blind = b.run(["post", PCHAN, `<@${PEER}> and?`], { env: { OPSBOT_GITSHEETS_AXI: broken } });
+    expect(blind.code).toBe(6);
+    expect(blind.json.error).toContain("cannot be read");
+    expect(posted(b)).toHaveLength(2);
+  });
+});
+
+describe("post with log.branch: the decision log is the posts/slack sheet", () => {
+  setDefaultTimeout(180000);
+  const same = (lines: Array<Record<string, unknown>>) => lines.map(({ at: _at, ...l }) => l);
+
+  test("a post and a blocked post each leave the record the file log left; nothing in the working tree", () => {
+    const steps = (b: ReturnType<typeof bot>) => {
+      expect(b.run(["post", CHAN, "the batch is filed"]).code).toBe(0);
+      b.mode("block");
+      expect(b.run(["post", CONNECT, "--reply", TS, "sure, the rate is 180 an hour"]).code).toBe(3);
+    };
+    const files = bot(SCREEN_ALL);
+    steps(files);
+    const branch = bot(SCREEN_ALL);
+    const { read } = onBranch(branch);
+    steps(branch);
+    const want = same(files.log());
+    expect(want).toHaveLength(2);
+    expect(same(read())).toEqual(want);
+    expect(existsSync(join(branch.root, "logs"))).toBe(false);
+    expect(spawnSync("git", ["status", "--porcelain"], { cwd: branch.root, encoding: "utf8" }).stdout.trim()).toBe("");
+  });
+
+  test("accepted means sent: a log write that fails after the post is a warning, exit 0", () => {
+    const b = bot();
+    onBranch(b);
+    const broken = join(b.dir, "broken-gitsheets");
+    writeFileSync(broken, "#!/bin/sh\necho 'error: \"the disk is full\"'; exit 1\n", { mode: 0o755 });
+    const r = b.run(["post", CHAN, "the batch is filed"], { env: { OPSBOT_GITSHEETS_AXI: broken } });
+    expect(r.code).toBe(0);
+    expect(r.json).toMatchObject({ posted: true });
+    expect(r.err).toContain("warning: could not write the post log on opsbot/log");
+    expect(posted(b)).toHaveLength(1);
   });
 });
