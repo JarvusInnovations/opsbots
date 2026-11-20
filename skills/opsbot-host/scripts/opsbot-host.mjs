@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-host/version.ts"() {
     "use strict";
-    VERSION = true ? "836d47f" : "dev";
+    VERSION = true ? "2f38e31" : "dev";
   }
 });
 
@@ -1765,13 +1765,13 @@ var init_reference = __esm({
       {
         group: "Status",
         commands: [
-          { usage: "status", summary: "One row per piece (lingering, session retention, node, each tool, the desktop units, the VNC password, Chrome, the browser MCP, the environment in repo settings, environment.d and .bashrc): ok, missing or differs, with the command that fixes it. Exit 1 while anything is to fix." }
+          { usage: "status", summary: "One row per piece (lingering, session retention, node, each tool with gitsheets-axi's version (differs below 2.15.0, which the log branch needs), the desktop units, the VNC password, Chrome, the browser MCP, the environment in repo settings, environment.d and .bashrc): ok, missing or differs, with the command that fixes it. Exit 1 while anything is to fix." }
         ]
       },
       {
         group: "Install",
         commands: [
-          { usage: 'bootstrap [--dry-run] [--tools "a b"|none] [--node <version>] [--no-herdr]', summary: "A fresh Linux user up to a session that can start, with no root: ~/.local/bin and the asdf shims on PATH above .bashrc's interactive guard, asdf, node (the repo's pinned version, else the latest 22; a system node does not count), the GitHub CLI, the AXI tools (gh-axi, gws-axi, slack-axi, gitsheets-axi, agent-recall-axi, chrome-devtools-axi unless --tools names others), agent-recall-axi's session hook for the user, Claude Code, herdr and its agent skill (user-wide: npx skills add -g ogulcancelik/herdr --skill herdr), and the repo's skills from skills-lock.json. Installs only what is missing and prints the sign-ins only a person can do. It is scripts/bootstrap.sh, plain bash, so a machine with no node yet pipes it from the repo; for a bot's user or a person's fresh VM alike." },
+          { usage: 'bootstrap [--dry-run] [--tools "a b"|none] [--node <version>] [--no-herdr]', summary: "A fresh Linux user up to a session that can start, with no root: ~/.local/bin and the asdf shims on PATH above .bashrc's interactive guard, asdf, node (the repo's pinned version, else the latest 22; a system node does not count), the GitHub CLI, the AXI tools (gh-axi, gws-axi, slack-axi, gitsheets-axi, agent-recall-axi, chrome-devtools-axi unless --tools names others; a gitsheets-axi older than 2.15.0 is upgraded), agent-recall-axi's session hook for the user, Claude Code, herdr and its agent skill (user-wide: npx skills add -g ogulcancelik/herdr --skill herdr), and the repo's skills from skills-lock.json. Installs only what is missing and prints the sign-ins only a person can do. It is scripts/bootstrap.sh, plain bash, so a machine with no node yet pipes it from the repo; for a bot's user or a person's fresh VM alike." },
           { usage: "desktop install [--dry-run]", summary: "Xvfb, Openbox and x11vnc as user units on the bot's display, VNC bound to the tailnet address only, a VNC password generated once into ~/.config/<bot>/vnc-password. Idempotent; --dry-run prints every file whole and every command." },
           { usage: "sessions keep [--dry-run]", summary: "Set cleanupPeriodDays to 36500 in the bot's user-level ~/.claude/settings.json, every other key untouched, so Claude Code stops pruning its session logs after 30 days: they are its full-resolution memory." },
           { usage: "browser install [--dry-run]", summary: "chrome-devtools-axi and chrome-devtools-mcp under the bot's node when missing; the bridge port, MCP path and DISPLAY into environment.d and above .bashrc's interactive guard; prints the .claude/settings.json env block for the operator to commit (never writes it)." }
@@ -2111,6 +2111,47 @@ var init_args = __esm({
   }
 });
 
+// src/opsbot-core/log.ts
+function versionAtLeast(a, b) {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] ?? 0) > (pb[i] ?? 0)) return true;
+    if ((pa[i] ?? 0) < (pb[i] ?? 0)) return false;
+  }
+  return true;
+}
+var MIN_GITSHEETS, HH, MMSS, DAY, AT, SHEET_CONFIGS;
+var init_log = __esm({
+  "src/opsbot-core/log.ts"() {
+    "use strict";
+    init_repo();
+    MIN_GITSHEETS = "2.15.0";
+    HH = "${{ typeof at == 'string' ? at.slice(11,13) : wild }}";
+    MMSS = "${{ typeof at == 'string' ? at.slice(14,16) + at.slice(17,19) : wild }}";
+    DAY = "${{ at: YYYY/MM/DD }}";
+    AT = { type: "string", format: "date-time" };
+    SHEET_CONFIGS = {
+      cycles: {
+        path: `${DAY}/${HH}/${MMSS}-\${{ outcome }}`,
+        schema: { type: "object", required: ["at", "outcome"], properties: { at: AT, outcome: { type: "string" } } }
+      },
+      seen: {
+        path: `${DAY}/\${{ hash }}`,
+        schema: { type: "object", required: ["at", "hash", "key"], properties: { at: AT, hash: { type: "string" }, key: { type: "string" } } }
+      },
+      outages: {
+        path: `${DAY}/${MMSS}-\${{ kind }}`,
+        schema: { type: "object", required: ["at", "kind", "outcome"], properties: { at: AT, kind: { type: "string" }, outcome: { type: "string" } } }
+      },
+      routines: {
+        path: `\${{ routine }}/${DAY}/${MMSS}`,
+        schema: { type: "object", required: ["at", "routine"], properties: { at: AT, routine: { type: "string" } } }
+      }
+    };
+  }
+});
+
 // src/opsbot-host/commands/status.ts
 import { existsSync as existsSync5, statSync } from "node:fs";
 import { join as join4 } from "node:path";
@@ -2139,6 +2180,12 @@ function statusRows(h) {
   add("node", node.code === 0 && major >= 22 ? true : node.code === 0 ? "differs" : false, node.out.trim() || "not on PATH", "asdf set -u nodejs 22 && asdf install");
   for (const t of TOOLS) {
     const w = shell(`command -v ${t}`);
+    if (t === "gitsheets-axi" && w.code === 0) {
+      const v = (shell("gitsheets-axi --version").out.match(/\d+\.\d+\.\d+/) ?? [])[0] ?? null;
+      const ok = v !== null && versionAtLeast(v, MIN_GITSHEETS);
+      add(`tool ${t}`, ok ? true : "differs", `${v ?? "version unknown"} \xB7 ${w.out.trim()}${ok ? "" : ` (the log branch needs ${MIN_GITSHEETS} or later)`}`, `npm i -g ${t}@latest`);
+      continue;
+    }
     add(`tool ${t}`, w.code === 0, w.out.trim() || "not on PATH", t === "claude" ? "curl -fsSL https://claude.ai/install.sh | bash" : t === "herdr" ? "install herdr (see the kit README)" : `npm i -g ${t}`);
   }
   const ip = tailnetIp();
@@ -2214,6 +2261,7 @@ var init_status = __esm({
     init_args();
     init_invocation();
     init_host();
+    init_log();
     TOOLS = ["claude", "herdr", "gh-axi", "gws-axi", "slack-axi", "gitsheets-axi", "agent-recall-axi", "chrome-devtools-axi"];
   }
 });

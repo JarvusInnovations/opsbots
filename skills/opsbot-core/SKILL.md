@@ -165,6 +165,16 @@ commit also take when they exist and have changes: a baseline an adapter updates
 append-only log a helper script writes between cycles. Nothing else is added to those
 commits. It refuses an absolute path, a `..` segment, and a path under `.git/` or `.claude/`.
 
+`log` (optional) is `{branch}`, unset by default. With `log.branch` set (such as
+`"opsbot/log"`), the loop's own log is written to that branch through `gitsheets-axi` (2.15.0
+or later), never the working tree: each cycle that found or did something is one commit there
+with `Program`, `Watermark` and `Check` trailers, a run of quiet cycles is one commit amended
+until the hour turns, and the branch is pushed at `cycle end` up to its newest sealed commit.
+`logs/` is then not written, and `chore(cycle)` commits stop on the program branch; memory
+and `commit_paths` files the cycle changed are still committed there. A refused push of the
+log is a failed check: another host is running the same bot. Turn it on only on a fresh log
+until `log migrate` moves an existing one.
+
 `memory` (optional) is `{dir, review_days}`, defaults `memory` and `7`, or `false`. See
 *Auto memory* below.
 
@@ -391,6 +401,6 @@ record.** They live apart.
 
 - `scripts/opsbot-core hook install|uninstall|status [--scope project|global] [--dir PATH]` — Register the SessionStart (`cold-start --write`) and PreToolUse (`gate check`) hooks; project scope by default.
 - `scripts/opsbot-core hooks list [--point P]` — Every script that will run at each lifecycle point, in order, with its source.
-- `scripts/opsbot-core settings validate [--head]` — Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails.
+- `scripts/opsbot-core settings validate [--head]` — Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails; and a `log.branch` that names the branch checked out, or with no `gitsheets-axi` 2.15.0 or later to write it.
 
 <!-- END GENERATED: command-reference -->
