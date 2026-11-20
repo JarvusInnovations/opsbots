@@ -9,7 +9,8 @@ import { intFlag, parseArgs, setExit, usageError } from "../args.js";
 import { delayLine, nextDelay } from "../cadence.js";
 import { cliInvocation } from "../invocation.js";
 import { POINTS, POINT_DIRS, discover, parsePoint, type Point } from "../lifecycle.js";
-import { nowMs, parseIso, requireRoot, showHead } from "../repo.js";
+import { git, nowMs, parseIso, requireRoot, showHead } from "../repo.js";
+import { MIN_GITSHEETS, gitsheetsVersion, versionAtLeast } from "../log.js";
 import { SETTINGS_FILE, loadSettings, parseSettingsText, withDefaults } from "../settings.js";
 import { routineProblems } from "./routines.js";
 import { queryRecall, recallSheetProblems } from "../record.js";
@@ -210,9 +211,22 @@ export function settingsCommand(args: string[]): Record<string, unknown> {
       });
     }
   }
+  // the log branch needs gitsheets-axi with its commit options, and is never the program's branch
+  if (raw && isLogObj(raw.log) && typeof raw.log.branch === "string" && raw.log.branch) {
+    const v = gitsheetsVersion();
+    if (v === null || !versionAtLeast(v, MIN_GITSHEETS)) {
+      problems.push(`log.branch needs gitsheets-axi ${MIN_GITSHEETS} or later (${v ? `found ${v}` : "it does not run here"}); \`opsbot-host bootstrap\` installs it`);
+    }
+    const cur = git(root, ["symbolic-ref", "--short", "-q", "HEAD"]).stdout.trim();
+    if (cur && cur === raw.log.branch) problems.push(`log.branch ${JSON.stringify(raw.log.branch)} is the branch checked out here; the log's branch is never checked out`);
+  }
   if (problems.length) {
     setExit(1);
     return { settings: `invalid · ${where} · ${problems.length} problem${problems.length === 1 ? "" : "s"}`, problems };
   }
   return { settings: `valid · ${where}` };
+}
+
+function isLogObj(v: unknown): v is { branch?: unknown } {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
 }

@@ -155,6 +155,9 @@ export interface Settings {
   routines: Routines;
   /** The recalls that put record rows back in front of the session; empty when none. */
   record: { recall: Recall[] };
+  /** The branch the loop's own log is written to (specs/behaviors/log-branch.md); null: the log
+   * files in the working tree, as before. */
+  log: { branch: string | null };
 }
 
 /** The kit's defaults (specs/architecture.md, Next wake; specs/skills/opsbot-core.md). */
@@ -187,6 +190,8 @@ const HM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const CADENCE_SECONDS = ["hot", "warm", "quiet_working", "quiet", "night", "cap"] as const;
 const LIVENESS_KEYS = Object.keys(DEFAULT_LIVENESS) as Array<keyof Liveness>;
 const ONE_HOUR = 3600;
+/** A branch name git accepts and the loop can bind: segments of letters, digits, `.`, `_`, `-`. */
+const LOG_BRANCH_RE = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*\.lock(?:\/|$))[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/;
 
 type Json = Record<string, unknown>;
 
@@ -261,6 +266,7 @@ export function validateSettings(raw: unknown): string[] {
     "routines",
     "check",
     "record",
+    "log",
   ]);
   str(raw, "name", "", true, NAME_RE, "must be lowercase letters, digits and dashes, starting with a letter");
   str(raw, "mark", "", true);
@@ -389,6 +395,11 @@ export function validateSettings(raw: unknown): string[] {
     }
   }
   if (raw.record !== undefined) problems.push(...recordProblems(raw.record));
+  const log = obj(raw, "log", "", false);
+  if (log) {
+    allow(log, "log.", ["branch"]);
+    str(log, "branch", "log.", false, LOG_BRANCH_RE, `must be a branch name such as ${JSON.stringify("opsbot/log")}`);
+  }
   const sleep = obj(raw, "sleep", "", false);
   if (sleep) {
     allow(sleep, "sleep.", ["after_minutes", "probe_minutes", "max_minutes", "compact"]);
@@ -542,6 +553,7 @@ export function withDefaults(raw: Json): Settings {
       runs_dir: cleanDir(isObj(raw.routines) ? raw.routines.runs_dir : undefined, DEFAULT_ROUTINES.runs_dir),
     },
     record: { recall: recallEntries(raw.record) },
+    log: { branch: isObj(raw.log) && typeof raw.log.branch === "string" && raw.log.branch ? raw.log.branch : null },
   };
 }
 
