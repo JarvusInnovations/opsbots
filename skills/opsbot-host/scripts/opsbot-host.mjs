@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-host/version.ts"() {
     "use strict";
-    VERSION = true ? "72bbf8d" : "dev";
+    VERSION = true ? "02bb0cd" : "dev";
   }
 });
 
@@ -2152,6 +2152,18 @@ var init_log = __esm({
       routines: {
         path: `\${{ routine }}/${DAY}/${HHMMSS}`,
         schema: { type: "object", required: ["at", "routine"], properties: { at: AT, routine: { type: "string" } } }
+      },
+      posts: {
+        path: `\${{ channel }}/${DAY}/${HHMMSS}-\${{ hash }}`,
+        schema: { type: "object", required: ["at", "channel", "hash"], properties: { at: AT, channel: { type: "string" }, hash: { type: "string" } } }
+      },
+      ledgers: {
+        path: `\${{ ledger }}/${DAY}/${HHMMSS}-\${{ hash }}`,
+        schema: { type: "object", required: ["at", "ledger", "hash"], properties: { at: AT, ledger: { type: "string" }, hash: { type: "string" } } }
+      },
+      state: {
+        path: "${{ name }}",
+        schema: { type: "object", required: ["name", "value"], properties: { name: { type: "string" }, at: AT, value: { type: "object" } } }
       }
     };
   }

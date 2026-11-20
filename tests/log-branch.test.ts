@@ -90,8 +90,8 @@ describe("settings", () => {
     expect(same.out).toContain("is the branch checked out here");
     setSettings(b, { log: { branch: "bad..name" } });
     expect(cli(b, ["settings", "validate"]).out).toContain("log.branch must be a branch name");
-    setSettings(b, { log: { branch: B, ledgers: {} } });
-    expect(cli(b, ["settings", "validate"]).out).toContain("unknown key log.ledgers");
+    setSettings(b, { log: { branch: B, files: [] } });
+    expect(cli(b, ["settings", "validate"]).out).toContain("unknown key log.files");
     setSettings(b, LOG);
     const old = join(b.home, "old-gitsheets");
     makeExecutable(old, "#!/usr/bin/env bash\necho 2.14.0\n");

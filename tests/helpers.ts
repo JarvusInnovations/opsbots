@@ -146,3 +146,40 @@ export function makeExecutable(path: string, body: string): void {
   writeFileSync(path, body);
   chmodSync(path, 0o755);
 }
+
+/** The real path of a tool on PATH (an asdf shim resolved to what it runs), or null. */
+export function realBin(name: string): string | null {
+  const r = spawnSync("sh", ["-c", `command -v ${name}`], { encoding: "utf8" });
+  const p = r.status === 0 ? r.stdout.trim() : "";
+  if (!p) return null;
+  if (!p.includes("/shims/")) return p;
+  const a = spawnSync("asdf", ["which", name], { encoding: "utf8" });
+  return a.status === 0 ? a.stdout.trim() || null : null;
+}
+
+/**
+ * What a skill script needs to reach the real core and gitsheets-axi from a test whose HOME and
+ * PATH point into a temp dir: OPSBOT_CORE (a two-line wrapper running the source under bun),
+ * OPSBOT_GITSHEETS_AXI, and the directories of git and gitsheets-axi for PATH.
+ */
+export function coreForScripts(dir: string): { env: Record<string, string>; path: string } {
+  const gs = realBin("gitsheets-axi");
+  if (!gs) throw new Error("gitsheets-axi is not installed; the log-branch tests need it");
+  const wrapper = join(dir, "opsbot-core");
+  writeFileSync(wrapper, `#!/bin/sh\nunset NODE_OPTIONS\nexec "${process.execPath}" "${ENTRY}" "$@"\n`);
+  chmodSync(wrapper, 0o755);
+  const gitBin = realBin("git") ?? "/usr/bin/git";
+  return { env: { OPSBOT_CORE: wrapper, OPSBOT_GITSHEETS_AXI: gs }, path: [resolve(gs, ".."), resolve(gitBin, "..")].join(":") };
+}
+
+/** Turn a skill test's throwaway repo into one on the log branch: settings merged, committed. */
+export function commitOnBranch(root: string, logSettings: Record<string, unknown>): void {
+  const p = join(root, "opsbot.json");
+  const cur = JSON.parse(readFileSync(p, "utf8"));
+  // the core reads the settings whole: a skill test's partial file gets the keys it requires
+  const required = { loop: { prompt: "Run one cycle." }, runtime: { adapter: "herdr", agent: String(cur.name ?? "examplebot") } };
+  writeFileSync(p, JSON.stringify({ ...required, ...cur, log: logSettings }, null, 2));
+  for (const [k, v] of [["user.name", "Test"], ["user.email", "test@example.invalid"], ["commit.gpgsign", "false"]]) git(root, "config", k!, v!);
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "on the log branch");
+}
