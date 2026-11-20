@@ -48,7 +48,7 @@ function jsonOut(b: Bot, args: string[], now: string): { code: number; out: stri
 }
 
 describe("settings", () => {
-  test("log.ledgers and log.state: names with the fields a record must carry, and only with log.branch", () => {
+  test("log.ledgers and log.state: names with the fields a record must carry", () => {
     const b = bot();
     expect(cli(b, ["settings", "validate"]).code).toBe(0);
     const bad = (log: Record<string, unknown>, want: string) => {
@@ -62,16 +62,6 @@ describe("settings", () => {
     bad({ branch: B, ledgers: { "Bad Name": [] } }, "must be lower-case letters, digits, - and _");
     bad({ branch: B, ledgers: { labels: ["hash"] } }, "log.ledgers.labels: hash is set by the log itself");
     bad({ branch: B, state: { inbox: ["cursor", "cursor"] } }, "log.state.inbox names a field twice");
-    bad({ ledgers: { labels: [] } }, "log.ledgers needs log.branch");
-  });
-
-  test("with log.branch unset, the commands refuse and nothing is written", () => {
-    const b = bot({ ...BASE_SETTINGS });
-    const r = append(b, "labels", { thread: "t1", label: "x" }, "2026-03-02T15:00:00Z");
-    expect(r.code).toBe(2);
-    expect(r.out).toContain("needs log.branch");
-    expect(commits(b)).toEqual([]);
-    expect(status(b)).toBe("");
   });
 });
 

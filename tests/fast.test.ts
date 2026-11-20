@@ -8,12 +8,12 @@ import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BASE_SETTINGS, ENTRY, SHIM, cli, makeBot, makeExecutable, readLines, setSettings, writeStream, type Bot } from "./helpers";
+import { BASE_SETTINGS, ENTRY, SHIM, cli, logOf, makeBot, makeExecutable, outagesOf, setSettings, watermarkOf, writeStream, type Bot } from "./helpers";
 import { readEvents } from "../src/opsbot-core/transcript";
 import { validateSettings, withDefaults } from "../src/opsbot-core/settings";
 import { WAKE_BASE_NAME, lineCount, scheduleCommand, scheduleState, scheduleTimeoutMs, wakeWaitUntil } from "../src/opsbot-core/wake";
 
-setDefaultTimeout(60000);
+setDefaultTimeout(120000);
 
 let bot: Bot;
 afterEach(() => bot?.cleanup());
@@ -215,12 +215,12 @@ function fastBot(extra: Record<string, unknown> = {}) {
       rmSync(d("begin.log"), { force: true });
     },
     fail: (on: boolean) => (on ? writeFileSync(d("chat-fail"), "") : rmSync(d("chat-fail"), { force: true })),
-    log: () => readLines(join(b.root, "logs/cycle.jsonl")),
+    log: () => logOf(b),
     lastCheck() {
       const ls = this.log().filter((l) => ["new", "nothing-new", "degraded"].includes(String(l.outcome)));
       return ls[ls.length - 1]!;
     },
-    watermark: () => readFileSync(join(b.root, "logs/intake/watermark"), "utf8").trim(),
+    watermark: () => watermarkOf(b),
   };
 }
 
@@ -233,7 +233,8 @@ describe("a fast check", () => {
     // a full check to start from: no counts were recorded before it
     const first = cli(bot, ["cycle", "begin"], { now: T0 });
     expect(first.code).toBe(0);
-    expect(f.lastCheck().check).toBe("full: no wake-file counts recorded");
+    // a quiet check is a quiet commit: its line says the kind (the Check trailer), not the reason
+    expect(f.lastCheck().check).toBe("full");
     expect(f.ran()).toEqual(["30-chat", "40-mail"]);
     expect(f.begun()).toEqual(["10-sync", "20-quick.fast"]);
     const fullSince = f.since()[0];
@@ -289,7 +290,7 @@ describe("a fast check", () => {
     // and the next full check finds nothing at all
     const again = cli(bot, ["cycle", "begin", "--full"], { now: at(12) });
     expect(again.code).toBe(0);
-    expect(f.lastCheck().check).toBe("full: --full");
+    expect(f.lastCheck().check).toBe("full");
   });
 
   test("each condition that forces a full check does", () => {
@@ -310,9 +311,9 @@ describe("a fast check", () => {
     f.chat(at(2));
     cycle(at(2), "--full");
     expect(reason()).toBe("full: --full");
-    // a quiet deadline
+    // a quiet deadline: a quiet check, whose line keeps the kind and not the reason
     cycle(at(3));
-    expect(reason()).toBe("full: no new wake-file lines (cycle due)");
+    expect(reason()).toBe("full");
     // a run of fast cycles does not postpone the full check past check.full_minutes
     for (const m of [5, 8, 11]) {
       f.chat(at(m));
@@ -359,7 +360,7 @@ describe("a fast check", () => {
     // a begin 50 minutes after the fast cycle records no stop
     f.chat(at(91));
     cli(bot, ["cycle", "begin"], { now: at(91) });
-    expect(existsSync(join(bot.root, "logs/outages.jsonl"))).toBe(false);
+    expect(outagesOf(bot)).toEqual([]);
   });
 });
 

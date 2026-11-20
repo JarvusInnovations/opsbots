@@ -12,6 +12,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AxiError } from "axi-sdk-js";
+import { OLD_TOP_KEYS, oldSettingProblems } from "./legacy.js";
+import { DEFAULT_LOG_BRANCH } from "./log.js";
 import { isValidTimeZone, showHead } from "./repo.js";
 import { recallEntries, recordProblems, type Recall } from "./record.js";
 
@@ -79,11 +81,9 @@ export const DEFAULT_MEMORY: Memory = { dir: "memory", review_days: 7 };
 export interface Routines {
   /** Repo-relative directory of the definitions, one markdown file per routine; read at HEAD. */
   dir: string;
-  /** Repo-relative directory of the run records, under YYYY/MM/. */
-  runs_dir: string;
 }
 
-export const DEFAULT_ROUTINES: Routines = { dir: "routines", runs_dir: "records/routine-runs" };
+export const DEFAULT_ROUTINES: Routines = { dir: "routines" };
 
 /** One `wake.files` entry, normalised: the path as written, and the heartbeat.d inputs that read
  * it (null when it names none: a bare string, or an object without `inputs`). */
@@ -137,7 +137,9 @@ export interface Settings {
   liveness: Liveness;
   runtime: { adapter: "herdr"; agent: string };
   streams: Record<string, Record<string, unknown>>;
-  repo_sync: "pull-on-clean" | "never-pull";
+  /** `pull` (default): `cycle begin` fast-forwards a clean checkout that is behind; `never`: it
+   * leaves the checkout alone. */
+  repo_sync: "pull" | "never";
   /** Files a stream's monitor appends one line per event to; the session arms a bounded
    * Monitor on each between cycles (the live wake), and the listener's nudge is the backstop.
    * `files` are the paths as written; `entries` pair each with the heartbeat.d inputs that read
@@ -145,8 +147,6 @@ export interface Settings {
   wake: { files: string[]; entries: WakeEntry[] };
   /** How long after a full check a wake from a wake file may run a fast check; 0: never. */
   check: { full_minutes: number };
-  /** Repo-relative files the check's commit and the cycle-end commit also take when changed. */
-  commit_paths: string[];
   /** Null when `sleep` is absent: the bot never sleeps. */
   sleep: Sleep | null;
   /** Null when `memory: false`: auto memory is off. Never Claude Code's default location. */
@@ -155,15 +155,14 @@ export interface Settings {
   routines: Routines;
   /** The recalls that put record rows back in front of the session; empty when none. */
   record: { recall: Recall[] };
-  /** The branch the loop's own log is written to (specs/behaviors/log-branch.md); null: the log
-   * files in the working tree, as before. */
+  /** The branch the loop's own log is written to (specs/behaviors/log-branch.md). */
   log: LogSettings;
 }
 
 /** `log` in opsbot.json. `ledgers` and `state` map each name a bot declares to the fields a
  * record must carry; empty when none are declared. */
 export interface LogSettings {
-  branch: string | null;
+  branch: string;
   ledgers: Record<string, string[]>;
   state: Record<string, string[]>;
 }
@@ -273,7 +272,7 @@ export function validateSettings(raw: unknown): string[] {
     "repo_sync",
     "wake",
     "host",
-    "commit_paths",
+    ...OLD_TOP_KEYS,
     "sleep",
     "memory",
     "routines",
@@ -290,8 +289,10 @@ export function validateSettings(raw: unknown): string[] {
   str(raw, "rule_card", "", false);
   str(raw, "gate_word", "", false, /^[A-Z]{3,}$/, "must be three or more capital letters");
   posInt(raw, "lock_max_minutes", "");
-  if (raw.repo_sync !== undefined && raw.repo_sync !== "pull-on-clean" && raw.repo_sync !== "never-pull") {
-    problems.push(`repo_sync must be pull-on-clean or never-pull (got ${JSON.stringify(raw.repo_sync)})`);
+  // what only the log files needed is named with the command that removes it
+  problems.push(...oldSettingProblems(raw));
+  if (raw.repo_sync !== undefined && raw.repo_sync !== "pull" && raw.repo_sync !== "never" && raw.repo_sync !== "pull-on-clean" && raw.repo_sync !== "never-pull") {
+    problems.push(`repo_sync must be pull or never (got ${JSON.stringify(raw.repo_sync)})`);
   }
 
   const loop = obj(raw, "loop", "", true);
@@ -391,7 +392,6 @@ export function validateSettings(raw: unknown): string[] {
       problems.push("check.full_minutes must be a whole number of minutes, 0 or more (0 turns fast checks off)");
     }
   }
-  if (raw.commit_paths !== undefined) problems.push(...commitPathProblems(raw.commit_paths));
   if (raw.memory !== undefined && raw.memory !== false) {
     if (!isObj(raw.memory)) problems.push("memory must be an object ({dir, review_days}) or false");
     else {
@@ -403,9 +403,7 @@ export function validateSettings(raw: unknown): string[] {
   const routines = obj(raw, "routines", "", false);
   if (routines) {
     allow(routines, "routines.", ["dir", "runs_dir"]);
-    for (const k of ["dir", "runs_dir"]) {
-      if (routines[k] !== undefined) problems.push(...repoDirProblems(routines[k], `routines.${k}`));
-    }
+    if (routines.dir !== undefined) problems.push(...repoDirProblems(routines.dir, "routines.dir"));
   }
   if (raw.record !== undefined) problems.push(...recordProblems(raw.record));
   const log = obj(raw, "log", "", false);
@@ -419,7 +417,6 @@ export function validateSettings(raw: unknown): string[] {
         problems.push(`log.${k} must be an object: each name with the list of fields a record must carry`);
         continue;
       }
-      if (!(typeof log.branch === "string" && log.branch)) problems.push(`log.${k} needs log.branch: they are written to the log branch only`);
       for (const [name, fields] of Object.entries(v)) {
         if (name === "//") continue;
         if (!LOG_NAME_RE.test(name)) problems.push(`log.${k} name ${JSON.stringify(name)} must be lower-case letters, digits, - and _ (64 at most)`);
@@ -448,27 +445,6 @@ export function validateSettings(raw: unknown): string[] {
 }
 
 /**
- * `commit_paths`: an array of repo-relative file paths. Refuses an absolute path, a `..`
- * segment, and anything under `.git/` or `.claude/` (the core never commits those).
- */
-function commitPathProblems(v: unknown): string[] {
-  if (!Array.isArray(v)) return ["commit_paths must be an array of repo-relative file paths"];
-  const problems: string[] = [];
-  for (const f of v) {
-    if (typeof f !== "string" || !f.trim()) {
-      problems.push("commit_paths entries must be non-empty strings");
-      continue;
-    }
-    const segs = f.split(/[\\/]+/).filter((x) => x !== "" && x !== ".");
-    if (f.startsWith("/") || /^[A-Za-z]:/.test(f)) problems.push(`commit_paths ${JSON.stringify(f)} must be relative to the repo, not absolute`);
-    else if (segs.includes("..")) problems.push(`commit_paths ${JSON.stringify(f)} must not contain a .. segment`);
-    else if (segs[0] === ".git" || segs[0] === ".claude") problems.push(`commit_paths ${JSON.stringify(f)} is under ${segs[0]}/, which the core never commits`);
-    else if (segs.length === 0) problems.push(`commit_paths ${JSON.stringify(f)} names the repo itself, not a file`);
-  }
-  return problems;
-}
-
-/**
  * `memory.dir`: a repo-relative directory inside the checkout. Refuses an absolute path, a `..`
  * segment, the repo itself, and anything under `.git/`, `.claude/` or `.scratch/`.
  */
@@ -476,7 +452,7 @@ function memoryDirProblems(v: unknown): string[] {
   return repoDirProblems(v, "memory.dir");
 }
 
-/** A repo-relative directory inside the checkout, committed: `memory.dir`, `routines.dir`, `routines.runs_dir`. */
+/** A repo-relative directory inside the checkout, committed: `memory.dir`, `routines.dir`. */
 function repoDirProblems(v: unknown, key: string): string[] {
   if (typeof v !== "string" || !v.trim()) return [`${key} must be a non-empty repo-relative path`];
   const segs = v.split(/[\\/]+/).filter((x) => x !== "" && x !== ".");
@@ -561,10 +537,9 @@ export function withDefaults(raw: Json): Settings {
     liveness,
     runtime: { adapter: "herdr", agent: rt.agent as string },
     streams,
-    repo_sync: pick(raw.repo_sync, "pull-on-clean"),
+    repo_sync: raw.repo_sync === "never" ? "never" : "pull",
     wake: { files: wakeList.map((e) => e.file), entries: wakeList },
     check: { full_minutes: isObj(raw.check) && typeof raw.check.full_minutes === "number" ? raw.check.full_minutes : DEFAULT_CHECK.full_minutes },
-    commit_paths: Array.isArray(raw.commit_paths) ? (raw.commit_paths as string[]) : [],
     sleep: isObj(raw.sleep)
       ? {
           after_minutes: pick(raw.sleep.after_minutes, DEFAULT_SLEEP.after_minutes),
@@ -582,11 +557,10 @@ export function withDefaults(raw: Json): Settings {
           },
     routines: {
       dir: cleanDir(isObj(raw.routines) ? raw.routines.dir : undefined, DEFAULT_ROUTINES.dir),
-      runs_dir: cleanDir(isObj(raw.routines) ? raw.routines.runs_dir : undefined, DEFAULT_ROUTINES.runs_dir),
     },
     record: { recall: recallEntries(raw.record) },
     log: {
-      branch: isObj(raw.log) && typeof raw.log.branch === "string" && raw.log.branch ? raw.log.branch : null,
+      branch: isObj(raw.log) && typeof raw.log.branch === "string" && raw.log.branch ? raw.log.branch : DEFAULT_LOG_BRANCH,
       ledgers: logNames(isObj(raw.log) ? raw.log.ledgers : undefined),
       state: logNames(isObj(raw.log) ? raw.log.state : undefined),
     },

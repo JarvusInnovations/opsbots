@@ -49,7 +49,7 @@ export const COMMAND_GROUPS: CommandGroup[] = [
       {
         usage: "wake backstop --key <key> --at <ISO time> [--grace <seconds>] --reason <text>",
         summary:
-          "The listeners' one wake routine, so no listener carries its own; a listener runs it detached, one at a time, and logs its line. Waits `--grace` (default 20 s) for a check begun after `--at` or the key in `logs/intake/seen`; waits out a cycle already running and looks again; skips the wait while the bot is asleep; then runs `nudge --now`, again every 10 s, until its outcome is `woke` or `cooldown`, a newer check begins, the key is seen, or 30 minutes pass. Prints one line, `backstop:` with `woken by monitor`, `nudged after <n>s`, `nudged after cycle`, `already woken`, `asleep: nudged` or `gave up`, and exits 0; its progress notes go to stderr. Exit 2 on a missing key, time or reason.",
+          "The listeners' one wake routine, so no listener carries its own; a listener runs it detached, one at a time, and logs its line. Waits `--grace` (default 20 s) for a check begun after `--at` or the key seen on the log branch; waits out a cycle already running and looks again; skips the wait while the bot is asleep; then runs `nudge --now`, again every 10 s, until its outcome is `woke` or `cooldown`, a newer check begins, the key is seen, or 30 minutes pass. Prints one line, `backstop:` with `woken by monitor`, `nudged after <n>s`, `nudged after cycle`, `already woken`, `asleep: nudged` or `gave up`, and exits 0; its progress notes go to stderr. Exit 2 on a missing key, time or reason.",
       },
       { usage: "next-delay", summary: "Seconds until the next cycle and why, from the cycle log and the cadence table. With `loop.schedule: monitor`, never over 1740 (29 min), and the reason says when that cap applied." },
     ],
@@ -82,10 +82,11 @@ export const COMMAND_GROUPS: CommandGroup[] = [
         summary: "Record, close or list outages: failed-turn, refused, plan-limit, session-ended, stopped.",
       },
       { usage: "log tail [--n N]", summary: "The last N cycle-log lines (default 10)." },
-      { usage: "log append <ledger> | posts/<channel>", summary: "With `log.branch`: append the JSON record(s) on stdin to a ledger declared in `log.ledgers` (each must carry its declared fields) or to a channel's post log. Inside a cycle it rides the cycle's commit; outside, it is its own commit. Never the working tree." },
-      { usage: "log state get <name> [--json-out PATH] | log state set <name>", summary: "With `log.branch`: read a baseline, or replace it with the JSON object on stdin (a name declared in `log.state`, carrying its declared fields). An unchanged value writes nothing." },
+      { usage: "log append <ledger> | posts/<channel>", summary: "Append the JSON record(s) on stdin to a ledger declared in `log.ledgers` (each must carry its declared fields) or to a channel's post log. Inside a cycle it rides the cycle's commit; outside, it is its own commit. Never the working tree." },
+      { usage: "log state get <name> [--json-out PATH] | log state set <name>", summary: "Read a baseline, or replace it with the JSON object on stdin (a name declared in `log.state`, carrying its declared fields). An unchanged value writes nothing." },
       { usage: "log read <sheet> [--since ISO] [--filter CLAUSE]... [--repo PATH|REMOTE] [--branch NAME] [--json-out PATH]", summary: "Records of `cycles`, `seen`, `outages`, `routines`, `posts/<channel>` or `ledgers/<name>`, oldest first, staged ones included; `--since` walks only the days from then on; `--repo` fetches another bot's log branch (`opsbot/log`, or `--branch`) into a private copy under the git directory and reads it." },
-      { usage: "log seen <key>", summary: "Exit 0 when the key was reported to the session (from the log branch with `log.branch`, else the seen file), 1 when not: the listeners ask this." },
+      { usage: "log seen <key>", summary: "Exit 0 when the key was reported to the session (from the log branch and what is staged for it), 1 when not: the listeners ask this." },
+      { usage: "log migrate [--dry-run] [--assign PATH=ledger[:NAME]|state[:NAME]|ignore|keep]...", summary: "Move a bot from the old log files to the log branch, once: every line of the kit's log files, the files the old settings listed, the post logs and the routine runs become records of the branch in one commit (each keeping its own time; a line it cannot place is a record of ledger `unparsed`), and `opsbot/log-migrate` is prepared from HEAD with one commit that removes those files and the settings only they needed and sets `log.branch`. Nothing on the current branch or in the working tree changes; it prints what to push and the pull request to open. `--dry-run` prints the counts per file and sheet and writes nothing. Stops (exit 1, nothing written) until every tracked file under `logs/` no setting names, and every data file a hook names, is assigned with `--assign`. Refuses (exit 2) a bot whose cycle log shows a release older than the one before this, naming the release to update to first." },
     ],
   },
   {
@@ -131,7 +132,7 @@ export const COMMAND_GROUPS: CommandGroup[] = [
       {
         usage: "routines done <id> --notes TEXT [--outcome done|partial|skipped|blocked] [--checked ITEM]... [--handed-to WHO] [--at ISO]",
         summary:
-          "Record one run under `routines.runs_dir` (`YYYY/MM/<id>.md`), committed with the next cycle; prints when the routine is next due. Refuses an unknown or inactive routine, empty notes, an unknown outcome or a future `--at`. Never touches the definitions.",
+          "Record one run on the log branch's `routines` sheet (`routines/<routine>/YYYY/MM/DD/<hhmmss>`), committed with the next log commit; prints when the routine is next due. Refuses an unknown or inactive routine, empty notes, an unknown outcome or a future `--at`. Never touches the definitions.",
       },
       {
         usage: "routines validate [--head]",
@@ -167,7 +168,7 @@ export const COMMAND_GROUPS: CommandGroup[] = [
         summary: "Register the SessionStart (`cold-start --write`) and PreToolUse (`gate check`) hooks; project scope by default.",
       },
       { usage: "hooks list [--point P]", summary: "Every script that will run at each lifecycle point, in order, with its source." },
-      { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails; and a `log.branch` that names the branch checked out, or with no `gitsheets-axi` 2.15.0 or later to write it; and `log.ledgers` or `log.state` that is not names with lists of field names, or is set without `log.branch`." },
+      { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails; and a log branch (`log.branch`, default `opsbot/log`) that names the branch checked out, or no `gitsheets-axi` 2.15.0 or later to write it; `log.ledgers` or `log.state` that is not names with lists of field names; and, naming `log migrate`, every setting only the old log files needed (the list of files each cycle committed, `routines.runs_dir`, and `repo_sync` `pull-on-clean` or `never-pull`)." },
     ],
   },
 ];
