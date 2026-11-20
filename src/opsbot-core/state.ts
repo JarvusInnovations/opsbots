@@ -185,12 +185,18 @@ export function recordOutageEnd(root: string, started: string, ended: string): L
   return line;
 }
 
-/** An outage line to the outages file, or staged for the next log commit (`kind` names the
- * record's path, so an end is kind `end`). */
+/** An outage line to the outages file, or staged for the next log commit. On the branch the
+ * record's path names its kind and edge (`start` or `end`), so an end carries the kind of the
+ * outage it ends. */
 function appendOutage(root: string, line: Record<string, unknown>): void {
   const b = logBranch(root);
-  if (b) stage(root, { outages: [{ kind: "end", ...line }] });
-  else appendJsonl(paths(root).outages, line);
+  if (!b) {
+    appendJsonl(paths(root).outages, line);
+    return;
+  }
+  const end = line.outcome === "outage-end";
+  const kind = end ? (outages(root).find((o) => o.started === line.started)?.kind ?? "outage") : line.kind;
+  stage(root, { outages: [{ ...line, kind, edge: end ? "end" : "start" }] });
 }
 
 // -------------------------------------------------------------- watermark

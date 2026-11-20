@@ -9,8 +9,8 @@
  *                                                     quiet check (time in the path; gitsheets
  *                                                     also keeps `at` in the record)
  *   seen      seen/YYYY/MM/DD/<key hash>              one record per seen key
- *   outages   outages/YYYY/MM/DD/<mmss>-<kind>        one record per outage line
- *   routines  routines/<routine>/YYYY/MM/DD/<mmss>    one record per routine run
+ *   outages   outages/YYYY/MM/DD/<hhmmss>-<kind>-<start|end>   one record per outage line
+ *   routines  routines/<routine>/YYYY/MM/DD/<hhmmss>            one record per routine run
  *
  * Every log commit after the root carries `Program`, `Watermark` and `Check` trailers; a quiet
  * commit adds `Quiet-Cycles`, `Quiet-Since`, `Quiet-Until` and `Since`. The second parent (the
@@ -47,6 +47,7 @@ export type Rec = Record<string, unknown>;
 // renders the template with a Date there, and an unguarded `at.slice` fails the whole query
 const HH = "${{ typeof at == 'string' ? at.slice(11,13) : wild }}";
 const MMSS = "${{ typeof at == 'string' ? at.slice(14,16) + at.slice(17,19) : wild }}";
+const HHMMSS = "${{ typeof at == 'string' ? at.slice(11,13) + at.slice(14,16) + at.slice(17,19) : wild }}";
 const DAY = "${{ at: YYYY/MM/DD }}";
 
 const AT = { type: "string", format: "date-time" };
@@ -60,11 +61,15 @@ export const SHEET_CONFIGS: Record<Sheet, { path: string; schema: Rec }> = {
     schema: { type: "object", required: ["at", "hash", "key"], properties: { at: AT, hash: { type: "string" }, key: { type: "string" } } },
   },
   outages: {
-    path: `${DAY}/${MMSS}-\${{ kind }}`,
-    schema: { type: "object", required: ["at", "kind", "outcome"], properties: { at: AT, kind: { type: "string" }, outcome: { type: "string" } } },
+    path: `${DAY}/${HHMMSS}-\${{ kind }}-\${{ edge }}`,
+    schema: {
+      type: "object",
+      required: ["at", "kind", "edge", "outcome"],
+      properties: { at: AT, kind: { type: "string" }, edge: { type: "string", enum: ["start", "end"] }, outcome: { type: "string" } },
+    },
   },
   routines: {
-    path: `\${{ routine }}/${DAY}/${MMSS}`,
+    path: `\${{ routine }}/${DAY}/${HHMMSS}`,
     schema: { type: "object", required: ["at", "routine"], properties: { at: AT, routine: { type: "string" } } },
   },
 };
@@ -74,7 +79,7 @@ function ident(sheet: Sheet, r: Rec): string {
   const at = String(r.at ?? "");
   if (sheet === "seen") return String(r.hash ?? "");
   if (sheet === "cycles") return `${at}|${String(r.outcome ?? "")}`;
-  if (sheet === "outages") return `${at}|${String(r.kind ?? "")}`;
+  if (sheet === "outages") return `${at}|${String(r.kind ?? "")}|${String(r.edge ?? "")}`;
   return `${String(r.routine ?? "")}|${at}`;
 }
 

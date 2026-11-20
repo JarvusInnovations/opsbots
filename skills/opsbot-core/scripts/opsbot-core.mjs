@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "2f38e31" : "dev";
+    VERSION = true ? "4fed60b" : "dev";
   }
 });
 
@@ -3006,7 +3006,7 @@ function ident(sheet, r) {
   const at = String(r.at ?? "");
   if (sheet === "seen") return String(r.hash ?? "");
   if (sheet === "cycles") return `${at}|${String(r.outcome ?? "")}`;
-  if (sheet === "outages") return `${at}|${String(r.kind ?? "")}`;
+  if (sheet === "outages") return `${at}|${String(r.kind ?? "")}|${String(r.edge ?? "")}`;
   return `${String(r.routine ?? "")}|${at}`;
 }
 function logBranch(root) {
@@ -3483,7 +3483,7 @@ function seenFileFor(root, b) {
   }
   return f;
 }
-var MIN_GITSHEETS, PENDING, CACHE, GS_TIMEOUT_MS, PUSH_TIMEOUT_MS, SHEETS, HH, MMSS, DAY, AT, SHEET_CONFIGS, branchCache, ref, CYCLE_PATH_RE, LIVE_OUTCOMES, emptyPending, DAY_IN_PATH, byAt;
+var MIN_GITSHEETS, PENDING, CACHE, GS_TIMEOUT_MS, PUSH_TIMEOUT_MS, SHEETS, HH, MMSS, HHMMSS, DAY, AT, SHEET_CONFIGS, branchCache, ref, CYCLE_PATH_RE, LIVE_OUTCOMES, emptyPending, DAY_IN_PATH, byAt;
 var init_log = __esm({
   "src/opsbot-core/log.ts"() {
     "use strict";
@@ -3496,6 +3496,7 @@ var init_log = __esm({
     SHEETS = ["cycles", "outages", "seen", "routines"];
     HH = "${{ typeof at == 'string' ? at.slice(11,13) : wild }}";
     MMSS = "${{ typeof at == 'string' ? at.slice(14,16) + at.slice(17,19) : wild }}";
+    HHMMSS = "${{ typeof at == 'string' ? at.slice(11,13) + at.slice(14,16) + at.slice(17,19) : wild }}";
     DAY = "${{ at: YYYY/MM/DD }}";
     AT = { type: "string", format: "date-time" };
     SHEET_CONFIGS = {
@@ -3508,11 +3509,15 @@ var init_log = __esm({
         schema: { type: "object", required: ["at", "hash", "key"], properties: { at: AT, hash: { type: "string" }, key: { type: "string" } } }
       },
       outages: {
-        path: `${DAY}/${MMSS}-\${{ kind }}`,
-        schema: { type: "object", required: ["at", "kind", "outcome"], properties: { at: AT, kind: { type: "string" }, outcome: { type: "string" } } }
+        path: `${DAY}/${HHMMSS}-\${{ kind }}-\${{ edge }}`,
+        schema: {
+          type: "object",
+          required: ["at", "kind", "edge", "outcome"],
+          properties: { at: AT, kind: { type: "string" }, edge: { type: "string", enum: ["start", "end"] }, outcome: { type: "string" } }
+        }
       },
       routines: {
-        path: `\${{ routine }}/${DAY}/${MMSS}`,
+        path: `\${{ routine }}/${DAY}/${HHMMSS}`,
         schema: { type: "object", required: ["at", "routine"], properties: { at: AT, routine: { type: "string" } } }
       }
     };
@@ -3642,8 +3647,13 @@ function recordOutageEnd(root, started, ended) {
 }
 function appendOutage(root, line) {
   const b = logBranch(root);
-  if (b) stage(root, { outages: [{ kind: "end", ...line }] });
-  else appendJsonl(paths(root).outages, line);
+  if (!b) {
+    appendJsonl(paths(root).outages, line);
+    return;
+  }
+  const end = line.outcome === "outage-end";
+  const kind = end ? outages(root).find((o) => o.started === line.started)?.kind ?? "outage" : line.kind;
+  stage(root, { outages: [{ ...line, kind, edge: end ? "end" : "start" }] });
 }
 function readWatermark(root) {
   const b = logBranch(root);
@@ -4292,7 +4302,7 @@ function changedRunFiles(root, s, already = []) {
   return out;
 }
 function branchRunFile(branch, routine, at) {
-  return `${branch}:routines/${routine}/${at.slice(0, 4)}/${at.slice(5, 7)}/${at.slice(8, 10)}/${at.slice(14, 16)}${at.slice(17, 19)}`;
+  return `${branch}:routines/${routine}/${at.slice(0, 4)}/${at.slice(5, 7)}/${at.slice(8, 10)}/${at.slice(11, 13)}${at.slice(14, 16)}${at.slice(17, 19)}`;
 }
 function branchRuns(branch, recs) {
   const runs = [];
