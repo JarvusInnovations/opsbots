@@ -1,5 +1,5 @@
 ---
-status: planned
+status: in-progress
 depends: [log-branch-core]
 specs:
   - specs/behaviors/log-branch.md
