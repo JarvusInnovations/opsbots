@@ -1,6 +1,6 @@
 /**
- * outage — record a time the loop was not running. Appends to
- * logs/outages.jsonl; does not commit (the next cycle's commit carries it).
+ * outage — record a time the loop was not running. Staged for the log branch's outages sheet;
+ * does not commit (the next log commit carries it).
  *
  *   failed-turn    a turn ended mid-cycle (an API error, a crash)
  *   refused        a command or a hook refused, and the cycle stopped

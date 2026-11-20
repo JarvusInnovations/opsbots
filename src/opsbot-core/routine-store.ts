@@ -4,8 +4,8 @@
  *
  *   <routines.dir>/<id>.md                       one definition: schedule as TOML frontmatter,
  *                                                instructions as the body; read at HEAD
- *   <routines.runs_dir>/YYYY/MM/<run id>.md      one run: id, routine, at, outcome, by, checked,
- *                                                handed_to, title; notes as the body
+ *   <log branch>:routines/<routine>/YYYY/MM/DD/<hhmmss>   one run: id, routine, at, outcome,
+ *                                                by, checked, handed_to, title, notes
  *
  * Due is computed, never stored: an interval routine is due once its interval has passed since
  * its newest run (or `since`); a slot routine when its latest slot at or before now has no run
@@ -361,54 +361,10 @@ export function readDefinitions(root: string, s: Settings, opts: { head?: boolea
 
 // ------------------------------------------------------------ runs
 
-function walk(dir: string): string[] {
-  if (!existsSync(dir)) return [];
-  const out: string[] = [];
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    if (e.name.startsWith(".")) continue;
-    const p = join(dir, e.name);
-    if (e.isDirectory()) out.push(...walk(p));
-    else if (e.isFile() && e.name.endsWith(".md") && e.name !== "README.md") out.push(p);
-  }
-  return out.sort();
-}
-
-/** The notes of a run: its body without the leading `# title` line. */
-function notesOf(body: string): string {
-  return body.replace(/^#\s+[^\n]*\n*/, "").trim();
-}
-
-/** Every run in `routines.runs_dir` (the working tree: runs are the bot's own record). */
-export function readRuns(root: string, s: Settings): { runs: Run[]; problems: string[] } {
+/** Every run: the log branch's `routines` records, and those staged for its next commit. */
+export function readRuns(root: string, _s?: Settings): { runs: Run[]; problems: string[] } {
   const branch = logBranch(root);
-  if (branch) return branchRuns(branch, branchRoutineRecords(root, branch));
-  const runs: Run[] = [];
-  const problems: string[] = [];
-  for (const abs of walk(resolve(root, s.routines.runs_dir))) {
-    const file = rel(root, abs);
-    try {
-      const { data, body } = parseRecord(readFileSync(abs, "utf8"));
-      const at = typeof data.at === "string" ? data.at : null;
-      const atMs = at ? Date.parse(at) : NaN;
-      if (typeof data.routine !== "string" || !data.routine) throw new FrontmatterError("no routine");
-      if (at === null || Number.isNaN(atMs)) throw new FrontmatterError("no readable at");
-      runs.push({
-        id: typeof data.id === "string" ? data.id : basename(file, ".md"),
-        routine: data.routine,
-        at,
-        atMs,
-        outcome: typeof data.outcome === "string" ? data.outcome : "done",
-        by: typeof data.by === "string" ? data.by : null,
-        checked: Array.isArray(data.checked) ? data.checked.map(String) : [],
-        handed_to: typeof data.handed_to === "string" ? data.handed_to : null,
-        notes: notesOf(body),
-        file,
-      });
-    } catch (e) {
-      problems.push(`${file}: ${(e as Error).message}`);
-    }
-  }
-  return { runs, problems };
+  return branchRuns(branch, branchRoutineRecords(root, branch));
 }
 
 export interface NewRun {
@@ -422,46 +378,10 @@ export interface NewRun {
   handed_to: string | null;
 }
 
-/** Write one run record; returns its repo-relative path and id. Never overwrites: a run in the
- * same minute gets `-2`, `-3`. */
-export function writeRun(root: string, s: Settings, r: NewRun): { file: string; id: string } {
-  const branch = logBranch(root);
-  if (branch) return writeBranchRun(root, branch, r);
-  const at = iso(r.atMs);
-  const dir = resolve(root, s.routines.runs_dir, at.slice(0, 4), at.slice(5, 7));
-  const stem = `${r.routine}-${at.slice(0, 10)}-${at.slice(11, 13)}${at.slice(14, 16)}`;
-  let id = stem;
-  for (let n = 2; existsSync(join(dir, `${id}.md`)); n++) id = `${stem}-${n}`;
-  const title = `${r.title}: ${r.outcome} ${at.slice(0, 10)}`;
-  const data: Frontmatter = { id, routine: r.routine, at, outcome: r.outcome, by: r.by, checked: r.checked, title };
-  if (r.handed_to) data.handed_to = r.handed_to;
-  const path = join(dir, `${id}.md`);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, serializeRecord(data, `# ${title}\n\n${r.notes.trim()}`));
-  return { file: rel(root, path), id };
-}
-
-/**
- * Every changed path under the runs directory (new, modified, deleted), as absolute paths for a
- * commit's `--only` list, leaving out any in `already`. As for memory: one `git status` names
- * each file, so a deletion is a deletion and an ignored file is never taken.
- */
-export function changedRunFiles(root: string, s: Settings, already: string[] = []): string[] {
-  // with `log.branch` the runs are on the log branch: nothing in the working tree to commit
-  if (logBranch(root)) return [];
-  const dir = resolve(root, s.routines.runs_dir);
-  const r = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames", "--", dir]);
-  if (r.code !== 0) return [];
-  const have = new Set(already.map((f) => resolve(root, f)));
-  const out: string[] = [];
-  for (const rec of r.stdout.split("\0")) {
-    if (rec.length < 4 || rec.slice(0, 2) === "AD") continue;
-    const abs = resolve(root, rec.slice(3));
-    if (have.has(abs)) continue;
-    have.add(abs);
-    out.push(abs);
-  }
-  return out;
+/** Stage one run record for the next log commit; returns where it will be and its id. Never
+ * overwrites: a run in the same minute gets `-2`, `-3`. */
+export function writeRun(root: string, _s: Settings, r: NewRun): { file: string; id: string } {
+  return writeBranchRun(root, logBranch(root), r);
 }
 
 // ------------------------------------------------------------ runs on the log branch

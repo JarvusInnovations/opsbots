@@ -6,12 +6,12 @@
  * nothing new; non-zero is that input failing (the items it printed are still
  * reported). The core drops items whose key is already seen.
  *
- *   0   nothing new   one line; appends to the cycle log, advances the
- *                     watermark to the time this run started, commits
- *   10  new           the digest; records the reported keys as seen, logs,
- *                     leaves the watermark alone, commits
+ *   0   nothing new   one line; logs it to the log branch (a quiet commit), advances
+ *                     the watermark to the time this run started
+ *   10  new           the digest; records the reported keys as seen, logs, leaves
+ *                     the watermark alone
  *   20  degraded      which inputs failed and why, then what could be read;
- *                     records, logs, leaves the watermark alone, commits if it can
+ *                     records, logs, leaves the watermark alone, writes if it can
  *   2   cannot run    no settings at HEAD; nothing read, nothing written
  *
  * A degraded input never yields "nothing new".
@@ -20,25 +20,13 @@ import { AxiError } from "axi-sdk-js";
 import { parseArgs, setExit } from "../args.js";
 import { cliInvocation } from "../invocation.js";
 import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
-import { blockedBy, changedCommitPaths, commitOnly, firstLine, hasHead, iso, nowMs, parseIso, requireRoot, trailers } from "../repo.js";
+import { blockedBy, commitOnly, firstLine, hasHead, iso, nowMs, parseIso, requireRoot, trailers } from "../repo.js";
 import { branchWatermark, commitStaged, hasStaged, logBranch, readPending, seenFileFor, seenRecords, stage, writeQuiet } from "../log.js";
 import { loadSettings, type Settings } from "../settings.js";
 import { cappedRows, queryRecall, recallCommand, recallFields, rowMatches } from "../record.js";
 import { changedMemoryFiles } from "../memory.js";
-import { changedRunFiles } from "../routine-store.js";
 import { loadRoutines, routineItems } from "../routines.js";
-import {
-  appendJsonl,
-  appendSeen,
-  fileSize,
-  paths,
-  readSeen,
-  readWatermark,
-  truncateTo,
-  validWatermark,
-  writeWatermark,
-} from "../state.js";
-import { existsSync, rmSync } from "node:fs";
+import { readSeen, readWatermark, validWatermark } from "../state.js";
 
 export const MARGIN_MINUTES = 30;
 export const FIRST_RUN_HOURS = 24;
@@ -74,8 +62,7 @@ export interface CheckResult {
   outcome: "nothing-new" | "new" | "degraded";
   line: string;
   output: Record<string, unknown>;
-  /** With `log.branch`: whether this check committed files on the program branch (memory,
-   * `commit_paths`), so the caller pushes it. */
+  /** Whether this check committed files on the program branch (memory), so the caller pushes it. */
   program?: boolean;
 }
 
@@ -186,22 +173,29 @@ export interface FastCheck {
   since: string;
 }
 
-export function runCheck(root: string, opts: { commit: boolean; fast?: FastCheck | null; mode?: string }): CheckResult {
-  const r = sweep(root, { commit: opts.commit, peek: false, fast: opts.fast ?? null, mode: opts.mode });
+/** An input of the core's own that the caller ran before the check (`repo_sync` at cycle begin):
+ * its items join the check's, and are reported once like any stream's. */
+export interface CoreInput {
+  input: string;
+  items: Array<Record<string, unknown> & { key: string }>;
+}
+
+export function runCheck(root: string, opts: { commit: boolean; fast?: FastCheck | null; mode?: string; core?: CoreInput[] }): CheckResult {
+  const r = sweep(root, { commit: opts.commit, peek: false, fast: opts.fast ?? null, mode: opts.mode, core: opts.core ?? [] });
   if (!("check" in r)) throw new Error("unreachable: a check returned a peek");
   return r.check;
 }
 
 function sweep(
   root: string,
-  opts: { commit: boolean; peek: boolean; fast?: FastCheck | null; mode?: string },
+  opts: { commit: boolean; peek: boolean; fast?: FastCheck | null; mode?: string; core?: CoreInput[] },
 ): { check: CheckResult } | { peek: PeekResult } {
   const fast = opts.peek ? null : (opts.fast ?? null);
   if (!hasHead(root)) {
     throw new AxiError("no commit at HEAD in this checkout", "CANNOT_RUN", ["Commit opsbot.json first"]);
   }
   const { settings, text } = loadSettings(root);
-  const p = paths(root);
+  const branch = logBranch(root);
   const startMs = nowMs();
   const NOW = iso(startMs);
   const inputs: InputResult[] = [];
@@ -213,19 +207,18 @@ function sweep(
   if (wm !== null && validWatermark(wm)) {
     sinceMs = parseIso(wm)! - MARGIN_MINUTES * 60_000;
   } else {
-    if (wm !== null) failed("watermark", "the watermark file does not hold one ISO-8601 UTC time");
+    if (wm !== null) failed("watermark", "the log tip's Watermark trailer is not one ISO-8601 UTC time");
     wm = null;
     sinceMs = startMs - FIRST_RUN_HOURS * 3_600_000;
   }
   // a fast check reads the window the last full check read: only a full check moves the watermark
   const SINCE = fast ? fast.since : iso(sinceMs);
   const seen = readSeen(root);
-  const branch = logBranch(root);
 
   // every stream; a fast check, only the inputs the wake named
   const configPath = configSnapshot(root, text);
-  // with `log.branch` the keys are on the branch; scripts read a copy in the git dir
-  const seenFile = branch ? seenFileFor(root, branch) : p.seen;
+  // the keys are on the log branch; scripts read a copy in the git dir
+  const seenFile = seenFileFor(root, branch);
   const all = discover(root, "heartbeat").scripts;
   const scripts = fast ? all.filter((s) => fast.inputs.includes(s.name)) : all;
   if (scripts.length === 0) {
@@ -296,6 +289,13 @@ function sweep(
     }
   }
 
+  // the core's inputs its caller ran (repo_sync): reported once, like a stream's items
+  for (const c of opts.core ?? []) {
+    const { fresh, quiet } = take(c.items.map((it) => ({ ...it, input: c.input })));
+    items.push(...fresh);
+    inputs.push({ input: c.input, ok: true, new: fresh.length, quiet });
+  }
+
   const NEW = items.length;
   const realInputs = () => inputs.filter((i) => i.input !== "watermark" && i.input !== "commit" && i.input !== "heartbeat.d");
   if (opts.peek) {
@@ -318,61 +318,7 @@ function sweep(
   const failedList = () => inputs.filter((i) => !i.ok).map((i) => ({ input: i.input, error: i.error ?? "" }));
   let outcome: CheckResult["outcome"] = failedList().length ? "degraded" : NEW > 0 ? "new" : "nothing-new";
 
-  if (branch) return { check: branchState(root, branch, settings, { opts, fast, outcome, inputs, items, recorded, NOW, SINCE, startMs, blocked, failed, failedList, realInputs }) };
-
-  // the state
-  const logSize = fileSize(p.log);
-  const seenSize = fileSize(p.seen);
-  const oldWm = readWatermark(root);
-  const writeState = () => {
-    appendSeen(root, recorded);
-    if (outcome === "nothing-new" && !fast) writeWatermark(root, NOW);
-    const cur = readWatermark(root);
-    const inputsObj: Record<string, { ok: boolean; new: number; quiet?: number }> = {};
-    for (const i of realInputs()) {
-      inputsObj[i.input] = { ok: i.ok, new: i.new };
-      if (i.quiet > 0) inputsObj[i.input]!.quiet = i.quiet;
-    }
-    const line: Record<string, unknown> = {
-      at: NOW,
-      outcome,
-      inputs: inputsObj,
-      new: NEW,
-      failed: failedList(),
-      watermark: cur ?? null,
-    };
-    // a check a cycle ran says which kind it was and the window it read, which a fast check reuses
-    if (opts.mode) {
-      line.check = opts.mode;
-      line.since = SINCE;
-    }
-    if (fast) line.fast = true;
-    appendJsonl(p.log, line);
-  };
-  writeState();
-
-  if (opts.commit && !blocked) {
-    const subject = outcome === "nothing-new" ? "nothing new" : outcome === "new" ? `${NEW} new` : `degraded, ${NEW} new`;
-    const files = [p.seen, p.log];
-    if (existsSync(p.watermark)) files.push(p.watermark);
-    if (existsSync(p.outages)) files.push(p.outages);
-    files.push(...changedCommitPaths(root, settings.commit_paths, files));
-    files.push(...changedMemoryFiles(root, settings, files));
-    files.push(...changedRunFiles(root, settings, files));
-    const why = commitOnly(root, files, `chore(cycle): ${subject}`);
-    if (why) {
-      // undo what this run logged, so no line claims an outcome that was not recorded
-      truncateTo(p.log, logSize);
-      truncateTo(p.seen, seenSize);
-      if (oldWm !== null) writeWatermark(root, oldWm);
-      else rmSync(p.watermark, { force: true });
-      failed("commit", `cannot commit: ${why}`);
-      outcome = "degraded";
-      writeState();
-    }
-  }
-
-  return { check: finishCheck(root, settings, { outcome, fast, items, NEW, startMs, realInputs, failedList }) };
+  return { check: branchState(root, branch, settings, { opts, fast, outcome, inputs, items, recorded, NOW, SINCE, startMs, blocked, failed, failedList, realInputs }) };
 }
 
 /** The check's output once its state is written: the one line, the failures and the items. */
@@ -405,7 +351,7 @@ function finishCheck(
 }
 
 /**
- * With `log.branch` set: the check's records go to the log branch, never the working tree. A quiet
+ * The check's records go to the log branch, never the working tree. A quiet
  * check (nothing new, no key recorded, nothing staged) is a quiet commit, amended while the run
  * lasts. A check that found something inside a cycle is staged and rides the `cycle end` commit;
  * outside a cycle (`check`) it is its own commit. `--no-commit` stages everything.
@@ -473,9 +419,9 @@ function branchState(
       outcome = "degraded";
       stage(root, { cycles: [lineFor()], seen });
     }
-    // what the cycle changed on the program branch (memory, commit_paths) stays an ordinary commit
+    // what the cycle changed on the program branch (memory) stays an ordinary commit
     if (!c.blocked) {
-      const files = [...changedCommitPaths(root, settings.commit_paths), ...changedMemoryFiles(root, settings)];
+      const files = changedMemoryFiles(root, settings);
       if (files.length) {
         const w = commitOnly(root, files, "chore(bot): the files the cycle changed");
         if (w) failed("commit", `cannot commit the program branch's files: ${w}`);

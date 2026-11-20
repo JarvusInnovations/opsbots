@@ -2,8 +2,9 @@
  * The log branch (specs/behaviors/log-branch.md): the loop's own log written to a branch that is
  * never checked out, through gitsheets. This module owns every call to
  * `gitsheets-axi --branch <log.branch>`; nothing else in the kit shells out to gitsheets for the
- * log. Opt-in: with `log.branch` unset in opsbot.json at HEAD, `logBranch` is null and the file
- * writer in state.ts is used, unchanged.
+ * log. It is the only writer of the log: `log.branch` in opsbot.json at HEAD names the branch
+ * (default `opsbot/log`), and a checkout still set up for the old log files is refused until
+ * `log migrate`'s commit is merged into it (see `logWriter`).
  *
  *   cycles    cycles/YYYY/MM/DD/HH/<mmss>-<outcome>   one record per cycle-log line that is not a
  *                                                     quiet check (time in the path; gitsheets
@@ -15,8 +16,8 @@
  *   ledgers   ledgers/<name>/YYYY/MM/DD/<hhmmss>-<hash>         one record per action a script took
  *   state     state/<name>                                      one baseline per name, replaced
  *
- * A sheet whose config is not yet on the branch (a branch made before the sheet existed) has it
- * added by the first commit that writes the sheet, in that same commit.
+ * The root holds the `cycles` config; a sheet whose config is not yet on the branch has it added
+ * by the first commit that writes the sheet, in that same commit.
  *
  * Every log commit after the root carries `Program`, `Watermark` and `Check` trailers; a quiet
  * commit adds `Quiet-Cycles`, `Quiet-Since`, `Quiet-Until` and `Since`. The second parent (the
@@ -24,8 +25,7 @@
  *
  * What a cycle writes between `check` and `cycle end`, and what the watchdog, `outage` and
  * `memory review --done` write outside a cycle, is staged in <git dir>/opsbot-log-pending.json
- * and rides the next log commit, as the file writer's uncommitted lines rode the next cycle
- * commit. Readers see staged lines as well as committed ones.
+ * and rides the next log commit. Readers see staged lines as well as committed ones.
  *
  * Records are read with `gitsheets-axi query --json-out` and cached in
  * <git dir>/opsbot-log-cache.json per sheet, keyed by the sheet's tree on the branch; a changed
@@ -36,6 +36,9 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { AxiError } from "axi-sdk-js";
+import { cliInvocation } from "./invocation.js";
+import { oldSetup } from "./legacy.js";
 import { firstLine, git, gitPath, iso, parseIso, run, showHead } from "./repo.js";
 
 export const DEFAULT_LOG_BRANCH = "opsbot/log";
@@ -93,7 +96,7 @@ export const SHEET_CONFIGS: Record<Sheet, { path: string; schema: Rec }> = {
 };
 
 /** A record's identity within its sheet: what its path is made of. */
-function ident(sheet: Sheet, r: Rec): string {
+export function ident(sheet: Sheet, r: Rec): string {
   const at = String(r.at ?? "");
   if (sheet === "seen") return String(r.hash ?? "");
   if (sheet === "cycles") return `${at}|${String(r.outcome ?? "")}`;
@@ -104,30 +107,86 @@ function ident(sheet: Sheet, r: Rec): string {
   return `${String(r.routine ?? "")}|${at}`;
 }
 
-// ------------------------------------------------------------------ the setting
+// ------------------------------------------------------------------ the writer
 
-const branchCache = new Map<string, string | null>();
+/** The program branch `log migrate` prepares for a person to merge. */
+export const MIGRATE_BRANCH = "opsbot/log-migrate";
 
-/** `log.branch` from opsbot.json at HEAD, or null when it is unset (the file writer). */
-export function logBranch(root: string): string | null {
-  if (branchCache.has(root)) return branchCache.get(root)!;
-  let b: string | null = null;
+export type Writer = { branch: string } | { notMigrated: string };
+
+const writerCache = new Map<string, Writer>();
+
+/**
+ * Who writes this checkout's log, from the settings at HEAD (one writer at a time,
+ * plans/log-branch-migrate.md): `log.branch`, else `opsbot/log`, unless the checkout is still
+ * set up for the log files this release no longer writes (legacy.ts). Such a checkout is written
+ * nowhere until `log migrate`'s commit is merged into it.
+ */
+export function logWriter(root: string): Writer {
+  const hit = writerCache.get(root);
+  if (hit) return hit;
   const text = showHead(root, "opsbot.json");
-  if (text !== null) {
+  const why = oldSetup(root, text);
+  let branch: string | null = null;
+  if (!why) {
     try {
-      const v = JSON.parse(text);
-      if (v && typeof v.log === "object" && v.log && typeof v.log.branch === "string" && v.log.branch) b = v.log.branch;
+      const v = text === null ? null : JSON.parse(text);
+      if (v && typeof v.log === "object" && v.log && typeof v.log.branch === "string" && v.log.branch) branch = v.log.branch;
     } catch {
       // settings that cannot be read are refused by loadSettings, not here
     }
   }
-  branchCache.set(root, b);
-  return b;
+  const w: Writer = why ? { notMigrated: why } : { branch: branch ?? DEFAULT_LOG_BRANCH };
+  writerCache.set(root, w);
+  return w;
 }
 
-/** For tests in one process: forget what was read. */
+/** The refusal for a checkout set up for the log files: what to run, and what to merge
+ * when `log migrate` has already prepared it. */
+export function notMigratedError(root: string, why: string): AxiError {
+  const prepared = revParse(root, ref(MIGRATE_BRANCH));
+  const cli = cliInvocation();
+  const help = prepared
+    ? [
+        `\`${cli} log migrate\` prepared ${MIGRATE_BRANCH} (${prepared.slice(0, 12)}): push it and merge its pull request, then pull it into this checkout; \`${cli} log migrate --dry-run\` shows it again`,
+      ]
+    : [`Run \`${cli} log migrate --dry-run\`, then \`${cli} log migrate\`, and merge the pull request it prepares`];
+  return new AxiError(
+    `this checkout is set up for the log files (${why}); this release writes the log only to its branch, so nothing is written until the migration is merged here`,
+    "CANNOT_RUN",
+    help,
+  );
+}
+
+/** The log branch, or the refusal of a checkout the migration has not reached (see logWriter). */
+export function logBranch(root: string): string {
+  const w = logWriter(root);
+  if ("notMigrated" in w) throw notMigratedError(root, w.notMigrated);
+  return w.branch;
+}
+
+/** For tests in one process, and after a pull moved HEAD: forget what was read. */
 export function forgetLogBranch(): void {
-  branchCache.clear();
+  writerCache.clear();
+  forgetReads();
+}
+
+// What this process read of the branch (its tip, its trees, its quiet runs), kept until this
+// process writes: a command asks the same questions many times, and each answer was a git call.
+// A write anywhere in this module (every gitsheets-axi call, a branch made or fetched) forgets
+// it; a write by another process meanwhile is seen by the next command, as if this one had read
+// a moment earlier. Writes themselves never use it: writeLog reads the tip fresh.
+const reads = new Map<string, unknown>();
+
+function remembered<T>(key: string, f: () => T): T {
+  if (reads.has(key)) return reads.get(key) as T;
+  const v = f();
+  reads.set(key, v);
+  return v;
+}
+
+function forgetReads(): void {
+  reads.clear();
 }
 
 export function gitsheetsBin(): string {
@@ -164,12 +223,18 @@ interface GsResult {
 }
 
 function gs(root: string, branch: string, args: string[], input?: string, timeoutMs = GS_TIMEOUT_MS): GsResult {
+  forgetReads();
   const r = run(gitsheetsBin(), ["--branch", branch, ...args], { cwd: root, input, timeoutMs });
   const text = `${r.stdout}\n${r.stderr}`;
   const code = r.code === 0 ? null : (text.match(/^code:\s*(\S+)/m)?.[1] ?? (r.code === 124 ? "TIMEOUT" : "FAILED"));
   const err = text.split("\n").find((l) => l.startsWith("error:"));
   const message = (err ? err.replace(/^error:\s*/, "").replace(/^"|"$/g, "") : "") || firstLine(r.stderr) || firstLine(r.stdout) || `exit ${r.code}`;
   return { code: r.code, out: r.stdout, error: code, message: message.slice(0, 300) };
+}
+
+/** The commit a gitsheets-axi write reports (`commit: <hash>`), or null when it made none. */
+function committed(out: string): string | null {
+  return out.match(/^commit:\s*([0-9a-f]{40})\s*$/m)?.[1] ?? null;
 }
 
 // ------------------------------------------------------------------ the tip
@@ -199,10 +264,16 @@ export function programHead(root: string): string | null {
  * from what was pushed). Never initialises. Returns whether the branch exists locally.
  */
 export function haveLocal(root: string, b: string): boolean {
-  if (revParse(root, ref(b))) return true;
-  const remote = revParse(root, `refs/remotes/origin/${b}`);
-  if (!remote) return false;
-  return git(root, ["branch", "-q", "--no-track", b, remote]).code === 0;
+  const key = `have\0${root}\0${b}`;
+  if (reads.get(key) === true) return true;
+  let have = !!revParse(root, ref(b));
+  if (!have) {
+    const remote = revParse(root, `refs/remotes/origin/${b}`);
+    have = !!remote && git(root, ["branch", "-q", "--no-track", b, remote]).code === 0;
+    forgetReads();
+  }
+  if (have) reads.set(key, true);
+  return have;
 }
 
 /** The tip of the log branch, read with one git call; null when there is no branch yet. */
@@ -210,8 +281,18 @@ export function readTip(root: string, b: string): Tip | null {
   return readTips(root, b, 1)[0] ?? null;
 }
 
+/** The tip as it is now, never what this process read before: for a write. */
+function freshTip(root: string, b: string): Tip | null {
+  forgetReads();
+  return readTip(root, b);
+}
+
 /** The newest `n` commits on the branch's first-parent line, newest first. One git call. */
 function readTips(root: string, b: string, n: number): Tip[] {
+  return remembered(`tips\0${root}\0${b}\0${n}`, () => readTipsNow(root, b, n));
+}
+
+function readTipsNow(root: string, b: string, n: number): Tip[] {
   if (!haveLocal(root, b)) return [];
   const r = git(root, ["log", "--first-parent", `-${n}`, "--diff-merges=first-parent", "--name-only", "--format=%x1e%H%x1f%P%x1f%(trailers:only,unfold)%x1f", ref(b)]);
   if (r.code !== 0) return [];
@@ -355,17 +436,13 @@ export function seenRecords(keys: string[], at: string): Rec[] {
 
 // ------------------------------------------------------------------ init
 
-/** Make the branch's root: one orphan commit holding the sheet configs. gitsheets refuses an
- * additional parent on an orphan commit, so the program commit is the second parent of the first
- * log commit after the root instead. */
+/** Make the branch's root: one orphan commit holding a sheet config (`cycles`, which nearly
+ * every log commit writes). Every other sheet's config is added by the first commit that writes
+ * the sheet, in that commit, so a new branch costs one gitsheets call, not one per sheet.
+ * gitsheets refuses an additional parent on an orphan commit, so the program commit is the second
+ * parent of the first log commit after the root instead. */
 function initBranch(root: string, b: string): string | null {
-  let tip: string | null = null;
-  for (const s of SHEETS) {
-    const why = initSheet(root, b, s, ["--message", "log: the sheets of the loop's log", ...(tip ? ["--replace", tip] : [])]);
-    if (why) return why;
-    tip = revParse(root, ref(b));
-  }
-  return null;
+  return initSheet(root, b, "cycles", ["--message", "log: the sheets of the loop's log"]);
 }
 
 /** Write one sheet's config to the branch with the given commit flags. Null, or why not. */
@@ -411,6 +488,8 @@ export interface Write {
   subject: string;
   watermark: string | null;
   check: string;
+  /** How long each gitsheets-axi call may take (default two minutes): a migration writes more. */
+  timeoutMs?: number;
 }
 
 function sessionTrailers(extra: string): string[] {
@@ -443,7 +522,7 @@ export function writeLog(root: string, b: string, w: Write, session = ""): Write
   const sheets = SHEETS.filter((s) => (w.records[s]?.length ?? 0) > 0);
   let retried = false;
   const attempt = (todo: Sheet[]): WriteResult => {
-    const tip = readTip(root, b);
+    const tip = freshTip(root, b);
     if (!tip) return { ok: false, why: `the log branch ${b} cannot be read` };
     const head = programHead(root);
     const trailers = trailerArgs([...baseTrailers(head, w.watermark, w.check), ...sessionTrailers(session)]);
@@ -452,7 +531,7 @@ export function writeLog(root: string, b: string, w: Write, session = ""): Write
     let made: string | null = null;
     const done: Sheet[] = [];
     if (todo.length === 0) {
-      const r = gs(root, b, ["commit", "--allow-empty", "--message", w.subject, ...also, ...trailers]);
+      const r = gs(root, b, ["commit", "--allow-empty", "--message", w.subject, ...also, ...trailers], undefined, w.timeoutMs);
       if (r.code !== 0) return { ok: false, why: `gitsheets-axi commit failed: ${r.message}` };
       return { ok: true, hash: revParse(root, ref(b)) ?? "" };
     }
@@ -467,7 +546,7 @@ export function writeLog(root: string, b: string, w: Write, session = ""): Write
     for (const s of todo) {
       const input = w.records[s]!.map((x) => JSON.stringify(clean(x))).join("\n");
       const args = ["upsert", s, "--message", w.subject, ...trailers, ...(made ? ["--replace", made] : also)];
-      const r = gs(root, b, args, `${input}\n`);
+      const r = gs(root, b, args, `${input}\n`, w.timeoutMs);
       if (r.code !== 0) {
         if (r.error === "TIP_MISMATCH" && !retried) {
           retried = true;
@@ -475,8 +554,9 @@ export function writeLog(root: string, b: string, w: Write, session = ""): Write
         }
         return { ok: false, why: `gitsheets-axi upsert ${s} failed: ${r.message}` };
       }
-      const now = revParse(root, ref(b));
-      // a batch that changed nothing makes no commit: the next sheet makes it
+      // the commit gitsheets-axi made is in its answer; a batch that changed nothing makes none,
+      // and the next sheet makes it
+      const now = committed(r.out) ?? revParse(root, ref(b));
       if (now && now !== (made ?? tip.hash)) made = now;
       done.push(s);
     }
@@ -522,7 +602,7 @@ export interface Quiet {
 export function writeQuiet(root: string, b: string, q: Quiet, nowMs: number, session = ""): WriteResult & { cycles?: number } {
   const why = ensureBranch(root, b);
   if (why) return { ok: false, why };
-  const tip = readTip(root, b);
+  const tip = freshTip(root, b);
   if (!tip) return { ok: false, why: `the log branch ${b} cannot be read` };
   const head = programHead(root);
   const base = baseTrailers(head, q.watermark, q.check);
@@ -539,7 +619,7 @@ export function writeQuiet(root: string, b: string, q: Quiet, nowMs: number, ses
     if (r.code === 0) return { ok: true, hash: revParse(root, ref(b)) ?? "", cycles: n + 1 };
     if (r.error !== "TIP_MISMATCH" && r.error !== "TIP_PUBLISHED") return { ok: false, why: `gitsheets-axi commit failed: ${r.message}` };
   }
-  const cur = readTip(root, b) ?? tip;
+  const cur = freshTip(root, b) ?? tip;
   const also = head && cur.trailers.Program !== head ? ["--also-parent", head] : [];
   const r = gs(root, b, [
     "commit", "--allow-empty", ...also,
@@ -565,7 +645,7 @@ export type PushResult = { pushed: boolean; refused: boolean; why: string | null
  */
 export function pushLog(root: string, b: string, nowMs: number): PushResult {
   if (git(root, ["remote", "get-url", "origin"]).code !== 0) return { pushed: false, refused: false, why: "no remote named origin" };
-  const tip = readTip(root, b);
+  const tip = freshTip(root, b);
   if (!tip) return { pushed: false, refused: false, why: null };
   const target = isOpenQuiet(tip, nowMs) ? tip.parents[0] : tip.hash;
   if (!target) return { pushed: false, refused: false, why: null };
@@ -591,7 +671,10 @@ interface SheetCache {
   tree: string;
   records: Rec[];
 }
-type Cache = Partial<Record<Sheet, SheetCache>>;
+type Cache = Partial<Record<Sheet, SheetCache>> & {
+  /** The quiet runs up to `base`, a sealed commit of `branch` (quietRuns). */
+  quiet?: { branch: string; base: string; runs: Array<Record<string, string>> };
+};
 
 function readCache(root: string): Cache {
   try {
@@ -614,6 +697,10 @@ function writeCache(root: string, c: Cache): void {
 
 /** Each sheet's tree on the branch tip (absent: no record yet). One git call. */
 function sheetTrees(root: string, b: string): Partial<Record<Sheet, string>> {
+  return remembered(`trees\0${root}\0${b}`, () => sheetTreesNow(root, b));
+}
+
+function sheetTreesNow(root: string, b: string): Partial<Record<Sheet, string>> {
   const r = git(root, ["ls-tree", ref(b)]);
   const out: Partial<Record<Sheet, string>> = {};
   if (r.code !== 0) return out;
@@ -625,13 +712,13 @@ function sheetTrees(root: string, b: string): Partial<Record<Sheet, string>> {
 }
 
 function snapshotTrees(root: string, b: string): Partial<Record<Sheet, string>> {
-  return sheetTrees(root, b);
+  return sheetTreesNow(root, b);
 }
 
 /** After our own write: the cache is the records it had plus those written, under the new tree,
  * when it was current before the write; otherwise it is left for the next read to sync. */
 function noteWritten(root: string, b: string, before: Partial<Record<Sheet, string>>, written: Partial<Record<Sheet, Rec[]>>): void {
-  const after = sheetTrees(root, b);
+  const after = sheetTreesNow(root, b);
   const c = readCache(root);
   for (const s of SHEETS) {
     if (!written[s]?.length) continue;
@@ -703,22 +790,40 @@ export function sheetRecords(root: string, b: string, sheet: Sheet): Rec[] {
   return records;
 }
 
-/** The quiet commits on the branch's first-parent line, oldest first. One git call. */
+/**
+ * The quiet commits on the branch's first-parent line, oldest first. The runs up to the tip's
+ * first parent (sealed: never replaced) are kept in the read cache with that commit, so a later
+ * read walks only the commits since, not the whole history: two git calls whatever its length.
+ */
 export function quietRuns(root: string, b: string): Array<Record<string, string>> {
+  return remembered(`quiet\0${root}\0${b}`, () => quietRunsNow(root, b));
+}
+
+function quietRunsNow(root: string, b: string): Array<Record<string, string>> {
   if (!haveLocal(root, b)) return [];
-  const r = git(root, ["log", "--first-parent", "--format=%x1e%(trailers:only,unfold)", ref(b)]);
+  const c = readCache(root);
+  const cached = c.quiet && c.quiet.branch === b ? c.quiet : null;
+  const since = cached && git(root, ["merge-base", "--is-ancestor", cached.base, ref(b)]).code === 0 ? cached : null;
+  const r = git(root, ["log", "--first-parent", "--format=%x1e%H%x1f%P%x1f%(trailers:only,unfold)", since ? `${since.base}..${ref(b)}` : ref(b)]);
   if (r.code !== 0) return [];
-  const out: Array<Record<string, string>> = [];
-  for (const block of r.stdout.split("\x1e")) {
-    if (!block.includes("Quiet-Cycles:")) continue;
+  const commits = r.stdout.split("\x1e").slice(1).map((block) => {
+    const [hash = "", parents = "", tr = ""] = block.split("\x1f");
     const t: Record<string, string> = {};
-    for (const line of block.split("\n")) {
+    for (const line of tr.split("\n")) {
       const m = line.match(/^([A-Za-z0-9-]+):\s*(.*)$/);
       if (m) t[m[1]!] = m[2]!.trim();
     }
-    out.push(t);
+    return { hash: hash.trim(), parent: parents.trim().split(/\s+/)[0] ?? "", t };
+  });
+  // newest first: the tip, then what is sealed below it
+  const fresh = commits.filter((x) => x.t["Quiet-Cycles"]).map((x) => x.t).reverse();
+  const runs = [...(since?.runs ?? []), ...fresh];
+  const tip = commits[0];
+  if (tip && tip.parent) {
+    const below = [...(since?.runs ?? []), ...commits.slice(1).filter((x) => x.t["Quiet-Cycles"]).map((x) => x.t).reverse()];
+    writeCache(root, { ...readCache(root), quiet: { branch: b, base: tip.parent, runs: below } });
   }
-  return out.reverse();
+  return runs;
 }
 
 /**
@@ -747,12 +852,18 @@ export function quietLines(t: Record<string, string>): Rec[] {
 
 const byAt = (a: Rec, b: Rec) => (String(a.at) < String(b.at) ? -1 : String(a.at) > String(b.at) ? 1 : 0);
 
-/** The cycle log as the file writer would have it: records, the quiet runs, and staged lines. */
+// within one second, the order a cycle writes its lines in: a wake at the begin, the check, the
+// finish, then a sleep
+const RANK: Record<string, number> = { wake: 0, "nothing-new": 1, new: 1, degraded: 1, finished: 2, sleep: 3 };
+const rank = (r: Rec) => RANK[String(r.outcome)] ?? 1;
+const byAtInCycle = (a: Rec, b: Rec) => byAt(a, b) || rank(a) - rank(b);
+
+/** The cycle log as lines: records, the lines the quiet runs stand for, and staged lines. */
 export function branchCycleLines(root: string, b: string): Rec[] {
   const recs = sheetRecords(root, b, "cycles");
   const quiet = quietRuns(root, b).flatMap(quietLines);
   const staged = readPending(root).cycles;
-  return [...recs, ...quiet, ...staged].sort(byAt);
+  return [...recs, ...quiet, ...staged].sort(byAtInCycle);
 }
 
 export function branchOutageLines(root: string, b: string): Rec[] {

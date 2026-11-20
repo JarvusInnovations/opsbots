@@ -1,9 +1,12 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUNDLE, REPO, SHIM, cli, makeBot, setSettings, type Bot } from "./helpers";
 import { validateSettings } from "../src/opsbot-core/settings";
+
+// every cycle writes through gitsheets-axi (the log branch): a test of several takes seconds
+setDefaultTimeout(120_000);
 
 let bot: Bot | null = null;
 afterEach(() => {
@@ -110,30 +113,6 @@ describe("settings validate", () => {
 
   test("allows // comments at any level", () => {
     expect(validateSettings({ "//": "c", name: "x", mark: "m", loop: { "//": "c", prompt: "p" }, runtime: { agent: "x" } })).toEqual([]);
-  });
-
-  test("commit_paths: accepts repo-relative files and refuses every other shape", () => {
-    const base = { name: "x", mark: "m", loop: { prompt: "p" }, runtime: { agent: "x" } };
-    expect(validateSettings({ ...base, commit_paths: ["logs/a.jsonl", "./state/b.json"] })).toEqual([]);
-    expect(validateSettings({ ...base, commit_paths: [] })).toEqual([]);
-    const bad = (v: unknown) => validateSettings({ ...base, commit_paths: v });
-    expect(bad("logs/a.jsonl")).toEqual(["commit_paths must be an array of repo-relative file paths"]);
-    expect(bad([3])).toEqual(["commit_paths entries must be non-empty strings"]);
-    expect(bad([""])).toEqual(["commit_paths entries must be non-empty strings"]);
-    expect(bad(["/etc/passwd"])[0]).toContain("not absolute");
-    expect(bad(["../other/x"])[0]).toContain(".. segment");
-    expect(bad(["logs/../../x"])[0]).toContain(".. segment");
-    expect(bad([".git/config"])[0]).toContain("under .git/");
-    expect(bad([".claude/settings.json"])[0]).toContain("under .claude/");
-    expect(bad(["./.claude/x"])[0]).toContain("under .claude/");
-  });
-
-  test("commit_paths: settings validate refuses a bad entry with exit 1", () => {
-    bot = makeBot();
-    setSettings(bot, { commit_paths: ["../escape"] }, false);
-    const r = cli(bot, ["settings", "validate"]);
-    expect(r.code).toBe(1);
-    expect(r.out).toContain(".. segment");
   });
 
   test("--head validates the committed file, not the working tree", () => {

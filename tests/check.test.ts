@@ -1,8 +1,11 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { cli, git, makeBot, readLines, setSettings, writeStream, type Bot } from "./helpers";
+import { cli, git, logOf, logSubjects, makeBot, seenOf as seenKeys, watermarkOf, writeStream, type Bot } from "./helpers";
 import { gateWordIn } from "../src/opsbot-core/commands/check";
+
+// every cycle writes through gitsheets-axi (the log branch): a test of several takes seconds
+setDefaultTimeout(120_000);
 
 let bot: Bot;
 afterEach(() => bot?.cleanup());
@@ -18,8 +21,8 @@ const item = (n: number, extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-const log = (b: Bot) => readLines(join(b.root, "logs/cycle.jsonl"));
-const wm = (b: Bot) => readFileSync(join(b.root, "logs/intake/watermark"), "utf8").trim();
+const log = logOf;
+const wm = watermarkOf;
 
 describe("check exit codes", () => {
   test("0: nothing new — one line, watermark advanced to the run's start, committed", () => {
@@ -31,8 +34,10 @@ describe("check exit codes", () => {
     const lines = log(bot);
     expect(lines).toHaveLength(1);
     expect(lines[0]!.outcome).toBe("nothing-new");
-    expect(git(bot.root, "log", "-1", "--format=%s").trim()).toBe("chore(cycle): nothing new");
-    expect(git(bot.root, "status", "--porcelain", "logs").trim()).toBe("");
+    // a quiet commit on the log branch; the program branch has none
+    expect(logSubjects(bot)[0]).toBe("cycle: nothing new at 15:00Z");
+    expect(git(bot.root, "log", "--format=%s").trim()).toBe("init");
+    expect(git(bot.root, "status", "--porcelain").trim()).toBe("");
   });
 
   test("10: new — the digest whole, keys recorded as seen at report time, watermark held", () => {
@@ -48,8 +53,7 @@ describe("check exit codes", () => {
     expect(r.out).toContain("second line, whole");
     expect(r.out).toContain("gate_word: present");
     expect(wm(bot)).toBe(T0);
-    const seen = readFileSync(join(bot.root, "logs/intake/seen"), "utf8");
-    expect(seen).toBe("chat:conv-a:msg-1\nchat:conv-a:msg-2\n");
+    expect(seenKeys(bot).sort()).toEqual(["chat:conv-a:msg-1", "chat:conv-a:msg-2"]);
     // the same items are not reported twice
     const again = cli(bot, ["check"], { now: "2026-03-02T15:11:00Z" });
     expect(again.code).toBe(0);
@@ -89,7 +93,7 @@ describe("check exit codes", () => {
     const r = cli(bot, ["check"], { now: T0 });
     expect(r.code).toBe(20);
     expect(r.out).not.toContain("nothing new");
-    expect(existsSync(join(bot.root, "logs/intake/watermark"))).toBe(false);
+    expect(wm(bot)).toBeNull();
   });
 
   test("20: output that is not a heartbeat item fails that input", () => {
@@ -115,7 +119,7 @@ describe("check exit codes", () => {
     const r = cli(bot, ["check"], { now: T0 });
     expect(r.code).toBe(2);
     expect(r.out).toContain("opsbot.json is not committed");
-    expect(existsSync(join(bot.root, "logs"))).toBe(false);
+    expect(logSubjects(bot)).toEqual([]);
   });
 
   test("2: cannot run — no commit at HEAD", () => {
@@ -134,13 +138,13 @@ describe("check details", () => {
     expect(r.code).toBe(0);
   });
 
-  test("the cycle-log line is byte-compatible: {at,outcome,inputs,new,failed,watermark}", () => {
+  test("the cycle-log line keeps its shape: {at,outcome,inputs,new,failed}, the watermark on a quiet one", () => {
     bot = makeBot();
     cli(bot, ["check"], { now: T0 });
-    const raw = readFileSync(join(bot.root, "logs/cycle.jsonl"), "utf8").trim();
-    expect(raw).toBe(
-      `{"at":"${T0}","outcome":"nothing-new","inputs":{"10-file-stream":{"ok":true,"new":0},"20-quiet-stream":{"ok":true,"new":0}},"new":0,"failed":[],"watermark":"${T0}"}`,
-    );
+    expect(log(bot)).toEqual([{ at: T0, outcome: "nothing-new", inputs: {}, new: 0, failed: [], check: "full", since: "2026-03-01T15:00:00Z", watermark: T0 }]);
+    writeStream(bot, [item(1)]);
+    cli(bot, ["check"], { now: "2026-03-02T15:10:00Z" });
+    expect(log(bot).at(-1)).toEqual({ at: "2026-03-02T15:10:00Z", outcome: "new", inputs: { "10-file-stream": { ok: true, new: 1 }, "20-quiet-stream": { ok: true, new: 0 } }, new: 1, failed: [] });
   });
 
   test("scripts get the env contract", () => {
@@ -161,7 +165,8 @@ describe("check details", () => {
     expect(env.OPSBOT_HOOK).toBe("heartbeat");
     expect(env.OPSBOT_WATERMARK).toBe(T0);
     expect(env.OPSBOT_SINCE).toBe("2026-03-02T14:30:00Z");
-    expect(env.OPSBOT_SEEN).toBe(join(bot.root, "logs/intake/seen"));
+    // the seen keys are on the log branch; scripts read a copy in the git directory
+    expect(env.OPSBOT_SEEN).toBe(join(bot.root, ".git", "opsbot-seen"));
     expect(JSON.parse(readFileSync(env.OPSBOT_CONFIG!, "utf8")).name).toBe("testbot");
   });
 
@@ -192,8 +197,8 @@ describe("check details", () => {
   });
 });
 
-describe("check items: keys, report: false, commit_paths", () => {
-  const seenOf = (b: Bot) => readFileSync(join(b.root, "logs/intake/seen"), "utf8");
+describe("check items: keys and report: false", () => {
+  const seenOf = (b: Bot) => seenKeys(b).sort().map((k) => `${k}\n`).join("");
 
   test("keys: a group item records key and every keys entry; a re-run does not report it twice", () => {
     bot = makeBot();
@@ -201,7 +206,7 @@ describe("check items: keys, report: false, commit_paths", () => {
     const r = cli(bot, ["check"], { now: T0 });
     expect(r.code).toBe(10);
     expect(r.out).toContain('new · 1 new · 2 inputs');
-    expect(seenOf(bot)).toBe("digest:g1\nchat:conv-a:msg-1\nchat:conv-a:msg-2\n");
+    expect(seenOf(bot)).toBe("chat:conv-a:msg-1\nchat:conv-a:msg-2\ndigest:g1\n");
     const again = cli(bot, ["check"], { now: "2026-03-02T15:10:00Z" });
     expect(again.code).toBe(0);
     // a member of the group printed on its own later is never reported
@@ -217,7 +222,7 @@ describe("check items: keys, report: false, commit_paths", () => {
     const r = cli(bot, ["check"], { now: "2026-03-02T15:10:00Z" });
     expect(r.code).toBe(10);
     expect(r.out).toContain("digest:g1");
-    expect(seenOf(bot)).toBe("digest:g1\nchat:conv-a:msg-1\nchat:conv-a:msg-3\n");
+    expect(seenOf(bot)).toBe("chat:conv-a:msg-1\nchat:conv-a:msg-3\ndigest:g1\n");
   });
 
   test("keys: a value that is not an array of non-empty strings is a bad line", () => {
@@ -242,9 +247,11 @@ describe("check items: keys, report: false, commit_paths", () => {
     const last = log(bot).at(-1)!;
     expect(last.new).toBe(0);
     expect(last.inputs).toEqual({ "10-file-stream": { ok: true, new: 0, quiet: 2 }, "20-quiet-stream": { ok: true, new: 0 } });
-    // a seen quiet item is dropped on the next run and not counted again
+    // a seen quiet item is dropped on the next run and not counted again: a quiet cycle, which
+    // writes no record (its commit's trailers stand for it)
     expect(cli(bot, ["check"], { now: "2026-03-02T15:10:00Z" }).code).toBe(0);
-    expect(log(bot).at(-1)!.inputs).toEqual({ "10-file-stream": { ok: true, new: 0 }, "20-quiet-stream": { ok: true, new: 0 } });
+    expect(log(bot).at(-1)).toMatchObject({ at: "2026-03-02T15:10:00Z", outcome: "nothing-new", new: 0 });
+    expect(seenOf(bot)).toBe("chat:conv-a:msg-1\nchat:conv-a:msg-2\nself:2\n");
   });
 
   test("report: false beside reported items: only the reported ones are shown and counted", () => {
@@ -258,26 +265,5 @@ describe("check items: keys, report: false, commit_paths", () => {
     expect(r.out).toContain("chat:conv-a:msg-3");
     expect(seenOf(bot)).toBe("chat:conv-a:msg-1\nchat:conv-a:msg-2\nchat:conv-a:msg-3\n");
     expect(log(bot).at(-1)!.inputs).toMatchObject({ "10-file-stream": { ok: true, new: 2, quiet: 1 } });
-  });
-
-  test("commit_paths: the check's commit takes a changed listed file, skips a missing one, leaves an unlisted one", () => {
-    bot = makeBot();
-    writeFileSync(join(bot.root, "baseline.json"), "{}\n");
-    writeFileSync(join(bot.root, "other.txt"), "a\n");
-    git(bot.root, "add", "baseline.json", "other.txt");
-    git(bot.root, "commit", "-q", "-m", "files");
-    setSettings(bot, { commit_paths: ["baseline.json", "logs/helper.jsonl", "missing.txt"] });
-    writeFileSync(join(bot.root, "baseline.json"), '{"n":1}\n');
-    writeFileSync(join(bot.root, "other.txt"), "b\n");
-    const r = cli(bot, ["check"], { now: T0 });
-    expect(r.code).toBe(0);
-    const files = git(bot.root, "show", "--name-only", "--format=", "HEAD").trim().split("\n").sort();
-    expect(files).toEqual(["baseline.json", "logs/cycle.jsonl", "logs/intake/seen", "logs/intake/watermark"]);
-    expect(git(bot.root, "status", "--porcelain").trim()).toBe("M other.txt");
-    // an untracked listed file is taken once it exists
-    writeFileSync(join(bot.root, "logs/helper.jsonl"), '{"x":1}\n');
-    expect(cli(bot, ["check"], { now: "2026-03-02T15:10:00Z" }).code).toBe(0);
-    expect(git(bot.root, "show", "--name-only", "--format=", "HEAD")).toContain("logs/helper.jsonl");
-    expect(git(bot.root, "status", "--porcelain").trim()).toBe("M other.txt");
   });
 });

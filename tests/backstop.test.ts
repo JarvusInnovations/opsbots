@@ -7,9 +7,9 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
-import { cli, cliAsync, makeBot, type Bot, type Ran } from "./helpers";
+import { cli, cliAsync, makeBot, stageLog, type Bot, type Ran } from "./helpers";
 
-setDefaultTimeout(30000);
+setDefaultTimeout(120000);
 
 let bot: Bot;
 afterEach(() => bot?.cleanup());
@@ -31,9 +31,9 @@ const line = (r: Ran) => {
   const m = /^backstop: "?(.*?)"?$/m.exec(r.out);
   return m ? m[1]! : `(no line in ${JSON.stringify(r.out)})`;
 };
-const seen = () => { mkdirSync(join(bot.root, "logs/intake"), { recursive: true }); appendFileSync(join(bot.root, "logs/intake/seen"), KEY + "\n"); };
+const seen = () => stageLog(bot, { seen: [KEY] });
 const future = () => new Date(Date.now() + 60000).toISOString().slice(0, 19) + "Z";
-const cycleLine = (at: string, outcome = "new") => { mkdirSync(join(bot.root, "logs"), { recursive: true }); appendFileSync(join(bot.root, "logs/cycle.jsonl"), JSON.stringify({ at, outcome }) + "\n"); };
+const cycleLine = (at: string, outcome = "new") => stageLog(bot, { cycles: [{ at, outcome }] });
 const gitFile = (name: string, body = "{}") => writeFileSync(join(bot.root, ".git", name), body);
 
 describe("wake backstop", () => {

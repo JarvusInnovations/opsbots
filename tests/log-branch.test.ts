@@ -97,7 +97,7 @@ describe("settings", () => {
     makeExecutable(old, "#!/usr/bin/env bash\necho 2.14.0\n");
     const r = cli(b, ["settings", "validate"], { env: { OPSBOT_GITSHEETS_AXI: old } });
     expect(r.code).toBe(1);
-    expect(r.out).toContain("log.branch needs gitsheets-axi 2.15.0 or later (found 2.14.0)");
+    expect(r.out).toContain("the log branch needs gitsheets-axi 2.15.0 or later (found 2.14.0)");
   });
 });
 
@@ -315,7 +315,7 @@ describe("a cycle on the log branch", () => {
   });
 });
 
-describe("readers give the same answers from the branch as from the files", () => {
+describe("readers give the answers the files gave", () => {
   // a recorded run: quiet stretches, arrivals, a degraded input, the hour turning
   const STEPS: Array<{ at: string; items?: Array<Record<string, unknown>>; fail?: boolean; end?: string }> = [
     { at: "2026-03-02T14:00:00Z" },
@@ -345,13 +345,13 @@ describe("readers give the same answers from the branch as from the files", () =
 
   test("the watchdog, next-delay, the sleep timer, the cold-start pack, the fast-check window and the wake backstop", () => {
     const sleepy = { ...BASE_SETTINGS, loop: { ...BASE_SETTINGS.loop, prompt: "Run one cycle.", schedule: "monitor" }, sleep: { after_minutes: 30 } };
-    const files = bot({ settings: sleepy, remote: false });
+    // what the readers answered from the log files on this same run, recorded from the last release
+    // that wrote both (tests/fixtures/log-readers.json)
+    const want = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "log-readers.json"), "utf8"));
     const branch = bot({ settings: { ...sleepy, ...LOG } });
-    replay(files);
     replay(branch);
-    expect(existsSync(join(files.root, "logs", "cycle.jsonl"))).toBe(true);
     expect(existsSync(join(branch.root, "logs"))).toBe(false);
-    const s = withDefaults({ ...sleepy, wake: { files: [join(files.home, "wake.log")] } } as Record<string, unknown>);
+    const s = withDefaults({ ...sleepy, wake: { files: [join(branch.home, "wake.log")] } } as Record<string, unknown>);
     // a fast check: a wake file grew, its inputs named
     const sFast = withDefaults({ ...sleepy, wake: { files: [{ file: "w.log", inputs: ["10-file-stream"] }] } } as Record<string, unknown>);
 
@@ -374,7 +374,7 @@ describe("readers give the same answers from the branch as from the files", () =
           seen: ["chat:c:1", "chat:c:3", "chat:c:9"].map((k) => keySeen(root, k)),
         };
       };
-      expect(answers(branch.root)).toEqual(answers(files.root));
+      expect(JSON.parse(JSON.stringify(answers(branch.root)))).toEqual(want[nowIso]);
     }
   });
 });
