@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "efa6310" : "dev";
+    VERSION = true ? "c911ed0" : "dev";
   }
 });
 
@@ -9452,17 +9452,8 @@ function writeSleep(root, st) {
 function clearSleep(root) {
   rmSync5(sleepFile(root), { force: true });
 }
-function lineCount2(file) {
-  try {
-    const t = readFileSync11(file, "utf8");
-    if (!t) return 0;
-    return t.split("\n").length - (t.endsWith("\n") ? 1 : 0);
-  } catch {
-    return 0;
-  }
-}
-function wakeLineCounts(s) {
-  return Object.fromEntries(wakeFiles(s).map((f) => [f, lineCount2(f)]));
+function wakeLineCounts(s, base = null) {
+  return Object.fromEntries(wakeFiles(s).map((f) => [f, baseFor(base, f) ?? lineCount(f)]));
 }
 function lastOperatorAt(evs, loopPrompt, after) {
   const prompt = loopPrompt.trim();
@@ -9503,7 +9494,7 @@ function firstCycleAt(lines) {
   for (const l of lines) if (CYCLE_OUTCOMES.includes(l.outcome)) return l.at;
   return null;
 }
-function decideSleep(root, s, settingsText, lines, now, evs, by) {
+function decideSleep(root, s, settingsText, lines, now, evs, by, base = null) {
   const sl = s.sleep;
   if (!sl) return { sleep: false, why: "sleep is not set" };
   const check = lastCheck(lines);
@@ -9531,7 +9522,7 @@ function decideSleep(root, s, settingsText, lines, now, evs, by) {
       quiet_since: quietSince,
       due: next3?.at ?? null,
       due_what: next3?.what ?? null,
-      wake_lines: wakeLineCounts(s),
+      wake_lines: wakeLineCounts(s, base),
       began: null,
       compacted: false,
       looked_at: null,
@@ -10604,7 +10595,7 @@ function sessionEvents(root) {
 }
 function sleepDecision(root, s, text, by) {
   if (!s.sleep) return null;
-  const d = decideSleep(root, s, text, readCycleLog(root), nowMs(), sessionEvents(root), by);
+  const d = decideSleep(root, s, text, readCycleLog(root), nowMs(), sessionEvents(root), by, readWakeBase(root));
   return d.sleep ? d.state : null;
 }
 function driftLines(root, s) {
@@ -11667,7 +11658,7 @@ function cheapReason(root, s, st, now) {
   const op = ptr ? lastOperatorAt(readEvents(ptr.transcript_path), s.loop.prompt, st.decided_at) : null;
   if (op) return { reason: "the operator wrote to the session", event_at: op };
   for (const [file, base] of Object.entries(st.wake_lines)) {
-    const n = lineCount2(file);
+    const n = lineCount(file);
     if (n > base || n < base && n > 0) return { reason: `a new line in ${basename8(file)}`, event_at: mtime(file) ?? iso(now) };
   }
   const by = wakeBy(s, st);
