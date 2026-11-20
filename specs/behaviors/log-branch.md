@@ -1,6 +1,8 @@
 # Behavior: the loop's log lives on its own branch
 
-> Draft, on a planning PR.
+> Planned: `plans/log-branch-core.md`, `plans/log-branch-ledgers.md`,
+> `plans/log-branch-migrate.md`. A bot opts in with `log.branch` until the migration plan
+> makes it the only writer.
 
 ## Rule
 
