@@ -43,7 +43,7 @@ In the repo:
 
 | Path | What |
 | --- | --- |
-| `logs/slack-posts.jsonl` (`post_log`) | written by the post command: one line per post attempt; committed when the bot lists it in `commit_paths` |
+| `posts/slack` on the log branch | the post command's decision log: one record per post attempt, written with `opsbot-core log append posts/slack`, never a file in the working tree |
 | `.git/opsbot-slack-screen` | written by the post command: the screen's told-once marker: when the current screen outage began; removed by the next verdict; never committed |
 | `.scratch/slack-files/<conv>/<ts>/` (`files.dir`) | written by the listener when `files.save` is on: the files of a kept message ([Files](#files)); inside `.scratch/`, so never committed |
 
@@ -66,7 +66,7 @@ In the repo:
 | `sender_lookup` | a repo path to the sender hook (below) | unset |
 | `operators` | the operator's user ids; a DM with one of them is `operator-dm`; an app's post as one of them is heard like their own ([Posts through an app](#posts-through-an-app)) | none; `escalate_dm` alone still counts |
 | `screen` | the screen ([Posting](#posting-opsbot-slack-post)) | unset: nothing is screened |
-| `post_log` | the post command's decision log, a repo path; with `log.branch` set in opsbot.json it is unused: each line is a record of `posts/slack` on the log branch, written with `opsbot-core log append posts/slack` and counted for the loop guard with `opsbot-core log read`. A line that cannot be written after the send is a warning on stderr and the post still reports what happened | `logs/slack-posts.jsonl` |
+| `post_log` | read only by `opsbot-core log migrate`: the file the decision log was kept in before the log branch. The log is now `posts/slack` on the log branch, written with `opsbot-core log append posts/slack` and counted for the loop guard with `opsbot-core log read`. A record that cannot be written after the send is a warning on stderr and the post still reports what happened | `logs/slack-posts.jsonl` |
 | `listen_to` | `anyone` or `operators`: whose events the listener keeps ([Owner-only listening](#owner-only-listening)) | `anyone` |
 | `intercept` | a list of rules that hand a matching message to a command before it is recorded ([The intercept](#the-intercept)) | none |
 | `intercept_emoji` | the reaction on a message a command took | `white_check_mark` |
@@ -120,8 +120,8 @@ from_peer?, recorded_at}`, keyed `slack:<conv>:<ts>:msg`, `slack:<conv>:<ts>:<em
 `slack:team_join:<user>`. `files` appears only on a message that carries files; `from_peer`
 only on a peer's message. On a message it reacts `receipt_emoji`, or `peer_receipt_emoji` on
 a peer's. It gives the session's own monitor the first chance: it waits
-`wake_grace_seconds` (default 20), and nudges only if by then the key is not in
-`logs/intake/seen` and no cycle's check has begun since the event (a check line in the cycle log
+`wake_grace_seconds` (default 20), and nudges only if by then the key is not seen
+(`$OPSBOT_CORE log seen <key>`: the keys are on the log branch) and no cycle's check has begun since the event (a check line in the cycle log
 newer than the event). **A cycle that was already running when the event arrived does not
 count**: its check may have read the stream before the event landed, so the event is in nobody's
 hands. While such a cycle holds the lock the listener waits for it to end, since a busy session
@@ -129,7 +129,7 @@ cannot be nudged, and then looks again: the key seen, or a newer check begun, en
 otherwise it nudges at once, with no second grace. When the bot is asleep (`.git/opsbot-sleep` exists) there is no monitor
 to wait for, so it nudges at once. The nudge is `$OPSBOT_CORE nudge --now --reason …`, again every
 10 seconds while the nudge reports the agent busy, until it wakes, the key is seen, or
-`ack_timeout_minutes` pass. It reacts `ack_emoji` only once the key is in `logs/intake/seen`.
+`ack_timeout_minutes` pass. It reacts `ack_emoji` only once `$OPSBOT_CORE log seen <key>` says the key is seen.
 It logs one line for every event it receives, kept or not. It reconnects with backoff (5 s,
 doubling, at most 300 s) on a close or a `disconnect`. It refuses to start when the token file
 is missing, readable by others, or not `xapp-`.
@@ -291,7 +291,7 @@ through an app), or another app. Other apps neither count nor reset. Then:
   One way out: a draft that @mentions an operator is let through once per run, so the bot can ask
   its operator in the same thread. A second such draft in the same run is refused like any other.
 - **Hourly cap.** The bot's own posts that involved a peer, in that channel, in the last hour,
-  counted from `post_log` (`peer` set and `posted` true). At `peer_posts_per_hour` the post is
+  counted from the post log (`peer` set and `posted` true). At `peer_posts_per_hour` the post is
   refused: `peer_guard: "hourly"`, `error: "<n> posts to peers in <conv> in the last hour; ask
   the operator"`.
 - **Unreadable.** When the thread cannot be read, a reply into a peer channel is refused, since
@@ -435,7 +435,7 @@ Its first arguments are the reader's `reply` column, whole: `opsbot-slack post <
 4. screens the draft when the settings name a policy for that class (below);
 5. checks the posting identity (below), then that slack-axi is in bot mode, then posts through
    `slack-axi draft` and `draft send`;
-6. appends one line to `post_log`, whatever happened at 2 to 5;
+6. appends one record to the post log (`posts/slack`), whatever happened at 2 to 5;
 7. prints one JSON object on stdout and exits with its code.
 
 `--dry-run` does 1 to 4 and 6, and posts nothing. `opsbot-slack classify <conv>` does step 2
@@ -549,15 +549,15 @@ person's token, so bot mode alone does not prove the post goes out as the bot.
 Before posting, when `bot_user` is set, the post command calls `auth.test` with the token above
 and compares its `user_id` with `bot_user`. A different user, or an `auth.test` that fails,
 refuses the post: exit 5, nothing is sent,
-`{posted: false, conv, class, why, screen, error, identity?: {user, name}}`, and a line in
-`post_log`. The answer is cached in `slack-classes.json` for `screen.cache_seconds` (default 300)
+`{posted: false, conv, class, why, screen, error, identity?: {user, name}}`, and a record in
+the post log. The answer is cached in `slack-classes.json` for `screen.cache_seconds` (default 300)
 under the first 16 hex characters of the token's SHA-256, so a changed token is checked again at
 once. Only a match is cached. With `bot_user` unset there is no check; `status` already reports
 `bot_user` missing. `--dry-run` posts nothing and does not check.
 
 ### The decision log
 
-One line per attempt in `post_log`: `{at, conv, reply_to?, class, why, screen: "pass" | "block" |
+One record per attempt in the post log (`posts/slack` on the log branch): `{at, conv, reply_to?, class, why, screen: "pass" | "block" |
 "error" | "skipped", reason?, error?, peer?, peer_guard?, draft_sha256, posted, ts?, dry_run?}`.
 `peer` names the peers the thread involves, comma-separated, when it involves one. The hash is of the
 text as given. Never the draft, never the passage.
