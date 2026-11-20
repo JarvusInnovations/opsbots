@@ -6,6 +6,7 @@ import {
   vncPasswd, vncPasswordFile, type HostConfig,
 } from "../host.js";
 import { join } from "node:path";
+import { MIN_GITSHEETS, versionAtLeast } from "../../opsbot-core/log.js";
 import { userInfo } from "node:os";
 
 export interface Row { piece: string; state: "ok" | "missing" | "differs"; detail: string; fix: string }
@@ -33,6 +34,13 @@ export function statusRows(h: HostConfig): Row[] {
 
   for (const t of TOOLS) {
     const w = shell(`command -v ${t}`);
+    if (t === "gitsheets-axi" && w.code === 0) {
+      // the log branch needs its commit options: the row shows the version
+      const v = (shell("gitsheets-axi --version").out.match(/\d+\.\d+\.\d+/) ?? [])[0] ?? null;
+      const ok = v !== null && versionAtLeast(v, MIN_GITSHEETS);
+      add(`tool ${t}`, ok ? true : "differs", `${v ?? "version unknown"} · ${w.out.trim()}${ok ? "" : ` (the log branch needs ${MIN_GITSHEETS} or later)`}`, `npm i -g ${t}@latest`);
+      continue;
+    }
     add(`tool ${t}`, w.code === 0, w.out.trim() || "not on PATH", t === "claude" ? "curl -fsSL https://claude.ai/install.sh | bash" : t === "herdr" ? "install herdr (see the kit README)" : `npm i -g ${t}`);
   }
 
