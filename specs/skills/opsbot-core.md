@@ -14,7 +14,7 @@ the protocol. Everything else (sheets, guards, channels, delivery) is another sk
   templates/opsbot.json    the settings file template
   templates/*.service|timer  systemd user units for watchdog, nudge, monitors and the sleep timer
   templates/routines/*.md    an example routine definition to copy into `routines/`
-  templates/gitsheets/*.toml optional sheet configs for `routines` and `routine-runs` (see *Routines*)
+  templates/gitsheets/*.toml optional sheet configs for the `routines` definitions (see *Routines*)
 ```
 
 The bot's own files the skill reads and writes:
@@ -23,10 +23,9 @@ The bot's own files the skill reads and writes:
 | --- | --- |
 | `opsbot.json` | the settings file; committed; the only place any loop *value* is set |
 | `opsbot.d/` | the lifecycle directories; every executable in them is picked up (see below) |
-| `logs/cycle.jsonl` | one line per cycle outcome; committed. With `sleep` set it also holds `{at, outcome: "sleep", by, quiet_since, due}` and `{at, outcome: "wake", reason, latency_s, slept_from, woken_at}`. `memory review --done` adds `{at, outcome: "memory-review", files, kept, updated, removed, added, note}` |
-| `logs/intake/seen` | typed seen keys; committed |
-| `logs/intake/watermark` | one UTC ISO line; committed |
-| `logs/outages.jsonl` | outage events `{at, outcome: "outage"\|"outage-end", kind, started, ended, note}`; committed with the next cycle; readers also accept outage lines found in `logs/cycle.jsonl`, where an earlier bot wrote them |
+| the log branch (`log.branch`, default `opsbot/log`) | never checked out; written through `gitsheets-axi` ([the log branch](../behaviors/log-branch.md)). `cycles`: one record per line the loop logs that is not a quiet check (a check that found something, a finish, and with `sleep` set `{at, outcome: "sleep", by, quiet_since, due}` and `{at, outcome: "wake", reason, latency_s, slept_from, woken_at}`; `memory review --done` adds `{at, outcome: "memory-review", files, kept, updated, removed, added, note}`); a run of quiet checks is a commit's trailers. `seen`: typed seen keys. `outages`: `{at, outcome: "outage"\|"outage-end", kind, started, ended, note, edge}`. `routines`: one record per run. `posts/<channel>`, `ledgers/<name>`, `state/<name>`: what the bot's scripts write. The watermark is the tip's `Watermark` trailer |
+| `.git/opsbot-log-pending.json` | records made between a check and the cycle's end, or outside a cycle, waiting for the next log commit; readers include them; never committed |
+| `.git/opsbot-log-cache.json`, `.git/opsbot-seen` | the records already read, per sheet tree; the seen keys as a file for heartbeat scripts (`OPSBOT_SEEN`); never committed |
 | `.git/opsbot-cycle.lock` | the writer lock; never committed |
 | `.git/opsbot-{watchdog,nudge,nudge-now}` | the watchdog's told-once marker and the nudge cooldowns; never committed |
 | `.git/opsbot-sleep` | present while the bot is going down, asleep, or woken and not yet answered: when it was decided and by which command, quiet since when, the earliest due time and what it is, each wake file's line count as the deciding cycle's check started (its wake base), when the sleep began and whether it compacted, the sleep timer's last look, the wake (when, why, when the event was, whether the prompt landed) and whether an unanswered wake was escalated; removed by `cycle begin`; never committed; ignored while `sleep` is absent from `opsbot.json` |
@@ -35,7 +34,6 @@ The bot's own files the skill reads and writes:
 | `memory/` (`memory.dir`) | the session's Claude Code auto memory: `MEMORY.md`, the index Claude Code loads at every session start, and one small file per memory, which the model writes on its own; committed with the cycles; see *Auto memory* below |
 | `.git/opsbot-memory-review.json` | the snapshot `memory review --begin` takes (each memory file's name and content hash) for `--done` to diff against; removed by `--done`; never committed |
 | `routines/` (`routines.dir`) | the bot's routine definitions, one markdown file per routine: the schedule in TOML frontmatter, the instructions in the body; committed, governed like the rule card, read at `HEAD`; the core never writes here; see *Routines* below |
-| `records/routine-runs/` (`routines.runs_dir`) | one markdown record per run of a routine, under `YYYY/MM/` of the run's UTC time; written by `routines done` and `memory review --done`; committed with the cycles |
 
 ## Settings (`opsbot.json`)
 
@@ -58,15 +56,14 @@ The bot's own files the skill reads and writes:
 | `sleep` | optional and, until a week's trial on a working bot is read, a trial setting; absent, the bot never sleeps. `{after_minutes, probe_minutes, max_minutes, compact}`: how long the loop must be quiet before it sleeps (60), how often the outside probe looks at the streams while it sleeps (10; 60 at most, so the compaction on the way down lands while the one-hour cache is warm), the longest one sleep may last (480), and whether the session is compacted on the way down (`true`). Requires `loop.schedule: "monitor"`; see *Sleep* below |
 | `runtime` | `{adapter: "herdr", agent: "<name>"}`; the adapter supplies `idle` and `prompt`. The herdr adapter finds the bot's pane by that name first and, when the name is missing (a renamed pane, a restarted herdr), by the one agent whose cwd is the bot's checkout; it prompts the pane, not the name |
 | `streams.<name>` | per-stream values a heartbeat script reads (postures, ids, lookbacks); the script is found by name in `opsbot.d/heartbeat.d/`, not listed here |
-| `repo_sync` | `pull-on-clean` or `never-pull` |
+| `repo_sync` | `pull` (default) or `never`. With `pull`, a full cycle's `cycle begin` fast-forwards the checkout when the tree is clean and the branch is behind its remote; a checkout that cannot is a heartbeat item naming both commits, keyed by the remote's head so it is said once per change, and the cycle goes on ([the log branch](../behaviors/log-branch.md#what-this-removes)). `pull-on-clean` and `never-pull`, the values before, are refused naming `log migrate`, which rewrites them |
 | `host` | optional; belongs to the `opsbot-host` skill (display, VNC and bridge ports); `settings validate` accepts it as an object and does not look inside |
-| `commit_paths` | optional; repo-relative files the check's commit and the `cycle end` commit also take when they exist and have changes (a baseline an adapter updates, an append-only log a helper script writes between cycles); a listed file that does not exist is skipped |
 | `memory` | optional; `{dir, review_days}`, defaults `memory` and `7`, or `false`. `dir` is the repo-relative directory the session's auto memory lives in; `start` passes it to Claude Code as an absolute path. `review_days` is how long after the last review the next one is due. `false` turns auto memory off for the bot. There is no value that leaves memory at Claude Code's default location outside the repo; see *Auto memory* below |
-| `routines` | optional; `{dir, runs_dir}`, defaults `routines` and `records/routine-runs`: where the routine definitions and the run records live, both repo-relative. A bot with neither directory has no routines of its own and behaves as it did without the setting; see *Routines* below |
+| `routines` | optional; `{dir}`, default `routines`: where the routine definitions live, repo-relative; each run is a record of the log branch's `routines` sheet. `runs_dir`, where runs were files before, is refused naming `log migrate`. A bot with neither directory has no routines of its own and behaves as it did without the setting; see *Routines* below |
 | `wake.files` | optional; the files a `monitor.d/` listener appends one line per event to. The core prints, in the cold-start pack and at every `cycle begin` and `cycle end`, the state of each (armed until when, or not armed) and the exact bounded `Monitor` call that arms it; see *The live wake* below. With `loop.schedule: "monitor"` all of them share the one schedule monitor |
-| `log.branch` | optional, unset by default; a branch name such as `opsbot/log`. Set, the loop's own log (cycles, seen keys, outages, routine runs) is written to that branch through `gitsheets-axi`, never the working tree ([the log branch](../behaviors/log-branch.md)); unset, the files above, as before. `settings validate` refuses it without `gitsheets-axi` 2.15.0 or later, and when it names the branch checked out. Until `log migrate` ships, a bot turns it on only on a fresh log |
-| `log.ledgers` | optional; `{<name>: [<field>, …]}`: the bot's action ledgers on the log branch, each with the fields a record must carry (`ledger` and `hash` are the log's own and cannot be declared). `log append <name>` refuses an undeclared name and a record missing a declared field, naming it. Requires `log.branch` |
-| `log.state` | optional; `{<name>: [<field>, …]}`: the baselines its checks compare against, one record per name on the log branch, each with the fields its value must carry. Requires `log.branch` |
+| `log.branch` | optional; default `opsbot/log`: the branch the loop's own log (cycles, seen keys, outages, routine runs, post logs, ledgers, baselines) is written to through `gitsheets-axi`, never the working tree ([the log branch](../behaviors/log-branch.md)). `settings validate` refuses a setup without `gitsheets-axi` 2.15.0 or later, and a branch that is the one checked out. A checkout still set up for the old log files (the old file list in `opsbot.json`, or one of the kit's `logs/` files tracked) is written nowhere until `log migrate`'s commit is merged into it; see *Moving a bot to the log branch* |
+| `log.ledgers` | optional; `{<name>: [<field>, …]}`: the bot's action ledgers on the log branch, each with the fields a record must carry (`ledger` and `hash` are the log's own and cannot be declared). `log append <name>` refuses an undeclared name and a record missing a declared field, naming it |
+| `log.state` | optional; `{<name>: [<field>, …]}`: the baselines its checks compare against, one record per name on the log branch, each with the fields its value must carry |
 
 `settings validate` refuses a file with an unknown key, a missing required key, or a
 cadence value over the cap, or a `loop.prompt` that starts with `/` when `loop.schedule` is
@@ -79,7 +76,7 @@ unless it equals `loop.autocompact` (one value, one place). It also refuses
 where that is set. `memory` must be `false` or an object; `memory.dir` must be a non-empty
 repo-relative path with no `..` segment, not absolute, not the repo itself, and not under
 `.git/`, `.claude/` or `.scratch/`; `memory.review_days` a positive whole number.
-`routines.dir` and `routines.runs_dir` follow the same rule as `memory.dir`. `settings
+`routines.dir` follows the same rule as `memory.dir`. `settings
 validate` also validates every routine definition in `routines.dir` (in the working tree, or at
 `HEAD` with `--head`) and names each problem, as `routines validate` does.
 
@@ -100,11 +97,11 @@ it tells its operator once. Outside a session (`CLAUDECODE` unset) nothing is ch
 | --- | --- | --- |
 | *(none)* | home: bot name, bin path, last cycle outcome and age, lock state, next wake, counts of failed inputs and open outages, one `memory` line (as `memory status` prints it, or `off`), and with `sleep` set the sleep state (`awake`, going down, `asleep since HH:MMZ, next look HH:MMZ, wake by HH:MMZ`, or woken and waiting); three help lines | 0 |
 | `check` | runs every script in `heartbeat.d/` and the core's own `routines` input (one item per due routine occurrence; see *Routines*), aggregates, records seen keys, logs, commits; prints the digest or one line | 0 nothing new · 10 new · 20 degraded · 2 cannot run |
-| `cycle begin` | refuses while another writer holds the checkout; takes the lock; records a `stopped` outage if overdue; runs `cycle.d/begin/`; runs `check`, or a fast check when a wake file woke it ([A fast cycle](#a-fast-cycle)); on 0 releases and prints the closing line. With `loop.schedule: "monitor"`, on 0 and on 30 it also prints a `wake` field: the schedule monitor's state and the one `Monitor` call to make now | as `check`; 30 wait |
-| `cycle end --records N [--degraded] [--summary TEXT]` | runs `cycle.d/end/`; pins the watermark to this cycle's check time; appends `finished`; commits with `--only`; pushes; releases; prints whatever `cycle.d/end/` scripts printed (due promises, owed fixes), then, when a wake file gained lines since this cycle's check, an `arrived` field and `next 0 arrived` with no `wake` field ([A fast cycle](#a-fast-cycle)), else `next <s> <reason>`; a `memory` line when the memory review is due and a `routines` field with one line per other due routine (neither alongside a `sleep` field); with `loop.schedule: "monitor"`, then a `wake` field with the schedule monitor's state and the one `Monitor` call to make now, and no self-paced guidance | 0 · 1 refused (nothing written; the lock released) or could not commit (the lock kept) |
+| `cycle begin` | refuses (exit 2, naming `log migrate`) a checkout still set up for the old log files, writing nothing; refuses while another writer holds the checkout; takes the lock; with `repo_sync: pull` on a full cycle fast-forwards a clean checkout that is behind, and makes one that cannot an item; records a `stopped` outage if overdue; runs `cycle.d/begin/`; runs `check`, or a fast check when a wake file woke it ([A fast cycle](#a-fast-cycle)); on 0 releases and prints the closing line. With `loop.schedule: "monitor"`, on 0 and on 30 it also prints a `wake` field: the schedule monitor's state and the one `Monitor` call to make now | as `check`; 30 wait |
+| `cycle end --records N [--degraded] [--summary TEXT]` | runs `cycle.d/end/`; pins the watermark to this cycle's check time; writes `finished` with what the cycle staged as one log commit; pushes it; releases; prints whatever `cycle.d/end/` scripts printed (due promises, owed fixes), then, when a wake file gained lines since this cycle's check, an `arrived` field and `next 0 arrived` with no `wake` field ([A fast cycle](#a-fast-cycle)), else `next <s> <reason>`; a `memory` line when the memory review is due and a `routines` field with one line per other due routine (neither alongside a `sleep` field); with `loop.schedule: "monitor"`, then a `wake` field with the schedule monitor's state and the one `Monitor` call to make now, and no self-paced guidance | 0 · 1 refused (nothing written; the lock released) or could not commit (the lock kept) |
 | `check --peek` | runs every script in `heartbeat.d/` and the `routines` input, and prints the count of new items per input; records nothing, logs nothing, commits nothing, and leaves the watermark and the seen keys alone, so the cycle that follows sees the same items. Each script also gets `OPSBOT_PEEK=1`: an adapter that keeps state of its own (a baseline it updates) must leave that state alone when it is set, or the check that follows misses what the peek saw | 0 nothing new · 10 new · 20 degraded · 2 cannot run |
 | `sleep tick [--dry-run]` | the sleep timer's one command, a no-op unless `.git/opsbot-sleep` exists and `sleep` is set. Going down: once the session is idle by the nudge's test (the runtime's `idle` or `done`, or `working` with the session log showing the turn ended), types `/compact` through the adapter when `sleep.compact` is set, and marks the sleep begun. Asleep: wakes the session, typing `<loop.prompt> (woken: <reason>)` through the adapter, when the operator wrote to the session since the decision, when a wake file has a line past the count its check started from, when the recorded due time has passed, when `max_minutes` since the decision is up, or when `check --peek` exits 10 or 20 (tested in that order, the peek last and only once the sleep has begun); otherwise records its look and does nothing. Any of these while going down is a wake, not a compaction. A busy session is woken at a later tick; one that cannot be reached, or sits at a dialog, is recorded as woken unsent and tried again. A wake not followed by a `cycle begin` within `watchdog_minutes` is told to the operator once through `escalate.d/` and recorded as a `stopped` outage from the wake. `--dry-run` types and writes nothing | 0 · 1 could not reach the runtime, or could not tell the operator |
-| `wake backstop --key <key> --at <ISO time> [--grace <seconds>] --reason <text>` | the listeners' one wake routine, so no listener carries its own: waits `grace` (default 20) for a check begun after the event or the key in `logs/intake/seen`; waits out a cycle that was already running and looks again; skips the wait when the bot is asleep; then runs `nudge --now`, again every 10 seconds, until the outcome is `woke` or `cooldown`, a newer check begins, the key is seen, or 30 minutes pass. Prints one line (`woken by monitor`, `nudged after <n>s`, `nudged after cycle`, `already woken`, `asleep: nudged`, `gave up`) and exits 0. Several running at once share one nudge through the nudge's own claim | 0 · 2 |
+| `wake backstop --key <key> --at <ISO time> [--grace <seconds>] --reason <text>` | the listeners' one wake routine, so no listener carries its own: waits `grace` (default 20) for a check begun after the event or the key seen on the log branch; waits out a cycle that was already running and looks again; skips the wait when the bot is asleep; then runs `nudge --now`, again every 10 seconds, until the outcome is `woke` or `cooldown`, a newer check begins, the key is seen, or 30 minutes pass. Prints one line (`woken by monitor`, `nudged after <n>s`, `nudged after cycle`, `already woken`, `asleep: nudged`, `gave up`) and exits 0. Several running at once share one nudge through the nudge's own claim | 0 · 2 |
 | `wake wait --until <epoch seconds>` | the schedule monitor's poller, run by the session's one `Monitor` call and by nothing else: polls every 2 seconds from the line counts the last check recorded; prints the new lines of any wake file, each prefixed with the file's basename and cut to 300 characters, at most 20, and exits 0; or prints `cycle due` and exits 0 when the time passes. Without a recorded count for a file it starts at that file's end. A time more than 1 800 seconds ahead is refused | 0 · 2 |
 | `next-delay` | reads the log and the cadence table; prints `<seconds> <reason>`. With `loop.schedule: "monitor"` no delay passes 1 740 seconds (29 minutes: the delay plus the monitor's one-minute margin stays inside the harness's 30-minute limit), and a capped reason says so: `night (capped at 29 min: a monitor's limit)` | 0 |
 | `start [--continue] [--dry-run] [-- <extra>]` | launches `claude` with the flags `opsbot.json` implies: permission mode, model, autocompact window, and one `--settings` object holding `autoCompactEnabled: true` and the auto memory keys (`autoMemoryEnabled: true` and `autoMemoryDirectory: <absolute root>/<memory.dir>`, the directory created first when missing; or, with `memory: false`, `autoMemoryEnabled: false` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` in its `env` and the process environment), and `loop.prompt` as the first message; `--continue` resumes the session that last ran a cycle here, by id (`--resume <id>`, recorded at every `cycle begin` in `.git/opsbot-loop-session`), and by `loop.session_name` when none is recorded; it never takes the directory's most recent session (a person's session opened in the bot's checkout would be that, and get the loop). Every start passes `--name <loop.session_name>`; the bot's `bin/start` shim is two lines calling this | exit code of `claude` |
@@ -118,10 +115,11 @@ it tells its operator once. Outside a session (`CLAUDECODE` unset) nothing is ch
 | `hook install|uninstall|status` | registers the SessionStart (`cold-start --write`) and PreToolUse (`gate check`) hooks, project scope by default | 0 |
 | `hooks list [--point P]` | every script that will run at each lifecycle point, in order, with its source | 0 |
 | `log tail [--n N]` | the last N cycle lines, one per row | 0 |
-| `log append <ledger>` / `log append posts/<channel>` | with `log.branch`: appends the JSON record(s) on stdin (one object, an array, or one per line; one commit for all) to a ledger in `log.ledgers` or to a channel's post log, filed by `at` (an ISO time in UTC, default now); while a cycle holds the checkout they are staged and ride its commit, otherwise they are a commit of their own. Refuses an undeclared ledger, a missing declared field, a bad `at`, and a record that sets `ledger`, `channel` or `hash` | 0 · 1 not written · 2 refused |
-| `log state get <name> [--json-out <path>]` / `log state set <name>` | with `log.branch`: prints a baseline (`not set` and `null` in the file when there is none), or replaces it with the JSON object on stdin, staged or committed as `log append`; a value equal to the current one writes nothing | 0 · 1 · 2 |
+| `log append <ledger>` / `log append posts/<channel>` | appends the JSON record(s) on stdin (one object, an array, or one per line; one commit for all) to a ledger in `log.ledgers` or to a channel's post log, filed by `at` (an ISO time in UTC, default now); while a cycle holds the checkout they are staged and ride its commit, otherwise they are a commit of their own. Refuses an undeclared ledger, a missing declared field, a bad `at`, and a record that sets `ledger`, `channel` or `hash` | 0 · 1 not written · 2 refused |
+| `log state get <name> [--json-out <path>]` / `log state set <name>` | prints a baseline (`not set` and `null` in the file when there is none), or replaces it with the JSON object on stdin, staged or committed as `log append`; a value equal to the current one writes nothing | 0 · 1 · 2 |
 | `log read <sheet> [--since <ISO time>] [--filter <clause>]... [--repo <path or remote>] [--branch <name>] [--json-out <path>]` | the records of `cycles`, `seen`, `outages`, `routines`, `posts/<channel>` or `ledgers/<name>`, oldest first, staged ones included, the newest 20 on stdout and all in the file; `--since` walks only the days from that time on; `--filter` takes gitsheets-axi clauses; `--repo` fetches another repo's log branch (`opsbot/log`, or `--branch`) into a private bare copy under the git directory and reads it there | 0 · 1 · 2 |
-| `log seen <key>` | whether the key was reported to the session: from the log branch with `log.branch`, else `logs/intake/seen`; the listeners ask it | 0 seen · 1 not |
+| `log seen <key>` | whether the key was reported to the session: from the log branch, staged keys included; the listeners ask it | 0 seen · 1 not |
+| `log migrate [--dry-run] [--assign <path>=ledger[:<name>]\|state[:<name>]\|ignore\|keep]...` | moves a bot from the old log files to the log branch, once; see *Moving a bot to the log branch* | 0 · 1 stopped (files to assign, or settings problems; nothing written) · 2 refused (a release too old, a cycle holding the checkout, uncommitted `opsbot.json`) |
 | `settings validate [--head]` | validates the working-tree `opsbot.json` (or the committed one) | 0 · 1 |
 | `memory status` | the memory directory: number of memory files (`MEMORY.md` aside), their total bytes, the index's bytes and lines, the oldest unreviewed file's age, when the last review was, and whether one is due, all read from the `memory-review` routine | 0 · 1 memory is off |
 | `memory review --begin` | snapshots the directory into `.git/opsbot-memory-review.json` and prints the worksheet: one row per memory file (name, `type` from its frontmatter when present, bytes, age since its last change, whether it changed since the last review), the protocol, and the path of `references/memory-review.md`. A second `--begin` replaces the snapshot | 0 · 1 memory is off |
@@ -286,7 +284,6 @@ holds two starting points a bot may copy, `work` (what it is in the middle of: `
 - A degraded input never yields "nothing new".
 - An item is new when its `key` or any entry of its `keys` is not yet seen; when it is reported, all of them are recorded. A `keys` value that is not an array of non-empty strings makes the line a bad line.
 - An item with `report: false` has its keys recorded as seen and is never shown or counted as new; a check whose only items are `report: false` is nothing new. The log counts them per input as `quiet`, only when there are any. Any other `report` value is ignored.
-- `commit_paths` are added to the explicit `--only` list of the check's commit and the `cycle end` commit, never anything else. `settings validate` refuses a non-array, an empty or non-string entry, an absolute path, a `..` segment, and a path under `.git/` or `.claude/`.
 - `cycle end` refuses a future time, a backwards move, or no check since the lock.
 - The cold-start pack's `wake.d/` sections share a budget of their own (6 000 bytes) and are truncated with "… N more lines". The rule card, the kit's sections and the session-log section are whole and outside it: a long rule card never takes room from what the bot owes. Keeping the rule card short is the bot's job; the kit does not cut it.
 - House rules that must be in front of every session (how to write, when to delegate, how to read the digest, where scratch files go, what memory is for) ship inside the skill as `references/pack/*.md` and ride the pack, so they are updated by `npx skills update` and never copied into a bot's CLAUDE.md. `OPSBOT_PACK_DIR` overrides the directory. A section named `NN-memory.md` rides only while auto memory is on.
@@ -302,9 +299,9 @@ holds two starting points a bot may copy, `work` (what it is in the middle of: `
   while its pending flag is set and the new one is not, the gate holds for a whole read of
   the old pack, which clears it. `cold-start --write` removes the old flag. The old pack file
   is left where it is.
-- Changed files under `memory.dir` and under `routines.runs_dir` (new, modified and deleted,
-  each named in the list) are added to the explicit `--only` list of the check's commit and
-  the `cycle end` commit, the same way `commit_paths` are; nothing else under the repo rides
+- Changed files under `memory.dir` (new, modified and deleted, each named in the list) are the
+  program branch's one commit of a cycle (`chore(bot): the files the cycle changed`), made with
+  an explicit `--only` list and only when there are any; nothing else under the repo rides
   along. Files under `routines.dir` never ride: a definition changes by its own commit.
 - `nudge` never creates a second loop; it prompts the one named agent.
 - `nudge` trusts the runtime's `idle` and `blocked`, but not its `working` alone: the herdr
@@ -449,9 +446,9 @@ further call, and is woken from outside the model only when there is something t
   the session log; the loop prompt, which the nudge and the sleep timer type, is not the
   operator. The command writes `.git/opsbot-sleep` (when it was decided, and the earliest
   time something is due) and prints a `sleep` field in place of the `wake` field: arm
-  nothing, schedule nothing, end the turn. The log gets a `sleep` entry, committed with the
-  cycle (`cycle begin` makes its own `chore(cycle): sleep` commit); a commit that fails
-  means no sleep.
+  nothing, schedule nothing, end the turn. The log gets a `sleep` entry, in the cycle's log
+  commit (`cycle begin` makes its own `cycle: sleep` commit on the log branch); a commit that
+  fails means no sleep.
 - **Compacting.** The session cannot compact itself. The sleep timer does it: at its next
   tick, with the session idle, it types `/compact` through the runtime adapter while the
   cache is still warm. The SessionStart hook writes the cold-start pack as after any
@@ -563,25 +560,20 @@ apart.
   timezone, so a slot keeps its local time across a daylight-saving change. A routine is
   next due at the newest run plus the interval, or at its next slot. Accuracy is the cycle
   window; nothing is finer.
-- **Runs.** `routines done` writes one record per run under `routines.runs_dir`
-  (`records/routine-runs/`), at `YYYY/MM/<id>.md` by the run's UTC time, the id being
-  `<routine>-<YYYY-MM-DD>-<HHMM>` (UTC, with `-2`, `-3` on a clash). The frontmatter holds
-  `id`, `routine`, `at` (ISO UTC), `outcome` (`done`, `partial`, `skipped`, `blocked`), `by`
-  (the bot's name), `checked` (the items done, as given), `handed_to` when given and `title`;
-  the body is a `# <title>` line and the notes. Any run satisfies the routine for its next
+- **Runs.** `routines done` writes one record per run to the log branch's `routines` sheet,
+  at `routines/<routine>/YYYY/MM/DD/<hhmmss>` by the run's UTC time, the id being
+  `<routine>-<YYYY-MM-DD>-<HHMM>` (UTC, with `-2`, `-3` on a clash). The record holds `id`,
+  `routine`, `at` (ISO UTC), `outcome` (`done`, `partial`, `skipped`, `blocked`), `by` (the
+  bot's name), `checked` (the items done, as given), `handed_to` when given, `title` and
+  `notes`. Any run satisfies the routine for its next
   interval or slot, a skip included: a skip says why in its notes, and a false demand is
-  fixed by changing the definition, never by faking a run. Runs are the bot's own record,
-  committed with the next cycle like memory.
-- **Deterministic files.** Frontmatter keys are written sorted, strings double-quoted, arrays
-  on one line, so a record is the same bytes for the same values and a diff shows only what
-  changed. The core reads and writes these files itself and needs no other tool.
-- **Queryable with gitsheets.** The format is gitsheets' markdown record: TOML frontmatter
-  between `+++` and a body field. `templates/gitsheets/routines.toml` and
-  `routine-runs.toml` are sheet configs a bot may install under `.gitsheets/` (adjusting
-  `root` when it moved the directories) so the same files can be read with gitsheets. The
-  core never needs them. gitsheets reformats a body on its own writes; the core writes bodies
-  as given, so a record the core wrote may not be byte-canonical for gitsheets until
-  gitsheets rewrites it.
+  fixed by changing the definition, never by faking a run. Runs are the loop's own log,
+  written with the next log commit.
+- **Queryable with gitsheets.** A definition is gitsheets' markdown record: TOML frontmatter
+  between `+++` and a body field. `templates/gitsheets/routines.toml` is a sheet config a bot
+  may install under `.gitsheets/` (adjusting `root` when it moved the directory) so the
+  definitions can be read with gitsheets; the core never needs it. The runs are read with
+  `log read routines`.
 - **One item per due occurrence.** The check's `routines` input prints one item per due
   routine, keyed `routine:<id>:after:<the newest run's time, or since:<since>, or never>`
   for an interval routine and `routine:<id>:slot:<the slot's UTC time>` for a slot routine.
@@ -611,6 +603,46 @@ apart.
   no run yet, once the oldest memory file is `review_days` old (see *Auto memory*). A bot
   overrides it with its own `routines/memory-review.md`, which then defines it wholly. With
   `memory: false` the built-in does not exist.
+
+## Moving a bot to the log branch
+
+`log migrate` moves a bot whose log is in files (the kit's `logs/cycle.jsonl`,
+`logs/outages.jsonl`, `logs/intake/seen` and `logs/intake/watermark`, the files the old
+`commit_paths` setting listed, the post logs, the routine runs) to the log branch, once
+([the log branch](../behaviors/log-branch.md#what-it-needs), `plans/log-branch-migrate.md`).
+It runs from this release against a checkout still set up the old way, and this release runs
+no loop there: until the commit it prepares is merged into the bot's checkout, `cycle begin`,
+`check`, the watchdog and every command that writes the log refuse, exit 2, naming the command
+and, once prepared, the branch to merge. The file writer exists only in releases before this
+one, so nothing is ever written to both places.
+
+- **What it reads.** Every line, from the working tree (a line a failed commit left
+  uncommitted is a line). A cycle-log line is a `cycles` record, or an `outages` record for an
+  outage line an earlier bot wrote there; outages, seen keys, post-log lines (`posts/<channel>`,
+  keeping their own `at`), routine runs, a `.jsonl` file the old setting listed (a ledger named
+  for the file) and a `.json` one (a `state` record `{name, at, value}`) each become records
+  through the log module, not `log append`. The watermark is the migration commit's `Watermark`
+  trailer. A record without its own `at` takes the time its line was committed. A line it
+  cannot place (not JSON, no time, a field the log sets itself, the same path as a different
+  record) is a record of ledger `unparsed` with its file, line, text and why: never dropped.
+- **What it stops for.** A tracked file under `logs/` that no setting names, and a tracked
+  data file a hook in `opsbot.d/` names (a baseline it may read from the working tree), until
+  each is assigned with `--assign <path>=…`: `ledger[:<name>]`, `state[:<name>]`, `ignore`
+  (untracked and ignored, its lines not moved, a copy kept in the git directory), or `keep` (only
+  for a file a hook names outside `logs/` that a person edits). The dry run lists them.
+- **What it refuses.** A bot whose newest check lines carry no `check` field, which every
+  release since v0.15.0 writes on a cycle's check: it last ran a release older than the shapes
+  read here, and is told the release to update to first. A cycle holding the checkout, an
+  `opsbot.json` with uncommitted changes, a git operation in progress, and settings that would
+  still be invalid after the move.
+- **What it writes.** All the records in one commit after the log branch's root, with
+  `Migrated-From: <program commit>`. Then `opsbot/log-migrate`: HEAD plus one commit that
+  deletes the files it moved, untracks and ignores the `ignore` ones, removes the `.gitignore`
+  lines that named them, removes `commit_paths` and `routines.runs_dir`, rewrites `repo_sync`
+  `pull-on-clean` and `never-pull` as `pull` and `never`, sets `log.branch`, and declares each
+  ledger and baseline it moved (with no required fields yet). The current branch, the index and
+  the working tree are untouched. It prints the pushes, the pull request to open and the steps
+  after the merge. Run again, it writes nothing twice and prepares the branch again.
 
 ## Principles
 
