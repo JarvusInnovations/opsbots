@@ -34,6 +34,7 @@ export const APPEND_USAGE = "log append <ledger> | log append posts/<channel>   
 export const STATE_USAGE = "log state get <name> [--json-out <path>] | log state set <name>   (a JSON object on stdin)";
 export const READ_USAGE = "log read <sheet> [--since <ISO time>] [--filter <clause>]... [--repo <path or remote>] [--branch <name>] [--json-out <path>]";
 export const SEEN_USAGE = "log seen <key>";
+const MIGRATE_USAGE_TEXT = "log migrate [--dry-run] [--assign <path>=ledger[:<name>]|state[:<name>]|ignore|keep]...";
 
 const UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const FETCH_TIMEOUT_MS = 60_000;
@@ -41,14 +42,8 @@ const PREVIEW = 20;
 
 // ------------------------------------------------------------------ shared
 
-function needBranch(root: string, what: string): string {
-  const b = logBranch(root);
-  if (!b) {
-    throw new AxiError(`${what} needs log.branch in opsbot.json: ledgers, baselines and post logs on the log branch are opt-in`, "CANNOT_RUN", [
-      `Set log.branch (such as "${DEFAULT_LOG_BRANCH}") in opsbot.json and commit it`,
-    ]);
-  }
-  return b;
+function needBranch(root: string, _what: string): string {
+  return logBranch(root);
 }
 
 /**
@@ -112,12 +107,12 @@ function recordAt(r: Rec, i: number, usage: string): string {
   return r.at;
 }
 
-function recordHash(r: Rec): string {
+export function recordHash(r: Rec): string {
   return createHash("sha256").update(canonical(r)).digest("hex").slice(0, 12);
 }
 
 /** JSON with keys sorted at every depth, nulls dropped: two equal records give one string. */
-function canonical(v: unknown): string {
+export function canonical(v: unknown): string {
   const sort = (x: unknown): unknown => {
     if (Array.isArray(x)) return x.map(sort);
     if (x && typeof x === "object") {
@@ -370,5 +365,5 @@ export function logSeen(args: string[]): Record<string, unknown> {
 }
 
 export function logUsageHelp(): string[] {
-  return [APPEND_USAGE, STATE_USAGE, READ_USAGE, SEEN_USAGE, "log tail [--n N]"].map((u) => `${cliInvocation()} ${u}`);
+  return [APPEND_USAGE, STATE_USAGE, READ_USAGE, SEEN_USAGE, "log tail [--n N]", MIGRATE_USAGE_TEXT].map((u) => `${cliInvocation()} ${u}`);
 }

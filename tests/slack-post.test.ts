@@ -91,7 +91,7 @@ const FIXTURE: Record<string, unknown> = {
 };
 
 // Each test spawns bash, node and git several times; the timeout cases wait a second each.
-setDefaultTimeout(30000);
+setDefaultTimeout(120000);
 
 let dirs: string[] = [];
 afterEach(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); dirs = []; });
@@ -190,31 +190,40 @@ esac
     return { code: r.status, out: r.stdout, err: r.stderr, json };
   };
   const lines = (f: string) => (existsSync(join(dir, f)) ? readFileSync(join(dir, f), "utf8").trim().split("\n").filter(Boolean) : []);
-  return {
+  const b = {
     dir, root, env, run,
     api: () => lines("slack-api.log").map((l) => JSON.parse(l)),
     axi: () => lines("axi-calls.log"),
     audience: () => lines("audience-calls.log"),
     screens: () => lines("screen-calls.jsonl").map((l) => JSON.parse(l)),
     escalations: () => (existsSync(join(dir, "escalations.log")) ? readFileSync(join(dir, "escalations.log"), "utf8").split("---\n").filter((s) => s.trim()) : []),
-    log: () => (existsSync(join(root, "logs/slack-posts.jsonl")) ? readFileSync(join(root, "logs/slack-posts.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)) : []),
+    /** The decision log: the posts/slack records of the log branch, read through the core. */
+    log: () => readPosts(),
     mode: (m: string) => writeFileSync(join(dir, "screen-mode"), m),
   };
+  // the log is the log branch's posts/slack sheet: the real core and gitsheets-axi behind the script
+  commitOnBranch(root, { branch: "opsbot/log" });
+  const c = coreForScripts(dir);
+  Object.assign(env, c.env, { PATH: `${env.PATH}:${c.path}` });
+  function readPosts(): Array<Record<string, any>> {
+    const f = join(dir, "posts.json");
+    rmSync(f, { force: true });
+    const r = spawnSync(c.env.OPSBOT_CORE!, ["log", "read", "posts/slack", "--json-out", f], { cwd: root, encoding: "utf8", env });
+    expect(r.status).toBe(0);
+    return JSON.parse(readFileSync(f, "utf8")) as Array<Record<string, any>>;
+  }
+  return b;
 }
 
-/** A bot on the log branch: the real core and gitsheets-axi behind the post script. */
+/** Records written straight to the post log through the core, as an earlier post would have. */
+function appendPosts(b: ReturnType<typeof bot>, lines: Array<Record<string, unknown>>): void {
+  const r = spawnSync(b.env.OPSBOT_CORE!, ["log", "append", "posts/slack"], { cwd: b.root, encoding: "utf8", env: b.env, input: lines.map((l) => JSON.stringify(l)).join("\n") });
+  expect(r.status).toBe(0);
+}
+
+/** A bot on the log branch (every bot is now): what the older tests called it. */
 function onBranch(b: ReturnType<typeof bot>) {
-  commitOnBranch(b.root, { branch: "opsbot/log" });
-  const c = coreForScripts(b.dir);
-  Object.assign(b.env, c.env, { PATH: `${b.env.PATH}:${c.path}` });
-  const read = () => {
-    const f = join(b.dir, "posts.json");
-    rmSync(f, { force: true });
-    const r = spawnSync(c.env.OPSBOT_CORE!, ["log", "read", "posts/slack", "--json-out", f], { cwd: b.root, encoding: "utf8", env: b.env });
-    expect(r.status).toBe(0);
-    return JSON.parse(readFileSync(f, "utf8")) as Array<Record<string, unknown>>;
-  };
-  return { read };
+  return { read: () => b.log() };
 }
 
 const SCREEN_ALL = { screen: { command: "bin/screen", policy: { internal: ["policy/internal.md"], external: ["policy/internal.md", "policy/external.md"] } } };
@@ -389,8 +398,8 @@ describe("post without a screen: posting as before, the class logged", () => {
     expect(b.screens()).toEqual([]);
     const [line] = b.log();
     expect(line).toMatchObject({ conv: CHAN, reply_to: TS, class: "internal", screen: "skipped", posted: true, ts: "1794400999.000100" });
-    expect(line.draft_sha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(readFileSync(join(b.root, "logs/slack-posts.jsonl"), "utf8")).not.toContain("report is attached");
+    expect(line!.draft_sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(b.log())).not.toContain("report is attached");
   });
 
   test("a failed lookup does not stop the post; the text can come on stdin", () => {
@@ -473,7 +482,7 @@ describe("post with a screen", () => {
     expect(r.json).toMatchObject({ posted: false, class: "external", screen: "block", passage: "the rate is 180 an hour", reason: "prices are not said outside" });
     expect(b.axi()).toEqual([]);
     expect(b.log()).toEqual([expect.objectContaining({ class: "external", screen: "block", reason: "prices are not said outside", posted: false })]);
-    expect(readFileSync(join(b.root, "logs/slack-posts.jsonl"), "utf8")).not.toContain("180");
+    expect(JSON.stringify(b.log())).not.toContain("180");
     expect(b.escalations()).toEqual([]);
   });
 
@@ -670,7 +679,7 @@ describe("peer bots: the loop guard", () => {
     const log = b.log();
     expect(log.at(-1)).toMatchObject({ conv: PCHAN, reply_to: ROOT, peer: "deskbot", peer_guard: "turns", posted: false, screen: "skipped" });
     expect(log[0]).toMatchObject({ peer: "deskbot", posted: true });
-    expect(readFileSync(join(b.root, "logs/slack-posts.jsonl"), "utf8")).not.toContain("anything else");
+    expect(JSON.stringify(b.log())).not.toContain("anything else");
     const cache = readFileSync(join(b.dir, "cache", "slack-classes.json"), "utf8");
     expect(JSON.parse(cache).threads[`${PCHAN}:${ROOT}`].senders).toEqual(["h", "p:deskbot", "s", "p:deskbot", "s", "p:deskbot", "s"]);
     expect(cache).not.toContain("words");
@@ -717,10 +726,12 @@ describe("peer bots: the loop guard", () => {
     expect(posted(b)).toHaveLength(4);
     // top-level posts read no thread
     expect(replies(b)).toEqual([]);
-    // an hour-old post no longer counts
-    const logPath = join(b.root, "logs/slack-posts.jsonl");
-    const old = new Date(Date.now() - 3700000).toISOString();
-    writeFileSync(logPath, readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.stringify({ ...JSON.parse(l), at: old })).join("\n") + "\n");
+  });
+
+  test("the hourly cap counts the last hour only: older posts to a peer do not count", () => {
+    const b = bot({ ...PEERS, peer_posts_per_hour: 2 }, { audience });
+    const old = new Date(Date.now() - 3700000).toISOString().replace(/\.\d{3}Z$/, "Z");
+    appendPosts(b, [1, 2].map((n) => ({ at: old, conv: PCHAN, class: "internal", posted: true, peer: "deskbot", draft_sha256: String(n).repeat(64) })));
     expect(b.run(["post", PCHAN, `<@${PEER}> fresh hour`]).code).toBe(0);
   });
 
@@ -774,7 +785,7 @@ describe("peer bots: the loop guard", () => {
     expect(bot({ escalate_dm: ESC }, { audience }).run(["status"]).out).not.toMatch(/peer/);
   });
 
-  test("with log.branch the hourly cap counts from the branch; a log it cannot read refuses", () => {
+  test("the hourly cap counts from the branch; a log it cannot read refuses", () => {
     const b = bot({ ...PEERS, peer_posts_per_hour: 2 }, { audience });
     onBranch(b);
     expect(b.run(["post", PCHAN, `<@${PEER}> can you take the batch?`]).code).toBe(0);
@@ -791,11 +802,11 @@ describe("peer bots: the loop guard", () => {
   });
 });
 
-describe("post with log.branch: the decision log is the posts/slack sheet", () => {
+describe("the decision log is the posts/slack sheet of the log branch", () => {
   setDefaultTimeout(180000);
   const same = (lines: Array<Record<string, unknown>>) => lines.map(({ at: _at, ...l }) => l);
 
-  test("a post and a blocked post each leave the record the file log left; nothing in the working tree", () => {
+  test("a post and a blocked post each leave a record, the same on every bot; nothing in the working tree", () => {
     const steps = (b: ReturnType<typeof bot>) => {
       expect(b.run(["post", CHAN, "the batch is filed"]).code).toBe(0);
       b.mode("block");
@@ -821,7 +832,7 @@ describe("post with log.branch: the decision log is the posts/slack sheet", () =
     const r = b.run(["post", CHAN, "the batch is filed"], { env: { OPSBOT_GITSHEETS_AXI: broken } });
     expect(r.code).toBe(0);
     expect(r.json).toMatchObject({ posted: true });
-    expect(r.err).toContain("warning: could not write the post log on opsbot/log");
+    expect(r.err).toContain("warning: could not write the post log on the log branch");
     expect(posted(b)).toHaveLength(1);
   });
 });

@@ -7,6 +7,9 @@ import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeF
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { forgetLogBranch, readPending, seenRecords, stage, type Rec } from "../src/opsbot-core/log";
+import { outages, readCycleLog, readSeen, readWatermark, type LogLine, type Outage } from "../src/opsbot-core/state";
+
 export const REPO = resolve(import.meta.dir, "..");
 export const ENTRY = join(REPO, "src", "opsbot-core", "bin.ts");
 export const BUNDLE = join(REPO, "skills", "opsbot-core", "scripts", "opsbot-core.mjs");
@@ -182,4 +185,43 @@ export function commitOnBranch(root: string, logSettings: Record<string, unknown
   for (const [k, v] of [["user.name", "Test"], ["user.email", "test@example.invalid"], ["commit.gpgsign", "false"]]) git(root, "config", k!, v!);
   git(root, "add", "-A");
   git(root, "commit", "-q", "-m", "on the log branch");
+}
+
+// ------------------------------------------------------------------ the log, read as the core reads it
+
+/** The cycle log as lines (the log branch's records, quiet runs and what is staged). */
+export function logOf(b: Bot): LogLine[] {
+  forgetLogBranch();
+  return readCycleLog(b.root);
+}
+
+export function outagesOf(b: Bot): Outage[] {
+  forgetLogBranch();
+  return outages(b.root);
+}
+
+export function watermarkOf(b: Bot): string | null {
+  forgetLogBranch();
+  return readWatermark(b.root);
+}
+
+export function seenOf(b: Bot): string[] {
+  forgetLogBranch();
+  return [...readSeen(b.root)];
+}
+
+/** Stage cycle lines and seen keys for the next log commit, as the core does between commits. */
+export function stageLog(b: Bot, add: { cycles?: Rec[]; seen?: string[] }): void {
+  stage(b.root, { cycles: add.cycles ?? [], seen: seenRecords(add.seen ?? [], new Date().toISOString().replace(/\.\d{3}Z$/, "Z")) });
+}
+
+/** What is staged for the next log commit. */
+export function stagedOf(b: Bot): Record<string, Rec[]> {
+  return readPending(b.root) as unknown as Record<string, Rec[]>;
+}
+
+/** The log branch's commit subjects, newest first. */
+export function logSubjects(b: Bot, branch = "opsbot/log"): string[] {
+  const r = spawnSync("git", ["-C", b.root, "log", "--format=%s", branch], { encoding: "utf8" });
+  return r.status === 0 ? r.stdout.trim().split("\n").filter(Boolean) : [];
 }

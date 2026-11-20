@@ -61,7 +61,7 @@ const envMs = (name: string): number | undefined => {
 async function backstopCommand(args: string[]): Promise<Record<string, unknown>> {
   const { flags } = parseArgs(args, { value: ["key", "at", "grace", "reason"] }, BACKSTOP_USAGE);
   const key = typeof flags.key === "string" ? flags.key : "";
-  if (!key) throw usageError("--key is required: the event's key, as the check records it in logs/intake/seen", BACKSTOP_USAGE);
+  if (!key) throw usageError("--key is required: the event's key, as the check records it as seen", BACKSTOP_USAGE);
   const at = typeof flags.at === "string" ? Date.parse(flags.at) : NaN;
   if (!Number.isFinite(at)) throw usageError("--at is required: the event's time, ISO 8601", BACKSTOP_USAGE);
   const reason = typeof flags.reason === "string" ? flags.reason : "";

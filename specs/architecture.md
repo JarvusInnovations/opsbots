@@ -59,9 +59,10 @@ watermark, without the model. "Whole or not at all."
   the adapter can see (every conversation a bridge holds, every inbox folder) so a new
   conversation appears without configuration; a new one is reported as needing a posture,
   and its contents are not read until it has one.
-- State is committed, under the bot's `logs/intake/`: a typed seen-key set
-  (`chat:<conv>:<msg>`, `mail:<id>`, `log:<service>:<id>`), one UTC watermark, and any
-  baselines. Nothing lives only in a cache directory.
+- State is committed, on the bot's log branch (`opsbot/log`, never checked out;
+  [the log branch](behaviors/log-branch.md)): a typed seen-key set (`chat:<conv>:<msg>`,
+  `mail:<id>`, `log:<service>:<id>`), one UTC watermark (a trailer of the newest log commit),
+  and any baselines. Nothing lives only in a cache directory.
 - One watermark, read with a lookback margin; seen keys stop the margin from
   double-reporting.
 - Exit codes: `0` nothing new (the script itself logs, commits and advances the
@@ -248,8 +249,9 @@ accounts, clips, tasks) are its own.
 One committed file per bot holds: the mark; the gate word; conversations with postures
 (`post | answer | read | ignore | notify`) and the escalation conversation; streams and
 their adapters; the cadence table with working and night hours; the reply posture; the
-autocompact window; the repo-sync policy (`pull-on-clean` for a repo other humans
-commit to, `never-pull` for a single writer); the runtime adapter and agent name; the
+autocompact window; the repo-sync policy (`pull`, the default: `cycle begin` fast-forwards a
+clean checkout that is behind, since nothing of the loop's is in the working tree; `never` to
+leave it alone); the runtime adapter and agent name; the
 loop prompt. Nothing about the account the bot speaks from is scattered through scripts.
 
 A bot installs a released kit. The kit's default branch is `main`, which only its release
@@ -262,7 +264,7 @@ names `#develop`.
 | Mechanism | Campaign bot | Support-desk bot | Kit | Why |
 | --- | --- | --- | --- | --- |
 | Check | one script per stream, each its own exit code | one script, all streams | one script | one degraded verdict; the model never has to read seven results |
-| Intake state | per-stream seen files in a cache dir | committed under `logs/intake/` | committed | survives a user or machine move; auditable; the cache-only state was what the identity migration lost |
+| Intake state | per-stream seen files in a cache dir | committed under `logs/intake/` | committed, on a log branch of its own | survives a user or machine move; auditable; the cache-only state was what the identity migration lost; on its own branch, no cycle commit lands on the program branch |
 | Cadence | inside the check | a separate script reading the log | separate | testable; the table is config |
 | Cycle close | a stamp with free text, watermark = now | `cycle-end`, watermark = check start | `cycle-end` | closes the mid-cycle-arrival gap; the summary stays as an optional field |
 | Lock | prose | git-dir lock with abandonment rules | lock | "one committing agent" failed in practice |

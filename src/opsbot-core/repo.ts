@@ -63,11 +63,26 @@ export function requireRoot(): string {
   return root;
 }
 
-/** A path inside this checkout's own git directory: never committed, one per worktree. */
+const gitDirs = new Map<string, { own: string; common: string } | null>();
+
+/** The checkout's own git directory and the common one (they differ in a linked worktree), asked
+ * of git once per process: a command asks for a dozen paths in them. */
+function dirsOf(root: string): { own: string; common: string } | null {
+  if (gitDirs.has(root)) return gitDirs.get(root)!;
+  const r = git(root, ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"]);
+  const [own, common] = r.code === 0 ? r.stdout.trim().split("\n").map((l) => l.trim()) : [];
+  const d = own && common ? { own, common } : null;
+  gitDirs.set(root, d);
+  return d;
+}
+
+/** A path inside this checkout's own git directory: never committed, one per worktree. As
+ * `git rev-parse --git-path` resolves it for the names the kit uses: `info/` is the common
+ * directory's (shared by every worktree), everything else the checkout's own. */
 export function gitPath(root: string, name: string): string {
-  const r = git(root, ["rev-parse", "--path-format=absolute", "--git-path", name]);
-  if (r.code !== 0) return join(root, ".git", name);
-  return r.stdout.trim();
+  const d = dirsOf(root);
+  if (!d) return join(root, ".git", name);
+  return join(name.startsWith("info/") ? d.common : d.own, name);
 }
 
 export function hasHead(root: string): boolean {
@@ -112,25 +127,6 @@ export function trailers(): string {
     out.push(`Claude-Session: https://claude.ai/code/${env.CLAUDE_CODE_BRIDGE_SESSION_ID}`);
   }
   return out.join("\n");
-}
-
-/**
- * The `commit_paths` files that exist and have changes (untracked counts; an ignored
- * file does not), as absolute paths, leaving out any already in `already`. A listed
- * path that does not exist is skipped silently.
- */
-export function changedCommitPaths(root: string, listed: string[], already: string[] = []): string[] {
-  const out: string[] = [];
-  const have = new Set(already.map((f) => resolve(root, f)));
-  for (const rel of listed) {
-    const abs = resolve(root, rel);
-    if (have.has(abs) || !existsSync(abs)) continue;
-    const st = git(root, ["status", "--porcelain", "--untracked-files=all", "--", abs]);
-    if (st.code !== 0 || !st.stdout.trim()) continue;
-    have.add(abs);
-    out.push(abs);
-  }
-  return out;
 }
 
 /** Stage and commit exactly these files (`--only`). Returns null on success, else why. */

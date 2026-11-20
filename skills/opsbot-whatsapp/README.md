@@ -91,7 +91,8 @@ did not pick it up. Frequent nudges mean the session's own monitor is not armed.
 once for a line means the session was busy; it picks the line up when its cycle ends. A line
 `mark failed: <reason>` means the blue ticks could not be sent; the waker tries three more times.
 
-Every post the bot tries is a line in `logs/whatsapp-posts.jsonl`: never the text, only its hash,
+Every post the bot tries is a record of `posts/whatsapp` on the log branch (`opsbot-core log read
+posts/whatsapp`): never the text, only its hash,
 the class, the screen's verdict, `posted` and the `send_id`. A refused send carries whatsapp-axi's
 error `code`. The ones you will see: `NOT_CONNECTED` (the phone link is down: run
 `whatsapp-axi doctor --account <account>`), `DAEMON_NOT_RUNNING`, `FIRST_CONTACT` (the bot never
