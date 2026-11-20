@@ -28,6 +28,10 @@ commit, deleting its sync hooks) is that bot's work, not this plan's.
    lines for them, and sets `log.branch`. It prints the PR to open and changes nothing on the
    current branch. `--dry-run` prints counts per sheet. Lines it cannot parse are listed and
    kept in a `ledgers/unparsed` sheet, never dropped.
+   It also lists every tracked file under `logs/` that `commit_paths` does not name (an
+   adopting bot had an 8 MB probe log tracked, uncommitted for weeks, dirtying its tree) and
+   every baseline a hook reads from the working tree, and stops until each is assigned: a
+   ledger, a state record, or untracked and ignored.
 2. **One writer at a time.** A bot writes the old way until the removal commit is in its
    checkout; `cycle begin` picks the writer from `log.branch` in the checked-out settings.
 3. **`repo_sync`.** `pull` (default) fast-forwards at `cycle begin` when the tree is clean and
@@ -46,6 +50,10 @@ commit, deleting its sync hooks) is that bot's work, not this plan's.
       `git status` clean on the program branch.
 - [ ] A bot whose checkout does not yet have the removal commit keeps writing files, and
       nothing is written to both places.
+- [ ] A tracked log file that `commit_paths` does not name stops the migration until it is
+      assigned, and the dry run lists it.
+- [ ] A bot several releases behind is refused with the release to update to first; the
+      migration runs only from the release before this one.
 - [ ] `cycle begin` fast-forwards a clean checkout that is behind; a diverged or dirty one is
       reported once and the cycle goes on.
 - [ ] `settings validate` on a config with `commit_paths` fails and names the command.
