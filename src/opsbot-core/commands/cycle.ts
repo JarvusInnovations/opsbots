@@ -23,7 +23,9 @@ import { cliInvocation } from "../invocation.js";
 import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
 import { blockedBy, changedCommitPaths, commitOnly, firstLine, nowIso, nowMs, parseIso, pushCommits, requireRoot, trailers } from "../repo.js";
 import { loadSettings, type Settings } from "../settings.js";
+import { commitStaged, dropStaged, logBranch, pushLog, stage, type PushResult } from "../log.js";
 import {
+  appendCycleLine,
   appendJsonl,
   fileSize,
   judgeLock,
@@ -51,6 +53,20 @@ import { decideFast } from "../fast.js";
 import { runRecall } from "../record.js";
 import { existsSync, rmSync } from "node:fs";
 import { clearSleep, decideSleep, readSleep, silenceFrom, sleepFieldLines, sleepLogLine, wakeLogLine, writeSleep, type SleepState } from "../sleep.js";
+
+/** A refused log push at `cycle begin`: a failed check, said out loud; the hold is kept so the
+ * session ends the cycle as degraded. Nothing is lost: the commits stay on the local branch. */
+function refusedPush(root: string, s: Settings, checkLine: string, pushed: PushResult): Record<string, unknown> {
+  setExit(20);
+  return {
+    cycle: `degraded · ${pushed.why} · ${checkLine}`,
+    failed: [{ input: "log push", error: pushed.why ?? "refused" }],
+    help: [
+      "Find the other host running this bot and stop one of them; the log's commits stay on this host's branch",
+      `Then \`${cliInvocation()} cycle end --records 0 --degraded\``,
+    ],
+  };
+}
 
 export const CYCLE_USAGE = "cycle begin [--full] | cycle end --records N [--degraded] [--summary TEXT]";
 
@@ -163,7 +179,7 @@ function cycleBegin(forceFull: boolean): Record<string, unknown> {
   if (slept) {
     // the sleep is over: the file goes, and the log says why and how long the wake took
     clearSleep(root);
-    appendJsonl(paths(root).log, wakeLogLine(slept, nowMs()));
+    appendCycleLine(root, wakeLogLine(slept, nowMs()));
   }
 
   // a wake from a wake file that names its inputs checks only those (A fast cycle). The counts are
@@ -189,17 +205,30 @@ function cycleBegin(forceFull: boolean): Record<string, unknown> {
     const r = runScript(s, root, baseEnv(root, settings, configPath, "cycle.begin"));
     if (r.code !== 0) {
       const error = `exit ${r.code}: ${firstLine(r.stderr) || firstLine(r.stdout) || "no message"}`;
-      appendJsonl(paths(root).log, {
+      const failLine = {
         at: nowIso(),
         outcome: "degraded",
         inputs: {},
         new: 0,
         failed: [{ input: `cycle.d/begin/${s.name}`, error }],
         watermark: readWatermark(root),
-      });
+      };
+      const branch = logBranch(root);
+      let unwritten = "";
+      if (branch) {
+        // on the log branch as it happens, so the watchdog can quote it if no cycle follows
+        const w = commitStaged(root, branch, { cycles: [failLine] }, { subject: `cycle: cycle.d/begin/${s.name} failed` }, trailers());
+        if (!w.ok) {
+          stage(root, { cycles: [failLine] });
+          unwritten = ` · not yet on the log branch: ${w.why}`;
+        } else {
+          const pushed = pushLog(root, branch, nowMs());
+          if (pushed.why && pushed.why !== "no remote named origin") unwritten = ` · ${pushed.why}`;
+        }
+      } else appendJsonl(paths(root).log, failLine);
       setExit(20);
       return {
-        cycle: `degraded · cycle.d/begin/${s.name} failed, so the check did not run · ${error}`,
+        cycle: `degraded · cycle.d/begin/${s.name} failed, so the check did not run · ${error}${unwritten}`,
         help: [`Fix what it reports, then run \`${cliInvocation()} cycle end --records 0 --degraded\` to release the checkout`],
       };
     }
@@ -227,9 +256,13 @@ function cycleBegin(forceFull: boolean): Record<string, unknown> {
   }
 
   const fastLine = decision.fast ? `${decision.inputs.join(", ")}; full check due ${hhmm(decision.fullDue)}` : null;
+  const branch = logBranch(root);
   if (r.code === 0) {
     let sleep = sleepDecision(root, settings, text, "cycle begin");
-    if (sleep) {
+    if (sleep && branch) {
+      if (commitStaged(root, branch, { cycles: [sleepLogLine(sleep)] }, { subject: "cycle: sleep" }, trailers()).ok) writeSleep(root, sleep);
+      else sleep = null;
+    } else if (sleep) {
       const p = paths(root);
       const size = fileSize(p.log);
       appendJsonl(p.log, sleepLogLine(sleep));
@@ -240,7 +273,13 @@ function cycleBegin(forceFull: boolean): Record<string, unknown> {
         sleep = null;
       }
     }
-    const why = pushCommits(root);
+    let why: string | null;
+    if (branch) {
+      const pushed = pushLog(root, branch, nowMs());
+      if (pushed.refused) return refusedPush(root, settings, r.line, pushed);
+      const prog = r.program ? pushCommits(root) : null;
+      why = [pushed.why, prog].filter(Boolean).join("; ") || null;
+    } else why = pushCommits(root);
     releaseLock(root);
     setExit(0);
     const out: Record<string, unknown> = { cycle: `${r.line}${why ? ` · not pushed: ${why}` : ""} · next ${next(root, settings)}` };
@@ -341,6 +380,9 @@ function cycleEnd(args: string[]): Record<string, unknown> {
     for (const line of r.stdout.split("\n")) if (line.trim()) notes.push(line);
   }
 
+  const branch = logBranch(root);
+  if (branch) return cycleEndBranch(root, settings, text, branch, { records, degraded, summary, wm, holdAt, notes, checkKind: lastCheckKind(root, holdAt) });
+
   const logSize = fileSize(p.log);
   if (!degraded && wm) writeWatermark(root, wm);
   const line: Record<string, unknown> = {
@@ -378,6 +420,72 @@ function cycleEnd(args: string[]): Record<string, unknown> {
   const out: Record<string, unknown> = {
     cycle: `finished · ${records} records · watermark ${wm ?? "none"}${degraded ? " (held: degraded)" : ""}${pushed ? ` · not pushed: ${pushed}` : ""}`,
   };
+  return closing(root, settings, out, { notes, arrived, sleep });
+}
+
+/** The kind of the check this cycle ran (`full` or `fast`), from its line. */
+function lastCheckKind(root: string, holdAt: string): string {
+  let kind = "full";
+  for (const l of readCycleLog(root)) {
+    if (["new", "degraded", "nothing-new"].includes(l.outcome) && l.at >= holdAt) kind = l.fast === true ? "fast" : "full";
+  }
+  return kind;
+}
+
+/**
+ * `cycle end` with `log.branch`: the finished line, and the sleep line when the bot goes to sleep,
+ * join what the cycle staged (its check, the seen keys, outages, a wake) in one log commit with
+ * the pinned watermark. Then the log is pushed up to its newest sealed commit; a refused push is
+ * a failed check (exit 20). The program branch gets a commit only for the files the cycle changed
+ * there (memory, `commit_paths`).
+ */
+function cycleEndBranch(
+  root: string,
+  settings: Settings,
+  text: string,
+  branch: string,
+  o: { records: number; degraded: boolean; summary?: string; wm: string | null; holdAt: string; notes: string[]; checkKind: string },
+): Record<string, unknown> {
+  const { records, degraded, summary, wm, holdAt, notes } = o;
+  const line: Record<string, unknown> = { at: nowIso(), outcome: "finished", records, degraded };
+  if (summary !== undefined) line.summary = summary;
+  // staged first, so the sleep decision reads the log as the file writer's would
+  stage(root, { cycles: [line] });
+  const arrived = arrivals(root, settings, holdAt);
+  const sleep = arrived.length ? null : sleepDecision(root, settings, text, "cycle end");
+  const w = commitStaged(root, branch, sleep ? { cycles: [sleepLogLine(sleep)] } : {}, { subject: `cycle: finished, ${records} records`, watermark: wm, check: o.checkKind }, trailers());
+  if (!w.ok) {
+    dropStaged(root, { cycles: [line] });
+    throw new AxiError(`cannot write the cycle to the log branch ${branch} (${w.why}); nothing written, the checkout still held`, "CANNOT_COMMIT", [
+      "Fix it, then run cycle end again",
+    ]);
+  }
+  if (sleep) writeSleep(root, sleep);
+  const files = [...changedCommitPaths(root, settings.commit_paths), ...changedMemoryFiles(root, settings)];
+  const progWhy = files.length ? commitOnly(root, files, "chore(bot): the files the cycle changed") : null;
+  const prog = files.length && !progWhy ? pushCommits(root) : null;
+  const pushed = pushLog(root, branch, nowMs());
+  releaseLock(root);
+  const not = [pushed.refused ? null : pushed.why, progWhy ? `the program branch's files not committed: ${progWhy}` : null, prog].filter(Boolean);
+  const out: Record<string, unknown> = {
+    cycle: `finished · ${records} records · watermark ${wm ?? "none"}${degraded ? " (held: degraded)" : ""}${not.length ? ` · not pushed: ${not.join("; ")}` : ""}`,
+  };
+  if (pushed.refused) {
+    setExit(20);
+    out.cycle = `${String(out.cycle)} · degraded: ${pushed.why}`;
+    out.failed = [{ input: "log push", error: pushed.why }];
+  }
+  return closing(root, settings, out, { notes, arrived, sleep });
+}
+
+/** What `cycle end` prints after its closing line: notes, recalls, arrivals, the next wake. */
+function closing(
+  root: string,
+  settings: Settings,
+  out: Record<string, unknown>,
+  o: { notes: string[]; arrived: Array<{ file: string; n: number }>; sleep: SleepState | null },
+): Record<string, unknown> {
+  const { notes, arrived, sleep } = o;
   if (notes.length) out.notes = notes;
   const recall = cycleEndRecall(root, settings);
   if (recall.length) out.recall = recall;

@@ -15,6 +15,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { FrontmatterError, parseRecord, serializeRecord, type Frontmatter } from "./frontmatter.js";
 import { git, hasHead, iso } from "./repo.js";
+import { branchRoutineRecords, logBranch, stage, type Rec } from "./log.js";
 import type { Settings } from "./settings.js";
 
 export const DAY = 86_400_000;
@@ -379,6 +380,8 @@ function notesOf(body: string): string {
 
 /** Every run in `routines.runs_dir` (the working tree: runs are the bot's own record). */
 export function readRuns(root: string, s: Settings): { runs: Run[]; problems: string[] } {
+  const branch = logBranch(root);
+  if (branch) return branchRuns(branch, branchRoutineRecords(root, branch));
   const runs: Run[] = [];
   const problems: string[] = [];
   for (const abs of walk(resolve(root, s.routines.runs_dir))) {
@@ -422,6 +425,8 @@ export interface NewRun {
 /** Write one run record; returns its repo-relative path and id. Never overwrites: a run in the
  * same minute gets `-2`, `-3`. */
 export function writeRun(root: string, s: Settings, r: NewRun): { file: string; id: string } {
+  const branch = logBranch(root);
+  if (branch) return writeBranchRun(root, branch, r);
   const at = iso(r.atMs);
   const dir = resolve(root, s.routines.runs_dir, at.slice(0, 4), at.slice(5, 7));
   const stem = `${r.routine}-${at.slice(0, 10)}-${at.slice(11, 13)}${at.slice(14, 16)}`;
@@ -442,6 +447,8 @@ export function writeRun(root: string, s: Settings, r: NewRun): { file: string; 
  * each file, so a deletion is a deletion and an ignored file is never taken.
  */
 export function changedRunFiles(root: string, s: Settings, already: string[] = []): string[] {
+  // with `log.branch` the runs are on the log branch: nothing in the working tree to commit
+  if (logBranch(root)) return [];
   const dir = resolve(root, s.routines.runs_dir);
   const r = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames", "--", dir]);
   if (r.code !== 0) return [];
@@ -455,4 +462,52 @@ export function changedRunFiles(root: string, s: Settings, already: string[] = [
     out.push(abs);
   }
   return out;
+}
+
+// ------------------------------------------------------------ runs on the log branch
+
+/** Where a run's record is on the log branch: `<branch>:routines/<routine>/YYYY/MM/DD/<mmss>`. */
+function branchRunFile(branch: string, routine: string, at: string): string {
+  return `${branch}:routines/${routine}/${at.slice(0, 4)}/${at.slice(5, 7)}/${at.slice(8, 10)}/${at.slice(14, 16)}${at.slice(17, 19)}`;
+}
+
+/** The `routines` records of the log branch (and those staged) as runs. */
+function branchRuns(branch: string, recs: Rec[]): { runs: Run[]; problems: string[] } {
+  const runs: Run[] = [];
+  const problems: string[] = [];
+  for (const d of recs) {
+    const at = typeof d.at === "string" ? d.at : null;
+    const atMs = at ? Date.parse(at) : NaN;
+    if (typeof d.routine !== "string" || !d.routine || at === null || Number.isNaN(atMs)) {
+      problems.push(`a run on ${branch} without a routine or a readable at: ${JSON.stringify(d).slice(0, 120)}`);
+      continue;
+    }
+    runs.push({
+      id: typeof d.id === "string" ? d.id : `${d.routine}-${at.slice(0, 10)}-${at.slice(11, 13)}${at.slice(14, 16)}`,
+      routine: d.routine,
+      at,
+      atMs,
+      outcome: typeof d.outcome === "string" ? d.outcome : "done",
+      by: typeof d.by === "string" ? d.by : null,
+      checked: Array.isArray(d.checked) ? d.checked.map(String) : [],
+      handed_to: typeof d.handed_to === "string" ? d.handed_to : null,
+      notes: typeof d.notes === "string" ? d.notes : "",
+      file: branchRunFile(branch, d.routine, at),
+    });
+  }
+  return { runs, problems };
+}
+
+/** A run staged for the next log commit (a cycle's, or the next cycle's when made outside one). */
+function writeBranchRun(root: string, branch: string, r: NewRun): { file: string; id: string } {
+  const at = iso(r.atMs);
+  const stem = `${r.routine}-${at.slice(0, 10)}-${at.slice(11, 13)}${at.slice(14, 16)}`;
+  const ids = new Set(branchRuns(branch, branchRoutineRecords(root, branch)).runs.map((x) => x.id));
+  let id = stem;
+  for (let n = 2; ids.has(id); n++) id = `${stem}-${n}`;
+  const title = `${r.title}: ${r.outcome} ${at.slice(0, 10)}`;
+  const rec: Rec = { id, routine: r.routine, at, outcome: r.outcome, by: r.by, checked: r.checked, title, notes: r.notes.trim() };
+  if (r.handed_to) rec.handed_to = r.handed_to;
+  stage(root, { routines: [rec] });
+  return { file: branchRunFile(branch, r.routine, at), id };
 }

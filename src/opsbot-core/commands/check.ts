@@ -20,7 +20,8 @@ import { AxiError } from "axi-sdk-js";
 import { parseArgs, setExit } from "../args.js";
 import { cliInvocation } from "../invocation.js";
 import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
-import { blockedBy, changedCommitPaths, commitOnly, firstLine, hasHead, iso, nowMs, parseIso, requireRoot } from "../repo.js";
+import { blockedBy, changedCommitPaths, commitOnly, firstLine, hasHead, iso, nowMs, parseIso, requireRoot, trailers } from "../repo.js";
+import { branchWatermark, commitStaged, hasStaged, logBranch, readPending, seenFileFor, seenRecords, stage, writeQuiet } from "../log.js";
 import { loadSettings, type Settings } from "../settings.js";
 import { cappedRows, queryRecall, recallCommand, recallFields, rowMatches } from "../record.js";
 import { changedMemoryFiles } from "../memory.js";
@@ -73,6 +74,9 @@ export interface CheckResult {
   outcome: "nothing-new" | "new" | "degraded";
   line: string;
   output: Record<string, unknown>;
+  /** With `log.branch`: whether this check committed files on the program branch (memory,
+   * `commit_paths`), so the caller pushes it. */
+  program?: boolean;
 }
 
 /** Whole-word, capitals-only presence of the gate word (judged elsewhere, never here). */
@@ -216,9 +220,12 @@ function sweep(
   // a fast check reads the window the last full check read: only a full check moves the watermark
   const SINCE = fast ? fast.since : iso(sinceMs);
   const seen = readSeen(root);
+  const branch = logBranch(root);
 
   // every stream; a fast check, only the inputs the wake named
   const configPath = configSnapshot(root, text);
+  // with `log.branch` the keys are on the branch; scripts read a copy in the git dir
+  const seenFile = branch ? seenFileFor(root, branch) : p.seen;
   const all = discover(root, "heartbeat").scripts;
   const scripts = fast ? all.filter((s) => fast.inputs.includes(s.name)) : all;
   if (scripts.length === 0) {
@@ -248,7 +255,7 @@ function sweep(
   for (const s of scripts) {
     const env = baseEnv(root, settings, configPath, "heartbeat", {
       OPSBOT_SINCE: SINCE,
-      OPSBOT_SEEN: p.seen,
+      OPSBOT_SEEN: seenFile,
       OPSBOT_WATERMARK: wm ?? "",
       ...(opts.peek ? { OPSBOT_PEEK: "1" } : {}),
     });
@@ -311,6 +318,8 @@ function sweep(
   const failedList = () => inputs.filter((i) => !i.ok).map((i) => ({ input: i.input, error: i.error ?? "" }));
   let outcome: CheckResult["outcome"] = failedList().length ? "degraded" : NEW > 0 ? "new" : "nothing-new";
 
+  if (branch) return { check: branchState(root, branch, settings, { opts, fast, outcome, inputs, items, recorded, NOW, SINCE, startMs, blocked, failed, failedList, realInputs }) };
+
   // the state
   const logSize = fileSize(p.log);
   const seenSize = fileSize(p.seen);
@@ -363,12 +372,22 @@ function sweep(
     }
   }
 
+  return { check: finishCheck(root, settings, { outcome, fast, items, NEW, startMs, realInputs, failedList }) };
+}
+
+/** The check's output once its state is written: the one line, the failures and the items. */
+function finishCheck(
+  root: string,
+  settings: Settings,
+  o: { outcome: CheckResult["outcome"]; fast: FastCheck | null; items: Item[]; NEW: number; startMs: number; realInputs: () => InputResult[]; failedList: () => Array<{ input: string; error: string }> },
+): CheckResult {
+  const { outcome, fast, items, NEW, startMs, realInputs, failedList } = o;
   const cur = readWatermark(root);
   const n = realInputs().length;
   const code: CheckResult["code"] = outcome === "nothing-new" ? 0 : outcome === "new" ? 10 : 20;
   if (outcome === "nothing-new") {
     const line = `nothing new · ${n} inputs · watermark ${cur ?? "none"}${fast ? " (held: fast check)" : ""}`;
-    return { check: { code, outcome, line, output: { check: line } } };
+    return { code, outcome, line, output: { check: line } };
   }
   const fl = failedList();
   const line =
@@ -382,7 +401,90 @@ function sweep(
     output.items = items.map((it, i) => renderItem(it, i + 1, NEW, settings.gate_word, deco.byItem[i]));
     if (deco.failed.length) output.recall = deco.failed;
   }
-  return { check: { code, outcome, line, output } };
+  return { code, outcome, line, output };
+}
+
+/**
+ * With `log.branch` set: the check's records go to the log branch, never the working tree. A quiet
+ * check (nothing new, no key recorded, nothing staged) is a quiet commit, amended while the run
+ * lasts. A check that found something inside a cycle is staged and rides the `cycle end` commit;
+ * outside a cycle (`check`) it is its own commit. `--no-commit` stages everything.
+ */
+function branchState(
+  root: string,
+  branch: string,
+  settings: Settings,
+  c: {
+    opts: { commit: boolean; mode?: string };
+    fast: FastCheck | null;
+    outcome: CheckResult["outcome"];
+    inputs: InputResult[];
+    items: Item[];
+    recorded: string[];
+    NOW: string;
+    SINCE: string;
+    startMs: number;
+    blocked: string | null;
+    failed: (input: string, error: string) => void;
+    failedList: () => Array<{ input: string; error: string }>;
+    realInputs: () => InputResult[];
+  },
+): CheckResult {
+  const { opts, fast, recorded, NOW, SINCE, startMs, failed, failedList, realInputs, items } = c;
+  let outcome = c.outcome;
+  const NEW = items.length;
+  const lineFor = (): Record<string, unknown> => {
+    const inputsObj: Record<string, { ok: boolean; new: number; quiet?: number }> = {};
+    for (const i of realInputs()) {
+      inputsObj[i.input] = { ok: i.ok, new: i.new };
+      if (i.quiet > 0) inputsObj[i.input]!.quiet = i.quiet;
+    }
+    const line: Record<string, unknown> = { at: NOW, outcome, inputs: inputsObj, new: NEW, failed: failedList() };
+    if (opts.mode) {
+      line.check = opts.mode;
+      line.since = SINCE;
+    }
+    if (fast) line.fast = true;
+    return line;
+  };
+  const seen = seenRecords(recorded, NOW);
+  const advance = outcome === "nothing-new" && !fast ? NOW : null;
+  const kind = fast ? "fast" : "full";
+  let program = false;
+  if (!opts.commit) {
+    stage(root, { cycles: [lineFor()], seen, ...(advance ? { watermark: advance } : {}) });
+  } else {
+    const quiet = outcome === "nothing-new" && recorded.length === 0 && !hasStaged(readPending(root));
+    const subject = outcome === "nothing-new" ? "nothing new" : outcome === "new" ? `${NEW} new` : `degraded, ${NEW} new`;
+    let why: string | null = null;
+    if (quiet) {
+      const w = writeQuiet(root, branch, { now: NOW, watermark: advance ?? branchWatermark(root, branch), check: kind, since: SINCE }, startMs, trailers());
+      if (!w.ok) why = w.why;
+    } else if (opts.mode && outcome !== "nothing-new") {
+      // inside a cycle: the cycle's one commit is made at `cycle end`
+      stage(root, { cycles: [lineFor()], seen });
+    } else {
+      const w = commitStaged(root, branch, { cycles: [lineFor()], seen }, { subject: `cycle: ${subject}`, watermark: advance ?? undefined, check: kind }, trailers());
+      if (!w.ok) why = w.why;
+    }
+    if (why) {
+      // nothing is lost: the line, now degraded, and the keys are staged for the next commit
+      failed("commit", `cannot write the log: ${why}`);
+      outcome = "degraded";
+      stage(root, { cycles: [lineFor()], seen });
+    }
+    // what the cycle changed on the program branch (memory, commit_paths) stays an ordinary commit
+    if (!c.blocked) {
+      const files = [...changedCommitPaths(root, settings.commit_paths), ...changedMemoryFiles(root, settings)];
+      if (files.length) {
+        const w = commitOnly(root, files, "chore(bot): the files the cycle changed");
+        if (w) failed("commit", `cannot commit the program branch's files: ${w}`);
+        else program = true;
+        if (w && outcome !== "degraded") outcome = "degraded";
+      }
+    }
+  }
+  return { ...finishCheck(root, settings, { outcome, fast, items, NEW, startMs, realInputs, failedList }), program };
 }
 
 export function checkCommand(args: string[]): Record<string, unknown> {
