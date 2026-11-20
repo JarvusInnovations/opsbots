@@ -27,12 +27,12 @@ no second clone:
 
 | Sheet | One record per | Path |
 | --- | --- | --- |
-| `cycles` | cycle that found or did something | `cycles/YYYY/MM/DD/HH/<mmss>-<outcome>` |
+| `cycles` | line the loop logs: a check's result, a cycle's end, a sleep, a wake | `cycles/YYYY/MM/DD/HH/<mmss>-<outcome>` |
 | `seen` | key reported to the session | `seen/YYYY/MM/DD/<key hash>` |
-| `posts/<channel>` | post attempt | `posts/<channel>/YYYY/MM/DD/<mmss>-<hash>` |
-| `outages` | outage a check accounted for | `outages/YYYY/MM/DD/<mmss>-<input>` |
-| `routines` | routine run | `routines/<routine>/YYYY/MM/DD/<mmss>` |
-| `ledgers/<name>` | action a script took (a label applied, a mail sent, a row written) | `ledgers/<name>/YYYY/MM/DD/<mmss>-<hash>` |
+| `posts/<channel>` | post attempt | `posts/<channel>/YYYY/MM/DD/<hhmmss>-<hash>` |
+| `outages` | outage a check accounted for | `outages/YYYY/MM/DD/<hhmmss>-<input>-<start or end>` |
+| `routines` | routine run | `routines/<routine>/YYYY/MM/DD/<hhmmss>` |
+| `ledgers/<name>` | action a script took (a label applied, a mail sent, a row written) | `ledgers/<name>/YYYY/MM/DD/<hhmmss>-<hash>` |
 | `state/<name>` | baseline a check compares against (one record, replaced) | `state/<name>` |
 
 The first three and `outages` and `routines` are the kit's. A bot declares its own `ledgers`
@@ -51,8 +51,14 @@ a record must carry.
   fetches that bot's log branch and reads it with `opsbot-core log read --repo <path or
   remote>`; it never depends on a file in the other bot's working tree.
 
-- **Time is in the path, never in the body.** Two cycles with the same outcome and counts are
-  the same blob.
+- **Time is in the path.** Every record is filed by when it happened, so a read of a day or
+  an hour walks only that part of the tree. The record also carries its time (`at`): gitsheets
+  requires a record to hold every field its path is built from. Quiet cycles, the bulk of the
+  volume, write no record at all (see "Quiet cycles"), so nothing is gained by keeping the
+  time out of the body.
+- **A cycle is one commit, however many records it writes.** Records made between a check and
+  the cycle's end, or by a script outside a cycle, wait in a pending file under the git
+  directory and are written with the next log commit.
 - **What stays on the program branch:** everything a person reads or edits there, including
   the bot's records (`tasks`, `work`, any sheet with a recall) and its memory files. Only the
   loop's own log moves. A separate data branch for records is a later question, if a bot's
@@ -61,8 +67,9 @@ a record must carry.
 ## Provenance: the second parent
 
 A log commit's first parent is the previous log commit. On the first log commit after the
-program's head moved, and on the branch's root, a second parent names the program commit the
-cycle ran on. The log branch then shows, in the graph itself, the points where the program
+program's head moved, a second parent names the program commit the cycle ran on. The branch's
+root is a setup commit that holds only the sheet configs (gitsheets gives a root commit no
+additional parent), so the first log commit after it is the first to carry one. The log branch then shows, in the graph itself, the points where the program
 changed under the loop: this truth was built on top of the world of that truth. Every log
 commit between two such points ran on the same program. The program branch never points back.
 
@@ -86,7 +93,12 @@ A run of cycles that found nothing is one commit, amended as it grows.
 - A quiet cycle whose branch tip is already an **open quiet commit** replaces that commit
   with one that has the same parents, the new `Watermark`, and `Quiet-Cycles: <n>` one
   higher, with `Quiet-Since: <ISO time>` unchanged. Its tree is the same as before: a quiet
-  cycle changes no record.
+  cycle changes no record. Every trailer is written again on the replacement.
+- A quiet commit also carries `Quiet-Until: <ISO time>`, when its newest cycle ran, and
+  `Since: <ISO time>`, the start of the window a fast check reuses. A fast check does not
+  move `Watermark`, so `Quiet-Until` is what shows the run was alive.
+- A quiet commit is replaced only by a quiet check of the same `Check` kind on the same
+  `Program`. A fast run and a full run, or runs on two program commits, are separate commits.
 - A quiet cycle whose tip is anything else adds a new quiet commit with `Quiet-Cycles: 1`.
 - A quiet commit is **sealed**, and never amended again, when a cycle that found something
   commits on top of it, or when the hour turns, whichever comes first. The next quiet cycle
@@ -144,9 +156,11 @@ tip's trailers is one git call and opens no sheet.
 
 - A cycle commits to the log branch only; the program branch's head and working tree are
   unchanged after a cycle that changed no record.
-- Two cycles with the same outcome produce one blob.
-- The second parent is the program commit, present on the root and on the first log commit
-  after the program's head moved, and on no other.
+- The root holds only the sheet configs. The second parent is the program commit, present on
+  the first log commit after the root and on the first after the program's head moved, and on
+  no other.
+- Two records of one sheet made at the same minute and second of different hours are two
+  files.
 - A run of quiet cycles is one commit whose count and watermark grow; it is sealed by the
   hour and by a cycle that found something; a sealed or pushed commit is never rewritten.
 - A cold start from a fresh clone resumes from the newest pushed trailer; the unpushed open

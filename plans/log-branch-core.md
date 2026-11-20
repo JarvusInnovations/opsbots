@@ -52,9 +52,11 @@ unaffected.
 
 - [ ] With `log.branch` set, a cycle that found something makes one log commit and leaves the
       program branch's head and working tree unchanged.
-- [ ] Two cycles with the same outcome and counts share one blob.
-- [ ] The second parent is on the root and on the first log commit after the program head
-      moved, and on no other; every log commit has `Program`, `Watermark` and `Check`.
+- [ ] Two records of one sheet made at the same minute and second of different hours of a day
+      are two files (`outages`, `routines`).
+- [ ] The root holds only the sheet configs; the second parent is on the first log commit
+      after it and on the first after the program head moved, and on no other; every log
+      commit after the root has `Program`, `Watermark` and `Check`.
 - [ ] Ten quiet cycles in an hour are one commit with `Quiet-Cycles: 10`; the hour turning and
       a non-quiet cycle each seal it; a sealed or pushed commit is never replaced.
 - [ ] `cycle end` pushes sealed commits only; the open quiet tip stays local; a refused push
