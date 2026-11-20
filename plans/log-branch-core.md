@@ -1,6 +1,7 @@
 ---
-status: in-progress
+status: done
 depends: []
+pr: 123
 specs:
   - specs/behaviors/log-branch.md
   - specs/skills/opsbot-core.md
@@ -52,9 +53,9 @@ unaffected.
 
 - [x] With `log.branch` set, a cycle that found something makes one log commit and leaves the
       program branch's head and working tree unchanged.
-- [ ] Two records of one sheet made at the same minute and second of different hours of a day
+- [x] Two records of one sheet made at the same minute and second of different hours of a day
       are two files (`outages`, `routines`).
-- [ ] The root holds only the sheet configs; the second parent is on the first log commit
+- [x] The root holds only the sheet configs; the second parent is on the first log commit
       after it and on the first after the program head moved, and on no other; every log
       commit after the root has `Program`, `Watermark` and `Check`.
 - [x] Ten quiet cycles in an hour are one commit with `Quiet-Cycles: 10`; the hour turning and
@@ -79,13 +80,11 @@ unaffected.
 
 ## Notes
 
-- **Two boxes stay open, both blocked by gitsheets, not worked around.** (1) Same blob:
-  gitsheets requires every path-template field in the record (no exemption since 2.9), so a
-  record's `at` is in its body and no two cycles share a blob. (2) Second parent on the root:
-  `--also-parent` on an orphan commit is refused (`TRANSACTION_ERROR`), so the root is a
-  parentless setup commit with the sheet configs and no trailers, and the program commit is the
-  second parent of the first log commit after it. The spec needs a decision on both.
-- **Trailers the spec is silent on:** quiet commits also carry `Quiet-Until` (the last cycle's
+- **What gitsheets decided.** gitsheets requires every path-template field in the record, so
+  each record carries `at`; and it gives an orphan commit no additional parent, so the root is a
+  setup commit and the first log commit after it carries the program as second parent. The
+  spec was amended to both (5677533).
+- **Trailers (now in the spec):** quiet commits also carry `Quiet-Until` (the last cycle's
   time; a fast check holds `Watermark`, so it cannot say when a fast run was alive) and `Since`
   (the window the last check read, which the fast-check window reuses). A quiet run is replaced
   only by a quiet check of the same `Check` kind on the same `Program`, so the last full check
@@ -105,8 +104,9 @@ unaffected.
   what it wrote, so a running bot never re-queries its own writes.
 - **gitsheets quirk:** an expression on the date-bucket field (`at.slice(11,13)` for the hour)
   receives a Date while a range query walks the partitions and fails the query; the sheet
-  configs guard it with `typeof at == 'string'`. The spec's `outages` and `routines` paths have
-  no hour, so two records of one kind at the same minute and second of different hours collide.
+  configs guard it with `typeof at == 'string'`. `outages` and `routines` paths carry the hour
+  (`<hhmmss>`); an outage record also carries `edge` (`start` or `end`) for its path, and an
+  end takes the kind of the outage it ends.
 - **Program branch.** Memory and `commit_paths` files a cycle changed are still committed there
   (`chore(bot): …`) until `log-branch-ledgers` and `log-branch-migrate`; with nothing changed the
   program branch's head does not move and it is not pushed.
