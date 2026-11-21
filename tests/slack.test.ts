@@ -1456,6 +1456,86 @@ describe("peer bots", () => {
     expect(r.out).toContain("peers self: user is this bot's own bot_user (never heard)");
   });
 
+  describe("a peer named by bot id alone (a webhook's posts)", () => {
+    const HOOK = "B0PEER0002";
+    const RAW_HOOK = [{ name: "hookbot", bot_id: HOOK, channels: [PCHAN] }];
+    const HOOK_PEERS = [{ name: "hookbot", user: "", botId: HOOK, channels: [PCHAN] }];
+    const hookIds = { botUser: BOT, botIds: [OWN_BOT], operators: [OPS], peers: HOOK_PEERS };
+    // What Slack delivers for a post through an incoming webhook: no user, a bot_id, subtype bot_message.
+    const hook = (extra: Record<string, unknown> = {}) => ({ type: "message", subtype: "bot_message", channel_type: "channel", channel: PCHAN, bot_id: HOOK, text: `<@${BOT}> the nightly export failed`, ts: "1794403000.003000", ...extra });
+
+    test("settings accept a bot_id-only peer and refuse one with neither user nor bot_id; status names it by bot id", () => {
+      const list = (raw: unknown) => call("peerList", [raw, { botUser: BOT, botId: OWN_BOT, operators: [OPS] }]) as { peers: any[]; problems: string[] };
+      expect(list(RAW_HOOK)).toEqual({ peers: HOOK_PEERS, problems: [] });
+      expect(list([{ name: "nobody", channels: [PCHAN] }])).toEqual({ peers: [], problems: ["nobody: needs user (the peer bot's user id, U...) or bot_id (B..., for posts with no user, as a webhook's), or both"] });
+      expect(list([{ name: "badhook", bot_id: "U0NOTABOT1", channels: [PCHAN] }]).problems).toEqual(["badhook: bot_id must be a bot id (B...)"]);
+      expect((call("settings", [{ name: "examplebot", streams: { slack: { bot_user: BOT, peers: RAW_HOOK } } }]) as Record<string, unknown>).peers).toEqual(HOOK_PEERS);
+      const rows = (slack: Record<string, unknown>) => call("checkRows", [{ name: "examplebot", streams: { slack: { bot_user: BOT, operators: [OPS], ...slack } } }, "/srv/examplebot"]) as string[];
+      expect(rows({ peers: RAW_HOOK })).toEqual([`ok peers hookbot (${HOOK}) in ${PCHAN}; at most 6 turns between bots, 20 posts to peers an hour a channel`]);
+      expect(rows({ peers: [{ name: "nobody", channels: [PCHAN] }] })[0]).toStartWith("differs peers nobody: needs user");
+    });
+
+    test("the bot's own bot_id is still refused as a peer, and is never a peer's at run time", () => {
+      const list = (raw: unknown) => call("peerList", [raw, { botUser: BOT, botId: OWN_BOT, operators: [OPS] }]) as { peers: any[]; problems: string[] };
+      expect(list([{ name: "mine", bot_id: OWN_BOT, channels: [PCHAN] }])).toEqual({ peers: [], problems: ["mine: bot_id is this bot's own"] });
+      // A bot id learned from the bot's own first message, after a peer was listed with it: still the bot.
+      const learned = { ...hookIds, botIds: [HOOK] };
+      expect(call("sender", [hook(), learned])).toBe("self");
+      expect(call("classify", [hook(), learned])).toBeNull();
+      expect(call("droppedPeer", [hook(), learned])).toBeNull();
+    });
+
+    test("a webhook post from the peer in its channel that mentions the bot is kept with from_peer, from its bot id", () => {
+      expect(call("sender", [hook(), hookIds])).toBe("peer");
+      const { kept, dropped } = hear([hook()], { ...hookIds, listenTo: "operators" });
+      expect(dropped).toEqual([]);
+      expect(kept).toEqual([expect.objectContaining({ key: `slack:${PCHAN}:1794403000.003000:msg`, event: "message", kind: "group", from: HOOK, from_peer: "hookbot", thread_ts: null })]);
+      const rules = (call("interceptRules", [[{ prefix: "<@", command: ["/bin/true"], kinds: ["mention", "reply", "dm"] }], "/srv/examplebot"]) as { rules: unknown[] }).rules;
+      expect(call("matchIntercept", [kept[0], rules, ""])).toBeNull();
+    });
+
+    test("the same post in another channel, or with no mention outside the bot's threads, is dropped; a reply in the bot's thread is kept", () => {
+      const ROOT = "1794403100.003100";
+      const ownPost = { type: "message", channel_type: "channel", channel: PCHAN, user: BOT, bot_id: OWN_BOT, text: "who has the export?", ts: ROOT };
+      const { kept, dropped } = hear([
+        hook({ channel: CHAN, ts: "1794403050.003050", text: `<@${BOT}> secret words` }),
+        hook({ text: "the nightly export failed", ts: "1794403060.003060" }),
+        hook({ text: "elsewhere", ts: "1794403070.003070", thread_ts: "1794409999.009999" }),
+        ownPost,
+        hook({ text: "I have it", ts: "1794403150.003150", thread_ts: ROOT }),
+      ], hookIds);
+      expect(dropped).toEqual([
+        `dropped peer ${CHAN} hookbot not its channel`,
+        `dropped peer ${PCHAN} hookbot no mention or thread`,
+        `dropped peer ${PCHAN} hookbot no mention or thread`,
+      ]);
+      expect(dropped.join("\n")).not.toContain("secret");
+      expect(kept.map((k) => [k.ts, k.from_peer])).toEqual([["1794403150.003150", "hookbot"]]);
+    });
+
+    test("another bot's bot_id is dropped, in the peer's channel too; a post with a user is never the bot_id-only peer's", () => {
+      const { kept, dropped } = hear([hook({ bot_id: "B0OTHER001" }), hook({ subtype: undefined, user: "U0OTHERB01", ts: "1794403200.003200" })], hookIds);
+      expect(kept).toEqual([]);
+      expect(dropped).toEqual([`dropped app post ${PCHAN} - B0OTHER001`, `dropped app post ${PCHAN} U0OTHERB01 ${HOOK}`]);
+    });
+
+    test("the reader marks its item and looks no user up for a bot id", () => {
+      const dir = tmp();
+      const root = join(dir, "repo");
+      mkdirSync(root);
+      const events = join(dir, "slack-events.jsonl");
+      const it = hear([hook()], hookIds).kept[0]!;
+      writeFileSync(events, JSON.stringify({ ...it, recorded_at: "2026-11-10T14:00:00.000Z" }) + "\n");
+      writeFileSync(join(root, "opsbot.json"), JSON.stringify({ name: "examplebot", streams: { slack: { events_file: events, bot_user: BOT, peers: RAW_HOOK } } }));
+      const bin = standIn(dir);
+      const r = spawnSync(NODE, [READER], { cwd: root, encoding: "utf8", env: isolated(bin, { OPSBOT_ROOT: root, OPSBOT_CONFIG: join(root, "opsbot.json"), OPSBOT_SINCE: "2026-11-10T13:45:00Z" }) });
+      const items = r.stdout.split("\n").filter(Boolean).map((l) => JSON.parse(l));
+      expect(items).toEqual([expect.objectContaining({ from: HOOK, from_peer: "hookbot", gate_word_void: "from a peer bot" })]);
+      expect(items[0]).not.toHaveProperty("from_note");
+      expect(existsSync(join(dir, "calls.log")) ? readFileSync(join(dir, "calls.log"), "utf8") : "").not.toContain(`user ${HOOK}`);
+    });
+  });
+
   test("the reader marks a peer's item: from_peer, a note that it is another bot's message, and the gate word void", () => {
     const dir = tmp();
     const root = join(dir, "repo");

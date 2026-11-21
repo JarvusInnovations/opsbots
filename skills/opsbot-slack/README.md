@@ -122,6 +122,8 @@ two of your bots should work together in a shared channel, list each as the othe
 - A peer's message never counts as yours: it cannot approve anything, and your gate word in it
   does not count.
 - Invite each bot to the shared channel. `opsbot-slack status` says if it is not there.
+- A bot that posts through an incoming webhook has no user id: list it by its `bot_id` alone.
+  Everything posted through that webhook then counts as that peer.
 
 ## Screening what the bot posts (optional)
 
