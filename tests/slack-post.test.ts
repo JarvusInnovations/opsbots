@@ -686,7 +686,8 @@ describe("peer bots: the loop guard", () => {
     test("its threads count toward the hourly cap; another bot's bot_id does not", () => {
       const b = bot({ ...HOOK_PEERS, peer_posts_per_hour: 2 }, { fixture: hookThread("hook"), audience });
       const recent = new Date(Date.now() - 60000).toISOString().replace(/\.\d{3}Z$/, "Z");
-      appendPosts(b, [1, 2].map((k) => ({ at: recent, conv: PCHAN, class: "internal", posted: true, peer: "hookbot", draft_sha256: String(k).repeat(64) })));
+      mkdirSync(join(b.root, "logs"), { recursive: true });
+      writeFileSync(join(b.root, "logs/slack-posts.jsonl"), [1, 2].map((k) => JSON.stringify({ at: recent, conv: PCHAN, class: "internal", posted: true, peer: "hookbot", draft_sha256: String(k).repeat(64) })).join("\n") + "\n");
       expect(b.run(["post", PCHAN, "--reply", ROOT, "x"]).json).toMatchObject({ peer_guard: "hourly", peer: "hookbot" });
       const other = bot({ ...HOOK_PEERS, peer_posts_per_hour: 1 }, { fixture: thread("ann", "other", "me", "other", "me", "other", "me", "other"), audience });
       const r = other.run(["post", PCHAN, "--reply", ROOT, "x"]);
