@@ -183,7 +183,10 @@ for (const line of readFileSync(file, "utf8").split("\n")) {
     item.gate_word_void = "from a peer bot";
   }
   let profile;
-  if (ev.from) {
+  // A peer named by bot id alone (a webhook's posts carry no user) has `from` = its bot id: no
+  // user to look up, and from_peer already says who it is.
+  const byBotId = Boolean(item.from_peer) && /^B[A-Z0-9]{2,}$/.test(String(ev.from || ""));
+  if (ev.from && !byBotId) {
     profile = slackUser(ev.from);
     if (profile) item.from_slack = profile;
     else item.from_note = "unresolved sender; keep the raw id, do not guess";
@@ -193,7 +196,7 @@ for (const line of readFileSync(file, "utf8").split("\n")) {
     item.thread = { n: t?.n, parent: t?.parent, last_mine: t?.last_mine, full: `slack-axi thread ${ev.conv} ${ev.thread_ts}` };
     if (!t) item.thread.note = "could not read the thread; open it with the full command";
   }
-  if (lookup && ev.from) for (const [k, v] of Object.entries(lookupSender(ev.from, profile))) if (!(k in item) || item[k] === undefined) item[k] = v;
+  if (lookup && ev.from && !byBotId) for (const [k, v] of Object.entries(lookupSender(ev.from, profile))) if (!(k in item) || item[k] === undefined) item[k] = v;
   for (const k of Object.keys(item)) if (item[k] === undefined) delete item[k];
   if (item.thread) for (const k of Object.keys(item.thread)) if (item.thread[k] === undefined) delete item.thread[k];
   console.log(JSON.stringify(item));

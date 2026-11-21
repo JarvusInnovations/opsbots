@@ -241,9 +241,14 @@ exception:
 | Key | Meaning | Default |
 | --- | --- | --- |
 | `name` | a label for the peer, used in items, journal lines and refusals | required |
-| `user` | the peer bot's own Slack user id | required |
-| `bot_id` | the peer's bot id, for its posts that carry no user | unset |
+| `user` | the peer bot's own Slack user id | required unless `bot_id` is set |
+| `bot_id` | the peer's bot id, for its posts that carry no user | required unless `user` is set |
 | `channels` | the channel and private channel ids (`C…`, `G…`) where the peer is heard | required, at least one |
+
+A peer named by `bot_id` alone is one that posts with no user, as through a Slack incoming
+webhook. Every post through a webhook carries that webhook's one `bot_id`, so such a peer is
+whoever holds the webhook, and a kept item's `from` is that `bot_id`. When a webhook is shared, the
+session's protocol must tell the senders apart by the text, since the listener cannot.
 
 **When a peer's message is kept.** Only a message (a `message` or an `app_mention`), and only
 when all of these hold:
@@ -313,9 +318,9 @@ members, exactly as before. Who is an operator: a peer can never be one. Every o
 app: still dropped.
 
 **Validation.** A peer whose `user` is `bot_user` or in `operators`, whose `bot_id` is the bot's
-own, with no `name` or a name used twice, no `user`, or an empty or missing `channels` list, or a
-channel id that is not `C…` or `G…`, is refused: the listener logs it at start and never hears
-it, and `opsbot-slack status` shows `differs` with the fix. `peer_turns` and
+own, with no `name` or a name used twice, neither `user` nor `bot_id`, or an empty or missing
+`channels` list, or a channel id that is not `C…` or `G…`, is refused: the listener logs it at
+start and never hears it, and `opsbot-slack status` shows `differs` with the fix. `peer_turns` and
 `peer_posts_per_hour` must be positive whole numbers; otherwise the defaults apply and status
 says so.
 
