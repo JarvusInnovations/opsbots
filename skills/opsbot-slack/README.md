@@ -147,8 +147,8 @@ To turn it on:
 2. Copy the two `templates/screen/policy-*.md` files into the repo and make them specific:
    the internal one lists what even your own team should not read from the bot, the external
    one what no one outside may read.
-3. Add `operators` (your user id) and `screen` to `streams.slack` in `opsbot.json`, and
-   `logs/slack-posts.jsonl` to `commit_paths`. SKILL.md has the exact block.
+3. Add `operators` (your user id) and `screen` to `streams.slack` in `opsbot.json`. SKILL.md
+   has the exact block. Every attempt is logged to `posts/slack` on the log branch.
 4. Run `opsbot-slack status`: the `screen` row should say `ok`.
 
 The check catches what looks confidential. It cannot know a fact is private unless the policy

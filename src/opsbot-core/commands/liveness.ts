@@ -28,7 +28,7 @@ import { runtimeFor, type Found } from "../runtime.js";
 import { readEvents, turnEnded } from "../transcript.js";
 import { sessionPointer } from "./coldstart.js";
 import { activeSleep, sleepStatusLine, writeSleep } from "../sleep.js";
-import { CYCLE_OUTCOMES, judgeLock, lastCycleAt, openOutage, readCycleLog, readLock, recordOutage, recordOutageEnd } from "../state.js";
+import { CYCLE_OUTCOMES, judgeLock, lastCycleTime, openOutage, readCycleLog, readLock, recordOutage, recordOutageEnd, type LogLine } from "../state.js";
 
 // --------------------------------------------------------------- watchdog
 
@@ -41,8 +41,10 @@ export function watchdogCommand(args: string[]): Record<string, unknown> {
   const watch = settings.liveness.watchdog_minutes;
   const told = gitPath(root, "opsbot-watchdog");
   const blocked = blockedBy(root);
-  const lines = readCycleLog(root);
-  const last = lastCycleAt(lines);
+  // the last cycle: on the log branch, from the tip's trailers alone; the lines only when needed
+  const last = lastCycleTime(root);
+  let linesRead: LogLine[] | null = null;
+  const lines = () => (linesRead ??= readCycleLog(root));
   const open = openOutage(root);
   // asleep, the silence is intended; the sleep timer is the clock and escalates a wake left
   // unanswered. An outage that cycles ended before this sleep is still closed here.
@@ -50,7 +52,7 @@ export function watchdogCommand(args: string[]): Record<string, unknown> {
   if (asleep) {
     const said = `asleep · ${sleepStatusLine(settings, asleep)}; the sleep timer watches`;
     if (open && last && last > open && !blocked && !dry) {
-      const resumed = lines.find((l) => CYCLE_OUTCOMES.includes(l.outcome) && l.at > open)?.at ?? last;
+      const resumed = lines().find((l) => CYCLE_OUTCOMES.includes(l.outcome) && l.at > open)?.at ?? last;
       recordOutageEnd(root, open, resumed);
       return { watchdog: `${said} · outage from ${open} ended ${resumed}` };
     }
@@ -60,7 +62,7 @@ export function watchdogCommand(args: string[]): Record<string, unknown> {
 
   if (gap !== null && gap < watch * 60_000) {
     if (open && last! > open) {
-      const resumed = lines.find((l) => CYCLE_OUTCOMES.includes(l.outcome) && l.at > open)?.at ?? last!;
+      const resumed = lines().find((l) => CYCLE_OUTCOMES.includes(l.outcome) && l.at > open)?.at ?? last!;
       if (blocked) return { watchdog: `alive · last cycle ${last} · the outage from ${open} ended at ${resumed}; not recorded while ${blocked}` };
       if (dry) return { watchdog: `alive · would record the end of the outage from ${open} at ${resumed}` };
       recordOutageEnd(root, open, resumed);
@@ -88,6 +90,9 @@ export function watchdogCommand(args: string[]): Record<string, unknown> {
   } else if (found.code === "agent_not_found") {
     seen.push(`The runtime has no agent named ${settings.runtime.agent}, so the session itself is not running.`);
   }
+  // a cycle.d/begin/ hook that failed or timed out is on the log as it happened (issue 119)
+  const hook = lastHookFailure(lines());
+  if (hook) seen.push(`The last cycle to begin stopped at its hook: ${hook}.`);
   if (seen.length === 0) seen.push("Nothing outside the session shows why.");
 
   const first = last
@@ -123,6 +128,20 @@ export function watchdogCommand(args: string[]): Record<string, unknown> {
     });
   }
   return { watchdog: `stopped since ${started} · the operator told · outage recorded`, escalations: results };
+}
+
+/** The newest `cycle.d/begin/` failure, when no check has run since it: "<script> at <time>, <error>". */
+export function lastHookFailure(lines: LogLine[]): string | null {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i]!;
+    if (!["nothing-new", "new", "degraded"].includes(l.outcome)) continue;
+    const f = Array.isArray(l.failed) ? (l.failed as Array<{ input?: unknown; error?: unknown }>)[0] : undefined;
+    if (l.outcome === "degraded" && f && typeof f.input === "string" && f.input.startsWith("cycle.d/begin/")) {
+      return `${f.input} at ${l.at}, ${String(f.error ?? "no message")}`;
+    }
+    return null;
+  }
+  return null;
 }
 
 /** Run every escalate.d/ script with the message on stdin; null when there is none. */
@@ -227,7 +246,7 @@ function nudgeReply(args: string[]): Record<string, unknown> {
   const blocked = blockedBy(root);
   if (blocked) return { nudge: `nothing · ${blocked}` };
 
-  const last = lastCycleAt(readCycleLog(root));
+  const last = lastCycleTime(root);
   if (!wake && last && now - (parseIso(last) ?? 0) < quiet * 60_000) {
     return { nudge: `nothing · last cycle ${last}` };
   }

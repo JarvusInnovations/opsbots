@@ -42,7 +42,7 @@ In the repo:
 
 | Path | What |
 | --- | --- |
-| `logs/whatsapp-posts.jsonl` (`post_log`) | one line per post attempt |
+| `posts/whatsapp` on the log branch | the post command's decision log: one record per post attempt, written with `opsbot-core log append posts/whatsapp`, never a file in the working tree |
 | `.git/opsbot-whatsapp-screen` | the screen's told-once marker, as in opsbot-slack |
 
 ## Settings (`streams.whatsapp` in `opsbot.json`)
@@ -59,7 +59,7 @@ In the repo:
 | `peers` | other bots heard as peers: `[{name, user, chats}]`, `user` a phone number, `chats` the group ids where it is heard | none |
 | `peer_turns`, `peer_posts_per_hour` | the loop guard's limits, as in opsbot-slack | `6`, `20` |
 | `screen` | the screen, same keys and contract as opsbot-slack | unset: nothing is screened |
-| `post_log` | the post command's decision log | `logs/whatsapp-posts.jsonl` |
+| `post_log` | read only by `opsbot-core log migrate`: the file the decision log was kept in before the log branch. The log is now `posts/whatsapp` on the log branch, written with `opsbot-core log append posts/whatsapp` and counted for the loop guard with `opsbot-core log read`. A record that cannot be written after the send is a warning on stderr and the post still reports what happened | `logs/whatsapp-posts.jsonl` |
 | `wake_grace_seconds` | how long the waker waits for the session's own monitor before it nudges; `0` nudges at once | `20` |
 | `lookback` | how many events before the cursor the reader re-reads | `200` |
 
@@ -83,7 +83,8 @@ monitor the first chance, exactly as the Slack listener does (`wake_grace_second
 no wait while the bot is asleep), and then runs
 `$OPSBOT_CORE nudge --now --reason whatsapp`, again every 10 seconds while the nudge reports
 the agent busy, until it wakes or `ack_timeout_minutes` (30) pass. With `mark_read: seen` it
-then waits for the event's key to appear in `logs/intake/seen` and runs `whatsapp-axi mark-read`
+then waits until `$OPSBOT_CORE log seen <key>` says the event's key is seen (the keys are on the
+log branch) and runs `whatsapp-axi mark-read`
 for that message: the blue ticks mean the session has the item, by construction, as the second
 reaction does in Slack. It logs `read` only when the answer's `failed` is 0 and at least one
 message was `marked` or `already_marked`: an exit 0 alone is not a mark. Otherwise it logs
@@ -157,7 +158,7 @@ peer is an ordinary person's.
 read the chat's recent kept messages with `whatsapp-axi read`, count back from the newest to
 the newest message from someone who is neither the bot nor a peer, and refuse at `peer_turns`
 or more (exit 6); refuse at `peer_posts_per_hour` posts to that chat in the last hour, counted
-from `post_log`; refuse when the chat cannot be read. A draft that mentions an operator is let
+from the post log; refuse when the chat cannot be read. A draft that mentions an operator is let
 through once per run. Only kept messages are counted, which is all the bot can see; in a
 `tagged` group that is the thread the bots are in.
 
@@ -178,7 +179,7 @@ posts to WhatsApp. Its first arguments are the reader's `reply` column, whole. I
    `--retry-id <id>` (16 to 48 characters of `0-9A-F`, else exit 2) that id is used instead, so
    a retry cannot send twice. When whatsapp-axi answers `already_sent: true`, the post reports
    `posted: true, replayed: true` and any `warning`, and nothing is sent again;
-6. appends one line to `post_log`, whatever happened at 2 to 5;
+6. appends one record to the post log (`posts/whatsapp`), whatever happened at 2 to 5;
 7. prints one JSON object on stdout and exits with its code.
 
 `--dry-run` does 1 to 4 and 6. `opsbot-whatsapp classify <chat>` does step 2 alone. The text is

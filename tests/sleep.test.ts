@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BASE_SETTINGS, cli, git, makeBot, makeExecutable, readLines, setSettings, writeStream, type Bot } from "./helpers";
+import { BASE_SETTINGS, cli, git, logOf, logSubjects, makeBot, makeExecutable, outagesOf, setSettings, writeStream, type Bot } from "./helpers";
 import { validateSettings, withDefaults } from "../src/opsbot-core/settings";
 
 // Each test runs the CLI several times; a loaded runner needs more than the 5 s default.
-setDefaultTimeout(30000);
+setDefaultTimeout(120000);
 
 let bot: Bot;
 afterEach(() => bot?.cleanup());
@@ -15,8 +15,7 @@ const at = (min: number) => new Date(Date.parse(T0) + min * 60_000).toISOString(
 const MON_LOOP = { prompt: "testbot cycle: follow the opsbot-core skill, start with cycle begin", autocompact: "300k", schedule: "monitor" };
 const stateFile = (b: Bot) => join(b.root, ".git", "opsbot-sleep");
 const state = (b: Bot) => JSON.parse(readFileSync(stateFile(b), "utf8"));
-const log = (b: Bot) => readLines(join(b.root, "logs/cycle.jsonl"));
-const outagesOf = (b: Bot) => readLines(join(b.root, "logs/outages.jsonl"));
+const log = logOf;
 const item = (n: number, when = T0) => ({ key: `chat:c:${n}`, at: when, conv: "c", kind: "group", from: "p", text: `hi ${n}` });
 
 /** A bot with a monitor schedule, one wake file, and `sleep` set (the defaults unless given). */
@@ -93,9 +92,11 @@ describe("the sleep decision", () => {
     const st = state(bot);
     expect(st).toMatchObject({ decided_at: at(61), by: "cycle begin", quiet_since: T0, due: null, began: null, woken: null, compacted: false });
     expect(st.wake_lines).toEqual({ [wakeFileOf(bot)]: 0 });
-    expect(log(bot).at(-1)).toMatchObject({ at: at(61), outcome: "sleep", by: "cycle begin", quiet_since: T0, due: null });
-    expect(git(bot.root, "status", "--porcelain", "logs")).toBe("");
-    expect(git(bot.root, "log", "-1", "--format=%s")).toContain("chore(cycle): sleep");
+    // TOML holds no null: a due of null is absent from the record
+    expect(log(bot).at(-1)).toMatchObject({ at: at(61), outcome: "sleep", by: "cycle begin", quiet_since: T0 });
+    expect(log(bot).at(-1)!.due).toBeUndefined();
+    expect(git(bot.root, "status", "--porcelain")).toBe("");
+    expect(logSubjects(bot)[0]).toBe("cycle: sleep");
   });
 
   test("a promise due within after_minutes keeps it awake; one due later becomes the wake time", () => {
@@ -144,7 +145,7 @@ describe("the sleep decision", () => {
     expect(state(bot).by).toBe("cycle end");
     const tail = log(bot).slice(-2);
     expect(tail.map((l) => l.outcome)).toEqual(["finished", "sleep"]);
-    expect(git(bot.root, "status", "--porcelain", "logs")).toBe("");
+    expect(git(bot.root, "status", "--porcelain")).toBe("");
   });
 
   test("a degraded last check keeps it awake", () => {

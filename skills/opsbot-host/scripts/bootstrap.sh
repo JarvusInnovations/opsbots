@@ -107,6 +107,11 @@ asdf set -u github-cli "$v"'
 # 5. the tools
 for t in $TOOLS; do
   bin="${t##*/}"
+  if [ "$bin" = gitsheets-axi ]; then
+    # the log branch needs 2.15 or later (its commit options): an older one is upgraded
+    step "$t" "v=\$($bin --version 2>/dev/null | head -1) && printf '%s\\n2.15.0\\n' \"\$v\" | sort -V -C -r 2>/dev/null && echo \"\$v\"" "npm install -g $t@latest && (asdf reshim nodejs 2>/dev/null || true)"
+    continue
+  fi
   step "$t" "command -v $bin >/dev/null && $bin --version 2>/dev/null | head -1 | grep . || command -v $bin" "npm install -g $t && (asdf reshim nodejs 2>/dev/null || true)"
 done
 

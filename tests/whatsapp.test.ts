@@ -10,6 +10,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { commitOnBranch, coreForScripts } from "./helpers";
+import { OLD_SEEN } from "../src/opsbot-core/legacy";
 
 const SKILL = resolve(import.meta.dir, "..", "skills", "opsbot-whatsapp");
 const CLI = join(SKILL, "scripts/opsbot-whatsapp");
@@ -18,7 +20,7 @@ const WAKER = join(SKILL, "templates/monitor.d/20-whatsapp-waker");
 const SINK = join(SKILL, "templates/escalate.d/20-whatsapp-dm");
 const NODE = spawnSync("node", ["-p", "process.execPath"], { encoding: "utf8" }).stdout.trim();
 
-setDefaultTimeout(30000);
+setDefaultTimeout(120000);
 
 // Invented ids throughout.
 const ACCOUNT = "examplebot";
@@ -113,6 +115,16 @@ if (args[0] === "events") {
 }
 if (args[0] === "send" || args[0] === "send-file") {
   if (existsSync(dir + "/send-error.json")) say({ code: 1, out: JSON.parse(readFileSync(dir + "/send-error.json", "utf8")) });
+  // with a replay file the stand-in keeps whatsapp-axi's promise: a send id is sent once, and a
+  // repeat answers already_sent; "unknown" also sends and then answers OUTCOME_UNKNOWN
+  const replay = dir + "/replay";
+  if (existsSync(replay)) {
+    const id = flag("--id");
+    const sent = readFileSync(replay, "utf8").split("\\n").filter(Boolean);
+    if (sent.includes(id)) say({ code: 0, out: { id: "3EB0SENT0000000000001", chat: args[1], t: "2030-01-05T14:05:00Z", already_sent: true, warning: "already sent; nothing sent now" } });
+    appendFileSync(replay, id + "\\n");
+    if (existsSync(dir + "/send-unknown")) say({ code: 1, out: { error: { code: "OUTCOME_UNKNOWN", message: "the daemon did not answer" } } });
+  }
   if (existsSync(dir + "/send-answer.json")) say({ code: 0, out: JSON.parse(readFileSync(dir + "/send-answer.json", "utf8")) });
   say({ code: 0, out: { id: "3EB0SENT0000000000001", chat: args[1], t: "2030-01-05T14:05:00Z", ...(args[0] === "send-file" ? { media: { type: "document", mime: "application/pdf", name: "report.pdf", size: 17 } } : {}) } });
 }
@@ -176,8 +188,19 @@ function bot(whatsapp: Record<string, unknown> = {}, opts: { fixtures?: Record<s
     const r = spawnSync(NODE, [READER], { cwd: root, encoding: "utf8", env: { ...env, ...(o.env ?? {}) }, timeout: 30000 });
     return { code: r.status, out: r.stdout, err: r.stderr, items: r.stdout.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) };
   };
+  // the decision log is the log branch's posts/whatsapp sheet: the real core and gitsheets-axi
+  commitOnBranch(root, { branch: "opsbot/log" });
+  const core = coreForScripts(dir);
+  Object.assign(env, core.env, { PATH: `${env.PATH}:${core.path}` });
+  const readPosts = (o: Record<string, string> = {}) => {
+    const f = join(dir, "posts.json");
+    rmSync(f, { force: true });
+    const r = spawnSync(core.env.OPSBOT_CORE!, ["log", "read", "posts/whatsapp", "--json-out", f], { cwd: root, encoding: "utf8", env: { ...env, ...o } });
+    expect(r.status).toBe(0);
+    return JSON.parse(readFileSync(f, "utf8")) as Array<Record<string, any>>;
+  };
   return {
-    dir, root, env, wake, run: runCli, reader,
+    dir, root, env, wake, run: runCli, reader, readPosts,
     setEvents: (evs: unknown[]) => writeFileSync(join(dir, "events.json"), JSON.stringify(evs)),
     setFixture: (k: string, v: Answer) => {
       const cur = JSON.parse(readFileSync(join(dir, "fixtures.json"), "utf8"));
@@ -186,7 +209,7 @@ function bot(whatsapp: Record<string, unknown> = {}, opts: { fixtures?: Record<s
     },
     calls: () => lines(join(dir, "calls.jsonl")).map((l) => { const { out: _o, outDirMode: _m, ...c } = JSON.parse(l); return c; }) as { argv: string[]; stdin?: string }[],
     outs: () => lines(join(dir, "calls.jsonl")).map((l) => JSON.parse(l)).filter((c) => c.out) as { argv: string[]; out: string; outDirMode: number }[],
-    log: () => lines(join(root, "logs/whatsapp-posts.jsonl")).map((l) => JSON.parse(l)),
+    log: () => readPosts(),
     screens: () => lines(join(dir, "screen-calls.jsonl")).map((l) => JSON.parse(l)),
     escalations: () => (existsSync(join(dir, "escalations.log")) ? readFileSync(join(dir, "escalations.log"), "utf8").split("---\n").filter((s) => s.trim()) : []),
     mode: (m: string) => writeFileSync(join(dir, "screen-mode"), m),
@@ -462,10 +485,10 @@ describe("opsbot-whatsapp post", () => {
     const sendId = b.calls().find((c) => c.argv[0] === "send")!.argv[6];
     expect(r.json).toEqual({ posted: true, chat: G_INT, class: "trusted", why: "all 2 other participants are operators, trusted or peers", id: "3EB0SENT0000000000001", send_id: sendId, screen: "skipped" });
     expect(sends(b)).toEqual([{ argv: ["send", G_INT, "-", "--reply", `${G_INT}/3EB0AAAA0000000001`, "--id", "ID", "--account", ACCOUNT, "--json-out"], stdin: `on it ${MARKER}` }]);
-    const [line] = b.log();
+    const line = b.log()[0]!;
     expect(Object.keys(line).sort()).toEqual(["at", "chat", "class", "draft_sha256", "id", "posted", "reply_to", "screen", "send_id", "why"]);
     expect(line).toMatchObject({ chat: G_INT, reply_to: "3EB0AAAA0000000001", posted: true, id: "3EB0SENT0000000000001" });
-    expect(readFileSync(join(b.root, "logs/whatsapp-posts.jsonl"), "utf8")).not.toContain(MARKER);
+    expect(JSON.stringify(b.log())).not.toContain(MARKER);
     expect(readFileSync(join(b.dir, "cache", "whatsapp-classes.json"), "utf8")).not.toContain(MARKER);
   });
 
@@ -525,7 +548,7 @@ describe("opsbot-whatsapp post", () => {
       expect(r.json.retry).toBe(`opsbot-whatsapp post ${G_INT} --reply 3EB0AAAA0000000001 --retry-id ${id} 'it'\\''s ${MARKER}'`);
       const line = b.log().pop();
       expect(line).toMatchObject({ posted: "unknown", code: "OUTCOME_UNKNOWN", send_id: id });
-      expect(readFileSync(join(b.root, "logs/whatsapp-posts.jsonl"), "utf8")).not.toContain(MARKER);
+      expect(JSON.stringify(b.log())).not.toContain(MARKER);
       // from stdin, the retry says - and to send the same text again
       const s = b.run(["post", DM_OPER, "-"], { input: "x" });
       expect(s.json.retry).toMatch(new RegExp(`^opsbot-whatsapp post ${DM_OPER.replace(/[.@]/g, "\\$&")} --retry-id [0-9A-F]{32} -$`));
@@ -583,7 +606,7 @@ describe("opsbot-whatsapp post", () => {
       expect(r.code).toBe(3);
       expect(r.json).toMatchObject({ posted: false, screen: "block", passage: "the rate is 180 an hour", reason: "prices are not said outside" });
       expect(sends(b)).toEqual([]);
-      const raw = readFileSync(join(b.root, "logs/whatsapp-posts.jsonl"), "utf8");
+      const raw = JSON.stringify(b.log());
       expect(raw).not.toContain(MARKER);
       expect(raw).not.toContain("180 an hour");
       expect(b.log()[0]).toMatchObject({ screen: "block", reason: "prices are not said outside", posted: false });
@@ -638,7 +661,7 @@ describe("opsbot-whatsapp post", () => {
       expect(r.code).toBe(0);
       expect(sends(b)[0]?.argv).toEqual(["send-file", G_INT, join(b.root, "report.pdf"), "--caption", "the report", "--id", "ID", "--account", ACCOUNT, "--json-out"]);
       expect(b.screens()).toEqual([{ draft: "the report", destination_class: "trusted", policy: "- no personal information" }]);
-      expect(b.log()[0].file).toEqual({ name: "report.pdf", size: 17 });
+      expect(b.log()[0]!.file).toEqual({ name: "report.pdf", size: 17 });
       // no caption: nothing to screen, and stdin is not read
       expect(b.run(["post", G_INT, "--file", "report.pdf"]).code).toBe(0);
       expect(sends(b)[1]?.argv).toEqual(["send-file", G_INT, join(b.root, "report.pdf"), "--id", "ID", "--account", ACCOUNT, "--json-out"]);
@@ -709,8 +732,8 @@ describe("opsbot-whatsapp post", () => {
       expect(r.json).toMatchObject({ peer_guard: "hourly", error: `2 posts to ${G_PEER} in the last hour; ask the operator` });
       // an old post does not count
       const old = bot({ ...PEERS, peer_posts_per_hour: 1 });
-      mkdirSync(join(old.root, "logs"));
-      writeFileSync(join(old.root, "logs/whatsapp-posts.jsonl"), JSON.stringify({ at: "2020-01-01T00:00:00Z", chat: G_PEER, posted: true }) + "\n");
+      const app = spawnSync(old.env.OPSBOT_CORE!, ["log", "append", "posts/whatsapp"], { cwd: old.root, encoding: "utf8", env: old.env, input: JSON.stringify({ at: "2020-01-01T00:00:00Z", chat: G_PEER, posted: true }) });
+      expect(app.status).toBe(0);
       expect(old.run(["post", G_PEER, "x"]).code).toBe(0);
     });
 
@@ -737,7 +760,7 @@ describe("monitor.d/20-whatsapp-waker", () => {
   /** Start the waker with a fast tick; the core stand-in logs each call (a `wake backstop` run), waits `delayS`, prints `notes` on stderr and `says`. */
   function startWaker(b: ReturnType<typeof bot>, opts: { says?: string; notes?: string; delayS?: number } = {}) {
     const core = join(b.dir, "core");
-    writeFileSync(core, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${b.dir}/core.log"\nprintf 'tick=%s root=%s\\n' "$OPSBOT_WAKE_TICK_MS" "$OPSBOT_ROOT" >> "${b.dir}/core-env.log"\n${opts.notes ? `echo -e ${JSON.stringify(opts.notes)} >&2\n` : ""}${opts.delayS ? `sleep ${opts.delayS}\n` : ""}echo -e ${JSON.stringify(opts.says ?? "backstop: nudged after 0s")}\n`);
+    writeFileSync(core, `#!/usr/bin/env bash\nif [ "$1 $2" = "log seen" ]; then printf '%s\\n' "$3" >> "${b.dir}/seen-asked.log"; grep -qxF -- "$3" "${b.dir}/branch-seen" 2>/dev/null && exit 0; exit 1; fi\nprintf '%s\\n' "$*" >> "${b.dir}/core.log"\nprintf 'tick=%s root=%s\\n' "$OPSBOT_WAKE_TICK_MS" "$OPSBOT_ROOT" >> "${b.dir}/core-env.log"\n${opts.notes ? `echo -e ${JSON.stringify(opts.notes)} >&2\n` : ""}${opts.delayS ? `sleep ${opts.delayS}\n` : ""}echo -e ${JSON.stringify(opts.says ?? "backstop: nudged after 0s")}\n`);
     chmodSync(core, 0o755);
     const child = spawn(NODE, [WAKER], { cwd: b.root, env: { ...b.env, OPSBOT_CORE: core, OPSBOT_WHATSAPP_TICK_MS: "50" } });
     let out = "", errOut = "";
@@ -746,7 +769,10 @@ describe("monitor.d/20-whatsapp-waker", () => {
     const exited = new Promise<number | null>((r) => child.on("exit", (c) => r(c)));
     return {
       wakeLine: (seq: number, kind = "message") => appendFileSync(b.wake, JSON.stringify({ account: ACCOUNT, seq, kind }) + "\n"),
-      seen: (key: string) => { mkdirSync(join(b.root, "logs/intake"), { recursive: true }); appendFileSync(join(b.root, "logs/intake/seen"), key + "\n"); },
+      // the core stand-in answers `log seen` from this list, as the core does from the log branch
+      seen: (key: string) => appendFileSync(join(b.dir, "branch-seen"), key + "\n"),
+      /** The key written where the seen file used to be: no one reads it there. */
+      fileSeen: (key: string) => { mkdirSync(join(b.root, OLD_SEEN, ".."), { recursive: true }); appendFileSync(join(b.root, OLD_SEEN), key + "\n"); },
       nudges: () => (existsSync(join(b.dir, "core.log")) ? readFileSync(join(b.dir, "core.log"), "utf8").trim().split("\n").filter(Boolean) : []),
       coreEnv: () => (existsSync(join(b.dir, "core-env.log")) ? readFileSync(join(b.dir, "core-env.log"), "utf8").trim().split("\n").filter(Boolean) : []),
       marks: () => b.calls().filter((c) => c.argv[0] === "mark-read").map((c) => c.argv[1]),
@@ -783,6 +809,24 @@ describe("monitor.d/20-whatsapp-waker", () => {
     expect(w.out()).toContain("dropped by the reader, not marked");
     expect(w.out()).not.toContain(MARKER);
     expect(w.err()).not.toContain(MARKER);
+  });
+
+  test("the read receipt asks the core's `log seen`, never a file in the working tree", async () => {
+    const b = bot({ wake_grace_seconds: 0 });
+    b.setEvents([msg(1, C_DM, "3EB0AAAA0000000001", OPER, `x ${MARKER}`)]);
+    const w = startWaker(b);
+    await ready(w);
+    w.wakeLine(1);
+    await sleep(600);
+    w.fileSeen(`whatsapp:${DM_OPER}:3EB0AAAA0000000001:msg`); // the file is not where the keys are
+    await sleep(500);
+    expect(w.marks()).toEqual([]);
+    w.seen(`whatsapp:${DM_OPER}:3EB0AAAA0000000001:msg`);
+    await until(() => w.marks().length > 0);
+    expect(w.marks()).toEqual([`${DM_OPER}/3EB0AAAA0000000001`]);
+    await w.stop();
+    expect(readFileSync(join(b.dir, "seen-asked.log"), "utf8")).toContain(`whatsapp:${DM_OPER}:3EB0AAAA0000000001:msg`);
+    expect(w.nudges().every((l) => l.startsWith("wake backstop"))).toBe(true);
   });
 
   test("mark-read: read only when failed is 0; else `mark failed: <reason>`, retried at the next seen-check, at most three times", async () => {
@@ -1097,7 +1141,8 @@ describe("scripts/opsbot-whatsapp install and status", () => {
     expect(n.out).toContain("whatsapp-axi account add otheracct");
     const gone = bot({}, { escalate: false });
     rmSync(join(gone.dir, "pathbin", "whatsapp-axi"));
-    const g = gone.run(["status"], { env: { OPSBOT_WHATSAPP_AXI: "" } });
+    // without the core's tool directories on PATH, where a real whatsapp-axi may live
+    const g = gone.run(["status"], { env: { OPSBOT_WHATSAPP_AXI: "", PATH: `${join(gone.dir, "pathbin")}:/usr/bin:/bin` } });
     expect(g.out).toMatch(/missing\s+whatsapp-axi\s+not on PATH/);
   });
 
@@ -1108,5 +1153,87 @@ describe("scripts/opsbot-whatsapp install and status", () => {
     expect(b.run(["status", "--x"]).code).toBe(2);
     rmSync(join(b.root, "opsbot.json"));
     expect(b.run(["status"]).code).toBe(2);
+  });
+});
+
+// ----------------------------------------------------------------------------- the log branch
+
+describe("the decision log is the posts/whatsapp sheet of the log branch", () => {
+  setDefaultTimeout(180000);
+  /** Every bot is on the log branch now: what the older tests called it. */
+  function onBranch(b: ReturnType<typeof bot>) {
+    return { read: (env: Record<string, string> = {}) => b.readPosts(env) };
+  }
+  const same = (lines: Array<Record<string, unknown>>) => lines.map(({ at: _at, send_id, ...l }) => ({ ...l, ...(send_id ? { send_id: "ID" } : {}) }));
+
+  test("a post, a blocked post and a replayed post each leave a record, the same on every bot; nothing in the working tree", () => {
+    const steps = (b: ReturnType<typeof bot>) => {
+      expect(b.run(["post", DM_OPER, "hello"]).code).toBe(0);
+      writeFileSync(join(b.dir, "report.pdf"), "x");
+      expect(b.run(["post", G_EXT, "--file", join(b.dir, "report.pdf"), "here"]).code).toBe(3);
+      writeFileSync(join(b.dir, "send-answer.json"), JSON.stringify({ id: "3EB0SENT0000000000001", chat: DM_OPER, t: "2030-01-05T14:05:00Z", already_sent: true, warning: "already sent at 2030-01-05T14:05:00Z; nothing sent now" }));
+      const r = b.run(["post", DM_OPER, "--retry-id", "ABCDEF0123456789ABCDEF0123456789", "hello"]);
+      expect(r.json).toMatchObject({ posted: true, replayed: true });
+    };
+    const files = bot();
+    steps(files);
+    const branch = bot();
+    const { read } = onBranch(branch);
+    steps(branch);
+    const want = same(files.log());
+    expect(want).toHaveLength(3);
+    expect(same(read())).toEqual(want);
+    expect(existsSync(join(branch.root, "logs"))).toBe(false);
+    expect(spawnSync("git", ["status", "--porcelain"], { cwd: branch.root, encoding: "utf8" }).stdout.trim()).toBe("");
+  });
+
+  test("accepted means sent: a log write that fails after the send is a warning, and the retry with the same id sends nothing", () => {
+    const b = bot();
+    const { read } = onBranch(b);
+    writeFileSync(join(b.dir, "replay"), "");
+    const broken = join(b.dir, "broken-gitsheets");
+    writeFileSync(broken, "#!/bin/sh\necho 'error: \"the disk is full\"'; exit 1\n", { mode: 0o755 });
+    // the send goes out, the log cannot be written: posted, exit 0, said on stderr
+    const first = b.run(["post", DM_OPER, "hello"], { env: { OPSBOT_GITSHEETS_AXI: broken } });
+    expect(first.code).toBe(0);
+    expect(first.json).toMatchObject({ posted: true });
+    expect(first.err).toContain("warning: could not write the post log on the log branch");
+    const id = first.json.send_id as string;
+    // a retry with that id (a caller that did not trust the answer) sends nothing again
+    const again = b.run(["post", DM_OPER, "--retry-id", id, "hello"]);
+    expect(again.code).toBe(0);
+    expect(again.json).toMatchObject({ posted: true, replayed: true, send_id: id });
+    expect(readFileSync(join(b.dir, "replay"), "utf8").trim().split("\n")).toEqual([id]);
+
+    // the outcome is unknown (the message did go out) and the log write fails too: the retry the
+    // post printed still cannot send twice
+    writeFileSync(join(b.dir, "send-unknown"), "");
+    const unknown = b.run(["post", DM_OPER, "second"], { env: { OPSBOT_GITSHEETS_AXI: broken } });
+    expect(unknown.code).toBe(1);
+    expect(unknown.json).toMatchObject({ posted: "unknown", code: "OUTCOME_UNKNOWN" });
+    expect(unknown.err).toContain("warning: could not write the post log");
+    rmSync(join(b.dir, "send-unknown"));
+    const retry = b.run(["post", DM_OPER, "--retry-id", unknown.json.send_id, "second"]);
+    expect(retry.json).toMatchObject({ posted: true, replayed: true });
+    const sent = readFileSync(join(b.dir, "replay"), "utf8").trim().split("\n");
+    expect(sent).toEqual([id, unknown.json.send_id]);
+    // what reached the log: the two retries, each marked
+    expect(read().map((l) => [l.send_id, l.retry, l.replayed])).toEqual([[id, true, true], [unknown.json.send_id, true, true]]);
+  });
+
+  test("the loop guard counts the last hour's posts from the branch", () => {
+    const b = bot({ peers: [{ name: "other", user: PEER.pn, chats: [G_PEER] }], peer_posts_per_hour: 2 });
+    onBranch(b);
+    expect(b.run(["post", G_PEER, "one"]).code).toBe(0);
+    expect(b.run(["post", G_PEER, "two"]).code).toBe(0);
+    const r = b.run(["post", G_PEER, "three"]);
+    expect(r.code).toBe(6);
+    expect(r.json).toMatchObject({ peer_guard: "hourly", error: `2 posts to ${G_PEER} in the last hour; ask the operator` });
+    // a log that cannot be read refuses: more guard, never less
+    const broken = join(b.dir, "broken-gitsheets");
+    writeFileSync(broken, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const blind = b.run(["post", G_PEER, "four"], { env: { OPSBOT_GITSHEETS_AXI: broken } });
+    expect(blind.code).toBe(6);
+    expect(blind.json.error).toContain("cannot be read");
   });
 });

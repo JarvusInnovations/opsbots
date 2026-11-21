@@ -9,11 +9,11 @@ import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { REPO, cli, git, makeBot, makeExecutable, readLines, setSettings, writeStream, type Bot } from "./helpers";
+import { REPO, cli, git, logOf, makeBot, makeExecutable, realBin, setSettings, writeStream, type Bot } from "./helpers";
 import { WAKE_BUDGET } from "../src/opsbot-core/commands/coldstart";
 import { filterClauses, recordProblems } from "../src/opsbot-core/record";
 
-setDefaultTimeout(30000);
+setDefaultTimeout(120000);
 
 let bot: Bot;
 afterEach(() => bot?.cleanup());
@@ -27,6 +27,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const args = process.argv.slice(2);
 if (process.env.STUB_LOG) fs.appendFileSync(process.env.STUB_LOG, JSON.stringify(args) + "\\n");
+// the loop's own log (--branch) and the version check go to the real gitsheets-axi
+if (args[0] === "--branch" || args[0] === "--version") {
+  const r = require("node:child_process").spawnSync(${JSON.stringify(realBin("gitsheets-axi") ?? "gitsheets-axi")}, args, { stdio: "inherit" });
+  process.exit(r.status ?? 1);
+}
 if (args[0] !== "query") { console.log("error: the stand-in only queries"); process.exit(2); }
 const sheet = args[1];
 if (process.env.STUB_FAIL) { console.log('error: "' + process.env.STUB_FAIL + '"'); console.log("code: UNKNOWN"); process.exit(1); }
@@ -301,15 +306,15 @@ describe("record.recall", () => {
     writeStream(bot, [{ key: "chat:d:1", at: T0, conv: "D1", kind: "dm", from: "U1", text: "hi" }]);
     expect(cli(bot, ["cycle", "begin"], { now: T0 }).code).toBe(10);
     expect(cli(bot, ["cycle", "end", "--records", "0"], { now: "2026-03-02T15:01:00Z" }).code).toBe(0);
-    const touched = git(bot.root, "diff", "--name-only", before.head, "HEAD").trim().split("\n").sort();
-    expect(touched).toEqual(["logs/cycle.jsonl", "logs/intake/seen", "logs/intake/watermark"]);
+    // its commits are on the log branch: the program branch did not move
+    expect(git(bot.root, "rev-parse", "HEAD").trim()).toBe(before.head);
     expect(git(bot.root, "status", "--porcelain", "--", ".gitsheets", "records")).toBe("");
-    // only queries ran, and each result file went with its temp dir
-    const calls = readFileSync(stub.log, "utf8").trim().split("\n").map((l) => JSON.parse(l) as string[]);
+    // the recalls only queried, and each result file went with its temp dir
+    const calls = readFileSync(stub.log, "utf8").trim().split("\n").map((l) => JSON.parse(l) as string[]).filter((c) => c[0] !== "--branch" && c[0] !== "--version");
     expect(calls.length).toBeGreaterThan(5);
     expect(calls.every((c) => c[0] === "query")).toBe(true);
     expect(readdirSync(stub.tmp).filter((f) => f.startsWith("opsbot-recall-"))).toEqual([]);
-    expect(readLines(join(bot.root, "logs/cycle.jsonl")).length).toBeGreaterThan(0);
+    expect(logOf(bot).length).toBeGreaterThan(0);
   });
 });
 

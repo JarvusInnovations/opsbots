@@ -71,8 +71,8 @@ For each it appends one JSON line to `events_file` and reacts `receipt_emoji` on
 once. Then it runs `$OPSBOT_CORE wake backstop` for the event, detached: the core's one wake
 routine, shared with every listener. It gives the session's own monitor the first chance: it
 waits `wake_grace_seconds` (20), checking each second, and stops without nudging as soon as the
-key is in `logs/intake/seen` or a check has begun since the event (a check line in
-`logs/cycle.jsonl` newer than the event). A cycle already running when the event arrived does not
+key is seen or a check has begun since the event (a check line in the cycle log newer than the
+event; both are read from the log branch). A cycle already running when the event arrived does not
 count, since its check may have read the stream first: while it holds the cycle lock the backstop
 waits for it to end, then looks again, and nudges at once if neither. When the bot is asleep
 (`.git/opsbot-sleep`) it skips the wait. Only if the grace runs out does it run `nudge --now`,
@@ -82,9 +82,9 @@ every try: a session that is mid-turn reaches `cycle end`, which reports the arr
 again. One backstop runs at a time; events that arrive while it is pending join it, so a burst is
 at most one nudge. The listener logs the backstop's notes and its one line, which says which path
 woke the session: `woken by monitor`, `nudged after <n>s`, `nudged after cycle`, `already woken`
-(another wake had just typed the prompt), `asleep: nudged`, or `! wake gave up for <key>`. It reacts `ack_emoji` only once the item's key is in
-`logs/intake/seen`, which the core writes when the check reports the item to the model: the
-second reaction means read. It logs every event type it receives, kept or not, so a missing
+(another wake had just typed the prompt), `asleep: nudged`, or `! wake gave up for <key>`. It reacts `ack_emoji` only once
+`$OPSBOT_CORE log seen <key>` says the item's key is seen, which the core records when the check
+reports the item to the model: the second reaction means read. It logs every event type it receives, kept or not, so a missing
 scope or event subscription shows in `journalctl --user -u opsbot-<bot>-monitor-10-slack-listener`.
 It reconnects with backoff when the socket closes.
 
@@ -234,8 +234,8 @@ The class is cached for `cache_seconds` beside the events file (`slack-classes.j
 - `templates/screen/screen` is a reference command: one Anthropic Messages API call with the
   key in `ANTHROPIC_API_KEY` (model `OPSBOT_SCREEN_MODEL`, default `claude-opus-5-5`). Copy it
   into the repo with the two `policy-*.md` files and make each policy specific to the bot.
-- Every attempt is a line in `post_log` (`logs/slack-posts.jsonl`): class, why, verdict,
-  reason, a SHA-256 of the draft. Never the draft. Add it to `commit_paths`.
+- Every attempt is a record of `posts/slack` on the log branch (`opsbot-core log read
+  posts/slack`): class, why, verdict, reason, a SHA-256 of the draft. Never the draft.
 
 A screen catches what looks confidential. It cannot know a plain-looking fact is private unless
 the policy says so, and it does not replace a rule about where the bot's facts may come from.
@@ -267,7 +267,7 @@ names each peer and where it is heard:
   between holds a peer and `peer_turns` (6) messages from the bots, the post is refused, exit 6. A
   person's message, or an operator's, starts the count again. A draft that @mentions an operator
   gets through once per run, so you can ask in the same thread. Past `peer_posts_per_hour` (20)
-  posts to peers in one channel, counted from `post_log`, it refuses too. A peer thread it cannot
+  posts to peers in one channel, counted from the post log, it refuses too. A peer thread it cannot
   read is refused rather than guessed.
 - Peers change no destination class: a bot of the workspace was already a full member.
 - `status` checks each peer (one equal to `bot_user` or an operator, or with no channels, is
@@ -320,7 +320,7 @@ which customer they belong to. That knowledge is the bot's own, so the reader ta
 | `sender_lookup` | the hook above | unset |
 | `operators` | the operator's user ids; a DM with one is `operator-dm`, and an app's post as one is heard as theirs | none; `escalate_dm` still counts |
 | `screen` | the screen (Posting, above) | unset: nothing screened, the class still logged |
-| `post_log` | the post command's decision log, a repo path | `logs/slack-posts.jsonl` |
+| `post_log` | read only by `opsbot-core log migrate`: the file the decision log was kept in before the log branch; the log is `posts/slack` on the log branch (`opsbot-core log read posts/slack`) | `logs/slack-posts.jsonl` |
 | `listen_to` | `anyone`, or `operators`: keep only operators' events, silently | `anyone` |
 | `intercept` | rules that hand a prefixed message to a command before it is recorded | none |
 | `intercept_emoji` | the reaction on a message a command took | `white_check_mark` |

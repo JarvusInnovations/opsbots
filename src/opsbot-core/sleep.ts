@@ -24,7 +24,7 @@ import type { Settings } from "./settings.js";
 import { CYCLE_OUTCOMES, lastCheck, type LogLine } from "./state.js";
 import { lastArrival } from "./cadence.js";
 import { type Ev, humanMessages } from "./transcript.js";
-import { wakeFiles } from "./wake.js";
+import { baseFor, lineCount, wakeFiles } from "./wake.js";
 
 export const SLEEP_STATE = "opsbot-sleep";
 
@@ -81,19 +81,15 @@ export function clearSleep(root: string): void {
 
 export const hhmm = (t: string) => `${t.slice(11, 16)}Z`;
 
-/** Lines in a file, 0 when it does not exist. */
-export function lineCount(file: string): number {
-  try {
-    const t = readFileSync(file, "utf8");
-    if (!t) return 0;
-    return t.split("\n").length - (t.endsWith("\n") ? 1 : 0);
-  } catch {
-    return 0;
-  }
-}
+/** Lines in a file, 0 when it does not exist: the newline count the monitor and the wake base
+ * count in, so a sleep's counts and the base it copies are the same unit. */
+export { lineCount };
 
-export function wakeLineCounts(s: Settings): Record<string, number> {
-  return Object.fromEntries(wakeFiles(s).map((f) => [f, lineCount(f)]));
+/** Each wake file's count to wake past: the count the last check recorded as it started (the
+ * wake base), so a line that landed while that check ran wakes the sleeper; the count now for a
+ * file the record does not name. */
+export function wakeLineCounts(s: Settings, base: Record<string, number> | null = null): Record<string, number> {
+  return Object.fromEntries(wakeFiles(s).map((f) => [f, baseFor(base, f) ?? lineCount(f)]));
 }
 
 /** The operator's last message in the session log: the loop prompt (which the nudge and the sleep
@@ -167,6 +163,7 @@ export function decideSleep(
   now: number,
   evs: Ev[],
   by: SleepState["by"],
+  base: Record<string, number> | null = null,
 ): Decision {
   const sl = s.sleep;
   if (!sl) return { sleep: false, why: "sleep is not set" };
@@ -195,7 +192,7 @@ export function decideSleep(
       quiet_since: quietSince,
       due: next?.at ?? null,
       due_what: next?.what ?? null,
-      wake_lines: wakeLineCounts(s),
+      wake_lines: wakeLineCounts(s, base),
       began: null,
       compacted: false,
       looked_at: null,

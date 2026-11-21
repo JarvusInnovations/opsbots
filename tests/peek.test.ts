@@ -1,7 +1,10 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { cli, git, makeBot, makeExecutable, readLines, writeStream, type Bot } from "./helpers";
+import { cli, git, logOf, logSubjects, makeBot, makeExecutable, seenOf, stagedOf, watermarkOf, writeStream, type Bot } from "./helpers";
+
+// every cycle writes through gitsheets-axi (the log branch): a test of several takes seconds
+setDefaultTimeout(120_000);
 
 let bot: Bot;
 afterEach(() => bot?.cleanup());
@@ -9,14 +12,14 @@ afterEach(() => bot?.cleanup());
 const T0 = "2026-03-02T15:00:00Z";
 const T1 = "2026-03-02T15:20:00Z";
 const item = (n: number) => ({ key: `chat:c:${n}`, at: T0, conv: "c", kind: "group", from: "p", text: `hi ${n}` });
-const read = (b: Bot, f: string) => (existsSync(join(b.root, f)) ? readFileSync(join(b.root, f), "utf8") : null);
-
 /** Everything a peek must leave alone. */
 function snapshot(b: Bot) {
   return {
-    log: read(b, "logs/cycle.jsonl"),
-    seen: read(b, "logs/intake/seen"),
-    watermark: read(b, "logs/intake/watermark"),
+    log: JSON.stringify(logOf(b)),
+    seen: seenOf(b).sort(),
+    watermark: watermarkOf(b),
+    staged: JSON.stringify(stagedOf(b)),
+    commits: logSubjects(b),
     status: git(b.root, "status", "--porcelain"),
     head: git(b.root, "rev-parse", "HEAD"),
   };
@@ -53,7 +56,7 @@ describe("check --peek", () => {
     expect(p.code).toBe(0);
     expect(p.out).toContain("nothing new · 2 inputs · nothing recorded");
     expect(snapshot(bot)).toEqual(before);
-    expect(readLines(join(bot.root, "logs/cycle.jsonl"))).toHaveLength(0);
+    expect(logOf(bot)).toHaveLength(0);
   });
 
   test("a failing stream: exit 20, named; nothing recorded", () => {

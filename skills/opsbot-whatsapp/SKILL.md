@@ -71,20 +71,20 @@ account is in and discards the rest without writing it.
 - runs `$OPSBOT_CORE wake backstop --key <key> --at <time> --grace <wake_grace_seconds> --reason
   whatsapp`, detached: the core's one wake routine, shared with every listener. It gives the
   session's own monitor the first chance: waits `wake_grace_seconds` (20), checking each second,
-  and stops without nudging once the key is in `logs/intake/seen` or a check has begun since the
-  line (a check line in `logs/cycle.jsonl` newer than the line). A cycle already running when the
+  and stops without nudging once the key is seen or a check has begun since the line (a check
+  line in the cycle log newer than the line; both are read from the log branch). A cycle already running when the
   line arrived does not count: while it holds the cycle lock the backstop waits for it to end,
   then looks again, and nudges at once if neither. While the bot is asleep (`.git/opsbot-sleep`)
   it skips the wait. Only when the grace runs out does it run `nudge --now`, and again every 10
-  seconds until the nudge reports a wake, the key is in `logs/intake/seen`, a newer check begins,
+  seconds until the nudge reports a wake, the key is seen, a newer check begins,
   or 30 minutes pass. A refused nudge is noted once (`nudge pending: …`): a session that is
   mid-turn reaches `cycle end`, which reports the arrival. One backstop runs at a time; lines that
   arrive while it is pending join it, so a burst is at most one nudge. The waker logs its notes
   and its one line: `woken by monitor`, `nudged after <n>s`, `nudged after cycle`, `already
   woken`, `asleep: nudged`, or `! wake gave up for <key>`;
-- with `mark_read: seen`, waits for the key in `logs/intake/seen` and then runs
-  `whatsapp-axi mark-read <chat>/<id>`. The core writes that file when the check reports the item
-  to the model, so the blue ticks mean the session has it. It logs `read` only when the answer's
+- with `mark_read: seen`, waits until `$OPSBOT_CORE log seen <key>` says the key is seen and
+  then runs `whatsapp-axi mark-read <chat>/<id>`. The core records the key on the log branch
+  when the check reports the item to the model, so the blue ticks mean the session has it. It logs `read` only when the answer's
   `failed` is 0 and a message was `marked` or `already_marked` (an exit 0 alone is not a mark);
   otherwise `mark failed: <reason>`, and it tries again at the next seen-check, at most three
   times.
@@ -215,9 +215,9 @@ unless `screen.files_external` is `true`.
 - A failed screen posts nothing (exit 4). The operator hears once per outage through
   `opsbot.d/escalate.d/`; the marker is `.git/opsbot-whatsapp-screen`, cleared by the next verdict.
 
-Every attempt is a line in `post_log` (`logs/whatsapp-posts.jsonl`): class, why, verdict, reason,
-a SHA-256 of the draft, and a file's name and size. Never the draft, never the passage. Add it to
-`commit_paths`.
+Every attempt is a record of `posts/whatsapp` on the log branch (`opsbot-core log read
+posts/whatsapp`): class, why, verdict, reason, a SHA-256 of the draft, and a file's name and
+size. Never the draft, never the passage.
 
 ## Peer bots
 
@@ -234,7 +234,7 @@ answer each other never stop. A bot that shares a group with another bot lists i
   chat's recent kept messages with `whatsapp-axi read`. When the newest run with no person in it
   holds a peer and `peer_turns` (6) messages from the bots, the post is refused, exit 6. A draft
   that mentions an operator's number (`@15550100001`) gets through once per run. Past
-  `peer_posts_per_hour` (20) posts to that chat, counted from `post_log`, it refuses too. A chat
+  `peer_posts_per_hour` (20) posts to that chat, counted from the post log, it refuses too. A chat
   it cannot read is refused.
 - Only kept messages are counted, which is all the bot can see. In a `tagged` group that is the
   thread the bots are in.
@@ -256,7 +256,7 @@ when it is settled. After two disagreements, ask the operator in the same chat w
 | `peers` | `[{name, user, chats}]`, `user` a number, `chats` group ids | none |
 | `peer_turns`, `peer_posts_per_hour` | the loop guard's limits | `6`, `20` |
 | `screen` | the screen (Posting, above) | unset: nothing screened, the class still logged |
-| `post_log` | the decision log, a repo path | `logs/whatsapp-posts.jsonl` |
+| `post_log` | read only by `opsbot-core log migrate`: the file the decision log was kept in before the log branch; the log is `posts/whatsapp` on the log branch (`opsbot-core log read posts/whatsapp`) | `logs/whatsapp-posts.jsonl` |
 | `lookback` | how many events before the cursor the reader re-reads | `200` |
 | `ack_timeout_minutes` | how long the waker keeps nudging and waiting for the seen key | `30` |
 | `wake_grace_seconds` | how long the waker waits for the session's own monitor before it nudges; `0` nudges at once (`status` says `differs` for anything but a whole number 0 or more) | `20` |
