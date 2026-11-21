@@ -132,7 +132,7 @@ export const COMMAND_GROUPS: CommandGroup[] = [
       {
         usage: "routines done <id> --notes TEXT [--outcome done|partial|skipped|blocked] [--checked ITEM]... [--handed-to WHO] [--at ISO]",
         summary:
-          "Record one run on the log branch's `routines` sheet (`routines/<routine>/YYYY/MM/DD/<hhmmss>`), committed with the next log commit; prints when the routine is next due. Refuses an unknown or inactive routine, empty notes, an unknown outcome or a future `--at`. Never touches the definitions.",
+          "Record one run on the log branch's `routines` sheet (`routines/<routine>/YYYY/MM/DD/<hhmmss>-<hash>`), committed with the next log commit; prints when the routine is next due. Refuses an unknown or inactive routine, empty notes, an unknown outcome or a future `--at`. Never touches the definitions.",
       },
       {
         usage: "routines validate [--head]",

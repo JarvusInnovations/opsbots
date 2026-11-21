@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "c9627ce" : "dev";
+    VERSION = true ? "7cb69f2" : "dev";
   }
 });
 
@@ -1998,7 +1998,7 @@ var init_reference = __esm({
           { usage: "routines history <id>", summary: "The routine's runs in order with outcome, days since the one before and any missed stretch or slots; then the time since the last and whether it is due." },
           {
             usage: "routines done <id> --notes TEXT [--outcome done|partial|skipped|blocked] [--checked ITEM]... [--handed-to WHO] [--at ISO]",
-            summary: "Record one run on the log branch's `routines` sheet (`routines/<routine>/YYYY/MM/DD/<hhmmss>`), committed with the next log commit; prints when the routine is next due. Refuses an unknown or inactive routine, empty notes, an unknown outcome or a future `--at`. Never touches the definitions."
+            summary: "Record one run on the log branch's `routines` sheet (`routines/<routine>/YYYY/MM/DD/<hhmmss>-<hash>`), committed with the next log commit; prints when the routine is next due. Refuses an unknown or inactive routine, empty notes, an unknown outcome or a future `--at`. Never touches the definitions."
           },
           {
             usage: "routines validate [--head]",
@@ -2325,7 +2325,7 @@ function ident(sheet, r) {
   if (sheet === "posts") return `${String(r.channel ?? "")}|${at}|${String(r.hash ?? "")}`;
   if (sheet === "ledgers") return `${String(r.ledger ?? "")}|${at}|${String(r.hash ?? "")}`;
   if (sheet === "state") return String(r.name ?? "");
-  return `${String(r.routine ?? "")}|${at}`;
+  return `${String(r.routine ?? "")}|${at}|${String(r.hash ?? "")}`;
 }
 function logWriter(root) {
   const hit = writerCache.get(root);
@@ -2534,6 +2534,25 @@ function clean(v) {
     return o;
   }
   return v;
+}
+function recordHash(r) {
+  return createHash("sha256").update(canonical(r)).digest("hex").slice(0, 12);
+}
+function canonical(v) {
+  const sort = (x) => {
+    if (Array.isArray(x)) return x.map(sort);
+    if (x && typeof x === "object") {
+      const o = {};
+      for (const k of Object.keys(x).sort()) o[k] = sort(x[k]);
+      return o;
+    }
+    return x;
+  };
+  return JSON.stringify(sort(clean(v)));
+}
+function routineRecord(r) {
+  const { hash: _h, ...body } = clean(r);
+  return { ...body, hash: recordHash(body) };
 }
 function seenHash(key) {
   return createHash("sha256").update(key).digest("hex").slice(0, 20);
@@ -2927,8 +2946,8 @@ var init_log = __esm({
         }
       },
       routines: {
-        path: `\${{ routine }}/${DAY}/${HHMMSS}`,
-        schema: { type: "object", required: ["at", "routine"], properties: { at: AT, routine: { type: "string" } } }
+        path: `\${{ routine }}/${DAY}/${HHMMSS}-\${{ hash }}`,
+        schema: { type: "object", required: ["at", "routine", "hash"], properties: { at: AT, routine: { type: "string" }, hash: { type: "string" } } }
       },
       posts: {
         path: `\${{ channel }}/${DAY}/${HHMMSS}-\${{ hash }}`,
@@ -4290,8 +4309,8 @@ function readRuns(root, _s) {
 function writeRun(root, _s, r) {
   return writeBranchRun(root, logBranch(root), r);
 }
-function branchRunFile(branch, routine, at) {
-  return `${branch}:routines/${routine}/${at.slice(0, 4)}/${at.slice(5, 7)}/${at.slice(8, 10)}/${at.slice(11, 13)}${at.slice(14, 16)}${at.slice(17, 19)}`;
+function branchRunFile(branch, routine, at, hash) {
+  return `${branch}:routines/${routine}/${at.slice(0, 4)}/${at.slice(5, 7)}/${at.slice(8, 10)}/${at.slice(11, 13)}${at.slice(14, 16)}${at.slice(17, 19)}-${hash}`;
 }
 function branchRuns(branch, recs) {
   const runs = [];
@@ -4313,7 +4332,7 @@ function branchRuns(branch, recs) {
       checked: Array.isArray(d.checked) ? d.checked.map(String) : [],
       handed_to: typeof d.handed_to === "string" ? d.handed_to : null,
       notes: typeof d.notes === "string" ? d.notes : "",
-      file: branchRunFile(branch, d.routine, at)
+      file: branchRunFile(branch, d.routine, at, typeof d.hash === "string" ? d.hash : routineRecord(d).hash)
     });
   }
   return { runs, problems };
@@ -4327,8 +4346,9 @@ function writeBranchRun(root, branch, r) {
   const title = `${r.title}: ${r.outcome} ${at.slice(0, 10)}`;
   const rec = { id, routine: r.routine, at, outcome: r.outcome, by: r.by, checked: r.checked, title, notes: r.notes.trim() };
   if (r.handed_to) rec.handed_to = r.handed_to;
-  stage(root, { routines: [rec] });
-  return { file: branchRunFile(branch, r.routine, at), id };
+  const filed = routineRecord(rec);
+  stage(root, { routines: [filed] });
+  return { file: branchRunFile(branch, r.routine, at, filed.hash), id };
 }
 var DAY2, CADENCE_DAYS, OUTCOMES, ID_RE, HM_RE2, DATE_RE, KEYS, DOW;
 var init_routine_store = __esm({
@@ -13329,21 +13349,6 @@ function recordAt(r, i, usage) {
   }
   return r.at;
 }
-function recordHash(r) {
-  return createHash5("sha256").update(canonical(r)).digest("hex").slice(0, 12);
-}
-function canonical(v) {
-  const sort = (x) => {
-    if (Array.isArray(x)) return x.map(sort);
-    if (x && typeof x === "object") {
-      const o = {};
-      for (const k of Object.keys(x).sort()) o[k] = sort(x[k]);
-      return o;
-    }
-    return x;
-  };
-  return JSON.stringify(sort(clean(v)));
-}
 function missingFields(r, fields) {
   return fields.filter((f) => r[f] === void 0 || r[f] === null);
 }
@@ -13785,7 +13790,7 @@ function build2(root, sources, branch, now) {
           notes: body.replace(/^#\s+[^\n]*\n*/, "").trim(),
           handed_to: typeof data.handed_to === "string" ? data.handed_to : void 0
         });
-        place("routines", rec, text, 1, at);
+        place("routines", routineRecord(rec), text, 1, at);
       } catch (e) {
         lost(text, 1, at0, `not a routine run: ${e.message}`);
       }

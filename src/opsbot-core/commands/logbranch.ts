@@ -17,6 +17,8 @@ import {
   haveLocal,
   logBranch,
   queryRecords,
+  recordHash,
+  canonical,
   quietLines,
   quietRuns,
   readPending,
@@ -107,23 +109,7 @@ function recordAt(r: Rec, i: number, usage: string): string {
   return r.at;
 }
 
-export function recordHash(r: Rec): string {
-  return createHash("sha256").update(canonical(r)).digest("hex").slice(0, 12);
-}
-
-/** JSON with keys sorted at every depth, nulls dropped: two equal records give one string. */
-export function canonical(v: unknown): string {
-  const sort = (x: unknown): unknown => {
-    if (Array.isArray(x)) return x.map(sort);
-    if (x && typeof x === "object") {
-      const o: Rec = {};
-      for (const k of Object.keys(x as Rec).sort()) o[k] = sort((x as Rec)[k]);
-      return o;
-    }
-    return x;
-  };
-  return JSON.stringify(sort(clean(v)));
-}
+export { canonical, recordHash };
 
 function missingFields(r: Rec, fields: string[]): string[] {
   return fields.filter((f) => r[f] === undefined || r[f] === null);

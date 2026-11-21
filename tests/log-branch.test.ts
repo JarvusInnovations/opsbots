@@ -166,10 +166,10 @@ describe("a cycle on the log branch", () => {
       "outages/2026/03/02/150607-refused-start.toml",
       "outages/2026/03/02/160607-refused-start.toml",
     ]);
-    expect(files.filter((f) => f.startsWith("routines/"))).toEqual([
-      "routines/memory-review/2026/03/02/150607.toml",
-      "routines/memory-review/2026/03/02/160607.toml",
-    ]);
+    const runFiles = files.filter((f) => f.startsWith("routines/"));
+    expect(runFiles).toHaveLength(2);
+    expect(runFiles[0]).toMatch(/^routines\/memory-review\/2026\/03\/02\/150607-[0-9a-f]{12}\.toml$/);
+    expect(runFiles[1]).toMatch(/^routines\/memory-review\/2026\/03\/02\/160607-[0-9a-f]{12}\.toml$/);
     const runs = cli(b, ["routines", "history", "memory-review"], { now: "2026-03-02T17:01:00Z" }).out;
     expect(runs).toContain("run 1");
     expect(runs).toContain("run 2");

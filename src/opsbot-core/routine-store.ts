@@ -4,7 +4,7 @@
  *
  *   <routines.dir>/<id>.md                       one definition: schedule as TOML frontmatter,
  *                                                instructions as the body; read at HEAD
- *   <log branch>:routines/<routine>/YYYY/MM/DD/<hhmmss>   one run: id, routine, at, outcome,
+ *   <log branch>:routines/<routine>/YYYY/MM/DD/<hhmmss>-<hash>   one run: id, routine, at, outcome,
  *                                                by, checked, handed_to, title, notes
  *
  * Due is computed, never stored: an interval routine is due once its interval has passed since
@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { FrontmatterError, parseRecord, serializeRecord, type Frontmatter } from "./frontmatter.js";
 import { git, hasHead, iso } from "./repo.js";
-import { branchRoutineRecords, logBranch, stage, type Rec } from "./log.js";
+import { branchRoutineRecords, logBranch, routineRecord, stage, type Rec } from "./log.js";
 import type { Settings } from "./settings.js";
 
 export const DAY = 86_400_000;
@@ -386,9 +386,9 @@ export function writeRun(root: string, _s: Settings, r: NewRun): { file: string;
 
 // ------------------------------------------------------------ runs on the log branch
 
-/** Where a run's record is on the log branch: `<branch>:routines/<routine>/YYYY/MM/DD/<hhmmss>`. */
-function branchRunFile(branch: string, routine: string, at: string): string {
-  return `${branch}:routines/${routine}/${at.slice(0, 4)}/${at.slice(5, 7)}/${at.slice(8, 10)}/${at.slice(11, 13)}${at.slice(14, 16)}${at.slice(17, 19)}`;
+/** Where a run's record is on the log branch: `<branch>:routines/<routine>/YYYY/MM/DD/<hhmmss>-<hash>`. */
+function branchRunFile(branch: string, routine: string, at: string, hash: string): string {
+  return `${branch}:routines/${routine}/${at.slice(0, 4)}/${at.slice(5, 7)}/${at.slice(8, 10)}/${at.slice(11, 13)}${at.slice(14, 16)}${at.slice(17, 19)}-${hash}`;
 }
 
 /** The `routines` records of the log branch (and those staged) as runs. */
@@ -412,7 +412,7 @@ function branchRuns(branch: string, recs: Rec[]): { runs: Run[]; problems: strin
       checked: Array.isArray(d.checked) ? d.checked.map(String) : [],
       handed_to: typeof d.handed_to === "string" ? d.handed_to : null,
       notes: typeof d.notes === "string" ? d.notes : "",
-      file: branchRunFile(branch, d.routine, at),
+      file: branchRunFile(branch, d.routine, at, typeof d.hash === "string" ? d.hash : routineRecord(d).hash as string),
     });
   }
   return { runs, problems };
@@ -428,6 +428,7 @@ function writeBranchRun(root: string, branch: string, r: NewRun): { file: string
   const title = `${r.title}: ${r.outcome} ${at.slice(0, 10)}`;
   const rec: Rec = { id, routine: r.routine, at, outcome: r.outcome, by: r.by, checked: r.checked, title, notes: r.notes.trim() };
   if (r.handed_to) rec.handed_to = r.handed_to;
-  stage(root, { routines: [rec] });
-  return { file: branchRunFile(branch, r.routine, at), id };
+  const filed = routineRecord(rec);
+  stage(root, { routines: [filed] });
+  return { file: branchRunFile(branch, r.routine, at, filed.hash as string), id };
 }

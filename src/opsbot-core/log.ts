@@ -11,7 +11,7 @@
  *                                                     also keeps `at` in the record)
  *   seen      seen/YYYY/MM/DD/<key hash>              one record per seen key
  *   outages   outages/YYYY/MM/DD/<hhmmss>-<kind>-<start|end>   one record per outage line
- *   routines  routines/<routine>/YYYY/MM/DD/<hhmmss>            one record per routine run
+ *   routines  routines/<routine>/YYYY/MM/DD/<hhmmss>-<hash>     one record per routine run
  *   posts     posts/<channel>/YYYY/MM/DD/<hhmmss>-<hash>        one record per post attempt
  *   ledgers   ledgers/<name>/YYYY/MM/DD/<hhmmss>-<hash>         one record per action a script took
  *   state     state/<name>                                      one baseline per name, replaced
@@ -78,8 +78,8 @@ export const SHEET_CONFIGS: Record<Sheet, { path: string; schema: Rec }> = {
     },
   },
   routines: {
-    path: `\${{ routine }}/${DAY}/${HHMMSS}`,
-    schema: { type: "object", required: ["at", "routine"], properties: { at: AT, routine: { type: "string" } } },
+    path: `\${{ routine }}/${DAY}/${HHMMSS}-\${{ hash }}`,
+    schema: { type: "object", required: ["at", "routine", "hash"], properties: { at: AT, routine: { type: "string" }, hash: { type: "string" } } },
   },
   posts: {
     path: `\${{ channel }}/${DAY}/${HHMMSS}-\${{ hash }}`,
@@ -104,7 +104,7 @@ export function ident(sheet: Sheet, r: Rec): string {
   if (sheet === "posts") return `${String(r.channel ?? "")}|${at}|${String(r.hash ?? "")}`;
   if (sheet === "ledgers") return `${String(r.ledger ?? "")}|${at}|${String(r.hash ?? "")}`;
   if (sheet === "state") return String(r.name ?? "");
-  return `${String(r.routine ?? "")}|${at}`;
+  return `${String(r.routine ?? "")}|${at}|${String(r.hash ?? "")}`;
 }
 
 // ------------------------------------------------------------------ the writer
@@ -424,6 +424,33 @@ export function clean<T>(v: T): T {
     return o as T;
   }
   return v;
+}
+
+/** A record's short hash (sha256 of its canonical form, 12 hex): what keeps two records of one
+ * second apart in a path, and makes the same record the same file. */
+export function recordHash(r: Rec): string {
+  return createHash("sha256").update(canonical(r)).digest("hex").slice(0, 12);
+}
+
+/** JSON with keys sorted at every depth, nulls dropped: two equal records give one string. */
+export function canonical(v: unknown): string {
+  const sort = (x: unknown): unknown => {
+    if (Array.isArray(x)) return x.map(sort);
+    if (x && typeof x === "object") {
+      const o: Rec = {};
+      for (const k of Object.keys(x as Rec).sort()) o[k] = sort((x as Rec)[k]);
+      return o;
+    }
+    return x;
+  };
+  return JSON.stringify(sort(clean(v)));
+}
+
+/** A routine run as the routines sheet files it: the record and its hash, so two runs of one
+ * routine in the same second are two files and the same run written again is one. */
+export function routineRecord(r: Rec): Rec {
+  const { hash: _h, ...body } = clean(r);
+  return { ...body, hash: recordHash(body) };
 }
 
 export function seenHash(key: string): string {
