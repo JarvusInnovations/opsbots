@@ -56,6 +56,10 @@ a record must carry.
   requires a record to hold every field its path is built from. Quiet cycles, the bulk of the
   volume, write no record at all (see "Quiet cycles"), so nothing is gained by keeping the
   time out of the body.
+- **An outage is one event per second, kind and edge.** Two records of the same kind of
+  outage starting (or ending) in the same second, from two watchers that saw the same thing,
+  are one record: the later one replaces the earlier. Nothing is lost, because they describe
+  the same moment.
 - **A cycle is one commit, however many records it writes.** Records made between a check and
   the cycle's end, or by a script outside a cycle, wait in a pending file under the git
   directory and are written with the next log commit.
