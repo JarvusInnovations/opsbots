@@ -77,11 +77,20 @@ const cacheMs = num(screenCfg?.cache_seconds, 300) * 1000;
 const maxMembers = Math.floor(num(screenCfg?.max_members, 100));
 const timeoutMs = num(screenCfg?.timeout_seconds, 30) * 1000;
 const posInt = (v, d) => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : typeof v === "string" && /^[1-9]\d*$/.test(v) ? Number(v) : d);
-// Every peer entry with a user id counts for the guard, even one status calls unusable: more
-// guard, never less. A channel list that is not a list guards nothing for that peer.
+// Every peer entry with a user id or a bot id counts for the guard, even one status calls
+// unusable: more guard, never less. A peer named by bot id alone posts with no user, as through
+// an incoming webhook. The bot's own bot id is never a peer's. A channel list that is not a list
+// guards nothing for that peer.
+const ownBotId = slack.bot_id ? String(slack.bot_id) : "";
 const peers = (Array.isArray(slack.peers) ? slack.peers : [])
-  .filter((p) => p && typeof p === "object" && typeof p.user === "string" && p.user)
-  .map((p, i) => ({ name: typeof p.name === "string" && p.name ? p.name : `peer ${i + 1}`, user: p.user, botId: typeof p.bot_id === "string" ? p.bot_id : "", channels: Array.isArray(p.channels) ? p.channels.map(String) : [] }));
+  .filter((p) => p && typeof p === "object")
+  .map((p, i) => ({
+    name: typeof p.name === "string" && p.name ? p.name : `peer ${i + 1}`,
+    user: typeof p.user === "string" ? p.user : "",
+    botId: typeof p.bot_id === "string" && p.bot_id !== ownBotId ? p.bot_id : "",
+    channels: Array.isArray(p.channels) ? p.channels.map(String) : [],
+  }))
+  .filter((p) => p.user || p.botId);
 const peerTurns = posInt(slack.peer_turns, 6);
 const peerPerHour = posInt(slack.peer_posts_per_hour, 20);
 const THREAD_CACHE_MS = 20000;
@@ -384,7 +393,7 @@ function senderKind(m) {
   const user = typeof m.user === "string" ? m.user : "";
   const own = () => (mentionsOperator(m.text) ? "sa" : "s");
   if (slack.bot_user && user === String(slack.bot_user)) return own();
-  const peer = user ? peers.find((p) => p.user === user) : peers.find((p) => p.botId && p.botId === m.bot_id);
+  const peer = user ? peers.find((p) => p.user && p.user === user) : peers.find((p) => p.botId && p.botId === m.bot_id);
   if (peer) return `p:${peer.name}`;
   const app = Boolean(m.bot_id) || m.subtype === "bot_message";
   if (!app) return "h";
@@ -473,7 +482,7 @@ async function peerGuard(conv, reply, text) {
   }
   const involved = [...new Set([
     ...senders.filter((k) => k.startsWith("p:")).map((k) => k.slice(2)),
-    ...peers.filter((p) => mentions(text, p.user)).map((p) => p.name),
+    ...peers.filter((p) => p.user && mentions(text, p.user)).map((p) => p.name),
   ])];
   if (!involved.length) return null;
   const peer = involved.join(",");

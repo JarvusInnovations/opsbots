@@ -660,6 +660,51 @@ describe("peer bots: the loop guard", () => {
     expect(cache).not.toContain("words");
   });
 
+  describe("a peer named by bot id alone (a webhook's posts)", () => {
+    const HOOK = "B0PEER0002";
+    const HOOK_PEERS = { peers: [{ name: "hookbot", bot_id: HOOK, channels: [PCHAN] }], operators: [OPER] };
+    // a webhook post: no user, the webhook's bot_id, subtype bot_message
+    const hookThread = (...who: ("hook" | "me" | "ann")[]) => ({
+      ...FIXTURE,
+      "conversations.replies": { ok: true, has_more: false, messages: who.map((w) => (w === "hook" ? { type: "message", subtype: "bot_message", bot_id: HOOK, text: "words", ts: `1794402${String(100 + n++).padStart(3, "0")}.000100` } : msg(w === "me" ? "me" : "ann"))) },
+    });
+
+    test("its posts count in the loop guard: under peer_turns posts, the next bot-only turn is refused; the senders are cached", () => {
+      const b = bot(HOOK_PEERS, { fixture: hookThread("ann", "hook", "me", "hook", "me", "hook"), audience });
+      const ok = b.run(["post", PCHAN, "--reply", ROOT, "done"]);
+      expect(ok.code).toBe(0);
+      expect(ok.json).toMatchObject({ posted: true, peer: "hookbot" });
+      const no = b.run(["post", PCHAN, "--reply", ROOT, "anything else?"]);
+      expect(no.code).toBe(6);
+      expect(no.json).toMatchObject({ peer_guard: "turns", peer: "hookbot", error: "6 turns between bots with no person; ask the operator" });
+      expect(replies(b)).toHaveLength(1);
+      const cache = JSON.parse(readFileSync(join(b.dir, "cache", "slack-classes.json"), "utf8"));
+      expect(cache.threads[`${PCHAN}:${ROOT}`].senders).toEqual(["h", "p:hookbot", "s", "p:hookbot", "s", "p:hookbot", "s"]);
+      expect(b.log()[0]).toMatchObject({ peer: "hookbot", posted: true });
+    });
+
+    test("its threads count toward the hourly cap; another bot's bot_id does not", () => {
+      const b = bot({ ...HOOK_PEERS, peer_posts_per_hour: 2 }, { fixture: hookThread("hook"), audience });
+      const recent = new Date(Date.now() - 60000).toISOString().replace(/\.\d{3}Z$/, "Z");
+      appendPosts(b, [1, 2].map((k) => ({ at: recent, conv: PCHAN, class: "internal", posted: true, peer: "hookbot", draft_sha256: String(k).repeat(64) })));
+      expect(b.run(["post", PCHAN, "--reply", ROOT, "x"]).json).toMatchObject({ peer_guard: "hourly", peer: "hookbot" });
+      const other = bot({ ...HOOK_PEERS, peer_posts_per_hour: 1 }, { fixture: thread("ann", "other", "me", "other", "me", "other", "me", "other"), audience });
+      const r = other.run(["post", PCHAN, "--reply", ROOT, "x"]);
+      expect(r.code).toBe(0);
+      expect(r.json).not.toHaveProperty("peer");
+    });
+
+    test("the bot's own bot_id listed as a peer's is never a peer: the bot's own run is not a loop", () => {
+      const b = bot({ bot_id: OWN_BOT, peers: [{ name: "mine", bot_id: OWN_BOT, channels: [PCHAN] }], operators: [OPER] }, {
+        fixture: { ...FIXTURE, "conversations.replies": { ok: true, has_more: false, messages: Array.from({ length: 8 }, (_, k) => ({ type: "message", subtype: "bot_message", bot_id: OWN_BOT, text: "words", ts: `1794409${String(100 + k).padStart(3, "0")}.000100` })) } },
+        audience,
+      });
+      const r = b.run(["post", PCHAN, "--reply", ROOT, "x"]);
+      expect(r.code).toBe(0);
+      expect(r.json).not.toHaveProperty("peer");
+    });
+  });
+
   test("the root counts: a peer's mention and five replies make six, refused", () => {
     const b = bot(PEERS, { fixture: thread("peer", "me", "peer", "me", "peer", "me"), audience });
     expect(b.run(["post", PCHAN, "--reply", ROOT, "x"]).json).toMatchObject({ peer_guard: "turns", error: "6 turns between bots with no person; ask the operator" });

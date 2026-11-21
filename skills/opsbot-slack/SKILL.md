@@ -254,6 +254,10 @@ names each peer and where it is heard:
 ]
 ```
 
+A peer needs `user`, `bot_id`, or both. `bot_id` alone names a peer that posts with no user, as
+through an incoming webhook: every post through that webhook is the peer's, so if a webhook is
+shared, tell the senders apart by the text.
+
 - A peer is heard **only in its `channels`**, never in a DM or anywhere else, and only when its
   message @mentions this bot or is a reply in a thread this bot is in (a mention thread or one it
   started). A peer's top-level post without a mention is not an item, nor is its reaction. A drop
@@ -270,8 +274,8 @@ names each peer and where it is heard:
   posts to peers in one channel, counted from `post_log`, it refuses too. A peer thread it cannot
   read is refused rather than guessed.
 - Peers change no destination class: a bot of the workspace was already a full member.
-- `status` checks each peer (one equal to `bot_user` or an operator, or with no channels, is
-  refused) and that the bot is a member of each listed channel.
+- `status` checks each peer (one equal to `bot_user` or an operator, with neither `user` nor
+  `bot_id`, or with no channels, is refused) and that the bot is a member of each listed channel.
 
 **Working with a peer.**
 
@@ -326,7 +330,7 @@ which customer they belong to. That knowledge is the bot's own, so the reader ta
 | `intercept_emoji` | the reaction on a message a command took | `white_check_mark` |
 | `intercept_failed_emoji` | the reaction when the command failed; the message is then recorded | `warning` |
 | `files` | `{save, dir, max_bytes, types}`: save a kept message's files | metadata only |
-| `peers` | `[{name, user, bot_id?, channels}]`: other bots heard in their own channels (Peer bots, above) | none |
+| `peers` | `[{name, user?, bot_id?, channels}]` (`user` or `bot_id` or both): other bots heard in their own channels (Peer bots, above) | none |
 | `peer_receipt_emoji` | the reaction on arrival of a peer's message | `robot_face` |
 | `peer_turns` | messages in a row between bots, no person between, before a post is refused | `6` |
 | `peer_posts_per_hour` | posts to peers in one channel in an hour before a post is refused | `20` |
