@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { commitStaged, forgetLogBranch, routineRecord, sheetRecords } from "../src/opsbot-core/log";
 import { BASE_SETTINGS, cli, git, logOf, makeBot, setSettings, stageLog, stagedOf, writeStream, type Bot } from "./helpers";
 import { parseRecord, serializeRecord, FrontmatterError } from "../src/opsbot-core/frontmatter";
 import { computeState, parseDefinition, type Definition, type Run } from "../src/opsbot-core/routine-store";
@@ -176,6 +177,24 @@ function routineFile(b: Bot, id: string, fm: string, body = "Do the thing.\n", c
 const NO_MEMORY = { ...BASE_SETTINGS, memory: false };
 
 describe("routines done, history and validate", () => {
+
+  test("two runs of one routine in the same second are two files; the same run written again is one", () => {
+    bot = makeBot({ settings: NO_MEMORY });
+    routineFile(bot, "weekly-backup-check", 'cadence = "weekly"\nsince = "2026-01-05"');
+    const now = "2026-03-02T15:00:00Z";
+    for (const n of ["first", "second"]) expect(cli(bot, ["routines", "done", "weekly-backup-check", "--notes", n, "--at", "2026-03-02T14:00:00Z"], { now }).code).toBe(0);
+    expect(cli(bot, ["check"], { now }).code).toBe(0);
+    const files = () => git(bot.root, "ls-tree", "-r", "--name-only", "opsbot/log", "routines").trim().split("\n").filter(Boolean);
+    expect(files()).toHaveLength(2);
+    for (const f of files()) expect(f).toMatch(/^routines\/weekly-backup-check\/2026\/03\/02\/140000-[0-9a-f]{12}\.toml$/);
+    // the same record again, in a commit of its own: still one file for it
+    forgetLogBranch();
+    const run = sheetRecords(bot.root, "opsbot/log", "routines")[0]!;
+    const w = commitStaged(bot.root, "opsbot/log", { routines: [routineRecord(run)] }, { subject: "again" });
+    expect(w.ok).toBe(true);
+    expect(files()).toHaveLength(2);
+    expect(cli(bot, ["routines", "history", "weekly-backup-check"], { now }).out).toContain("2 runs");
+  }, SLOW);
   test("done writes one run record, clears due, and history shows the gaps", () => {
     bot = makeBot({ settings: NO_MEMORY });
     routineFile(bot, "weekly-backup-check", 'cadence = "weekly"\nsince = "2026-01-05"', "Check every nightly job.\n\n- each night accounted for\n");
@@ -198,6 +217,7 @@ describe("routines done, history and validate", () => {
       title: "weekly-backup-check title: partial 2026-02-16",
       notes: "two nights failed",
       handed_to: "the operator",
+      hash: expect.stringMatching(/^[0-9a-f]{12}$/),
     });
     expect(git(bot.root, "status", "--porcelain")).toBe("");
     // still due (the newest run is over a week old); a run now clears it
@@ -283,7 +303,7 @@ describe("a due routine surfaces once per occurrence", () => {
     // a run clears it; the run is committed by the next check, and the next slot is the due time
     expect(cli(bot, ["routines", "done", "morning-summary", "--notes", "sent"], { now }).code).toBe(0);
     expect(cli(bot, ["check"], { now }).code).toBe(0);
-    expect(git(bot.root, "show", "--name-only", "--format=", "opsbot/log")).toContain("routines/morning-summary/2026/03/02/141000.toml");
+    expect(git(bot.root, "show", "--name-only", "--format=", "opsbot/log")).toMatch(/routines\/morning-summary\/2026\/03\/02\/141000-[0-9a-f]{12}\.toml/);
     expect(git(bot.root, "status", "--porcelain")).toBe("");
     expect(dueTimes(bot.root, s, "{}", T(now)).due[0]!.at).toBe("2026-03-03T13:30:00Z");
     // the next slot is a new occurrence: one new item

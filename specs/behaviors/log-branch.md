@@ -31,7 +31,7 @@ no second clone:
 | `seen` | key reported to the session | `seen/YYYY/MM/DD/<key hash>` |
 | `posts/<channel>` | post attempt | `posts/<channel>/YYYY/MM/DD/<hhmmss>-<hash>` |
 | `outages` | outage a check accounted for | `outages/YYYY/MM/DD/<hhmmss>-<kind>-<start or end>` |
-| `routines` | routine run | `routines/<routine>/YYYY/MM/DD/<hhmmss>` |
+| `routines` | routine run | `routines/<routine>/YYYY/MM/DD/<hhmmss>-<hash>` |
 | `ledgers/<name>` | action a script took (a label applied, a mail sent, a row written) | `ledgers/<name>/YYYY/MM/DD/<hhmmss>-<hash>` |
 | `state/<name>` | baseline a check compares against (one record, replaced) | `state/<name>` |
 

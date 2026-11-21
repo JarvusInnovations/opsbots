@@ -45,6 +45,7 @@ import {
   haveLocal,
   ident,
   readTip,
+  routineRecord,
   seenHash,
   sheetRecords,
   versionAtLeast,
@@ -340,7 +341,7 @@ function build(root: string, sources: Source[], branch: string, now: string): Bu
           notes: body.replace(/^#\s+[^\n]*\n*/, "").trim(),
           handed_to: typeof data.handed_to === "string" ? data.handed_to : undefined,
         });
-        place("routines", rec, text, 1, at);
+        place("routines", routineRecord(rec), text, 1, at);
       } catch (e) {
         lost(text, 1, at0, `not a routine run: ${(e as Error).message}`);
       }

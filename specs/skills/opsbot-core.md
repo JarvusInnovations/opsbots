@@ -561,7 +561,7 @@ apart.
   next due at the newest run plus the interval, or at its next slot. Accuracy is the cycle
   window; nothing is finer.
 - **Runs.** `routines done` writes one record per run to the log branch's `routines` sheet,
-  at `routines/<routine>/YYYY/MM/DD/<hhmmss>` by the run's UTC time, the id being
+  at `routines/<routine>/YYYY/MM/DD/<hhmmss>-<hash>` (the hash a short hash of the record) by the run's UTC time, the id being
   `<routine>-<YYYY-MM-DD>-<HHMM>` (UTC, with `-2`, `-3` on a clash). The record holds `id`,
   `routine`, `at` (ISO UTC), `outcome` (`done`, `partial`, `skipped`, `blocked`), `by` (the
   bot's name), `checked` (the items done, as given), `handed_to` when given, `title` and
