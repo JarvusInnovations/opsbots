@@ -1,7 +1,7 @@
 ---
 status: done
 done: 2026-11-20
-pr: TBD
+pr: 131
 depends: [slack-peers]
 specs:
   - specs/skills/opsbot-slack.md
