@@ -1,17 +1,19 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { cli, git, makeBot, readLines, setSettings, writeStream, type Bot } from "./helpers";
+import { cli, git, logOf, logSubjects, makeBot, outagesOf, watermarkOf, writeStream, type Bot } from "./helpers";
+
+// every cycle writes through gitsheets-axi (the log branch): a test of several takes seconds
+setDefaultTimeout(120_000);
 
 let bot: Bot;
 afterEach(() => bot?.cleanup());
 
 const T0 = "2026-03-02T15:00:00Z";
 const lockFile = (b: Bot) => join(b.root, ".git", "opsbot-cycle.lock");
-const outagesOf = (b: Bot) => readLines(join(b.root, "logs/outages.jsonl"));
-const log = (b: Bot) => readLines(join(b.root, "logs/cycle.jsonl"));
-const wm = (b: Bot) => readFileSync(join(b.root, "logs/intake/watermark"), "utf8").trim();
+const log = logOf;
+const wm = watermarkOf;
 const item = (n: number) => ({ key: `chat:c:${n}`, at: T0, conv: "c", kind: "group", from: "p", text: `hi ${n}` });
 
 function deadPid(): string {
@@ -139,32 +141,12 @@ describe("cycle end", () => {
     expect(r.out).toMatch(/next: "?\d+ /);
     expect(wm(bot)).toBe(T0);
     const last = log(bot).at(-1)!;
-    expect(JSON.stringify(last)).toBe(
-      `{"at":"2026-03-02T15:07:00Z","outcome":"finished","records":2,"watermark":"${T0}","degraded":false,"summary":"answered one"}`,
-    );
+    expect(last).toEqual({ at: "2026-03-02T15:07:00Z", outcome: "finished", records: 2, degraded: false, summary: "answered one" });
     expect(existsSync(lockFile(bot))).toBe(false);
-    expect(git(bot.root, "log", "-1", "--format=%s").trim()).toBe("chore(cycle): finished, 2 records");
+    // the cycle is one commit on the log branch; the program branch has none of its own
+    expect(logSubjects(bot)[0]).toBe("cycle: finished, 2 records");
+    expect(git(bot.root, "log", "--format=%s").trim()).toBe("init");
     expect(git(bot.root, "status", "--porcelain").trim()).toBe("");
-  });
-
-  test("commit_paths: the cycle-end commit takes a changed listed file and leaves an unlisted one", () => {
-    bot = makeBot();
-    writeFileSync(join(bot.root, "helper.log"), "one\n");
-    writeFileSync(join(bot.root, "other.txt"), "a\n");
-    git(bot.root, "add", "helper.log", "other.txt");
-    git(bot.root, "commit", "-q", "-m", "files");
-    setSettings(bot, { commit_paths: ["helper.log", "absent.log"] });
-    writeStream(bot, [item(1)]);
-    expect(cli(bot, ["cycle", "begin"], { now: T0 }).code).toBe(10);
-    // a helper script appends between the check and the close
-    writeFileSync(join(bot.root, "helper.log"), "one\ntwo\n");
-    writeFileSync(join(bot.root, "other.txt"), "b\n");
-    const r = cli(bot, ["cycle", "end", "--records", "1"], { now: "2026-03-02T15:07:00Z" });
-    expect(r.code).toBe(0);
-    expect(git(bot.root, "log", "-1", "--format=%s").trim()).toBe("chore(cycle): finished, 1 records");
-    const files = git(bot.root, "show", "--name-only", "--format=", "HEAD").trim().split("\n").sort();
-    expect(files).toEqual(["helper.log", "logs/cycle.jsonl", "logs/intake/watermark"]);
-    expect(git(bot.root, "status", "--porcelain").trim()).toBe("M other.txt");
   });
 
   test("refuses a future watermark", () => {
@@ -181,12 +163,16 @@ describe("cycle end", () => {
     bot = makeBot();
     writeStream(bot, [item(1)]);
     cli(bot, ["cycle", "begin"], { now: T0 });
-    writeFileSync(join(bot.root, "logs/intake/watermark"), "2026-03-02T15:30:00Z\n");
-    const before = readFileSync(join(bot.root, "logs/cycle.jsonl"), "utf8");
+    // a watermark ahead of this cycle's check, as a `check --no-commit` leaves one staged
+    const pending = join(bot.root, ".git", "opsbot-log-pending.json");
+    writeFileSync(pending, JSON.stringify({ ...JSON.parse(readFileSync(pending, "utf8")), watermark: "2026-03-02T15:30:00Z" }));
+    const before = JSON.stringify(log(bot));
+    const commits = logSubjects(bot);
     const r = cli(bot, ["cycle", "end", "--records", "0"], { now: "2026-03-02T15:40:00Z" });
     expect(r.code).toBe(1);
     expect(r.out).toContain("would move backwards");
-    expect(readFileSync(join(bot.root, "logs/cycle.jsonl"), "utf8")).toBe(before);
+    expect(JSON.stringify(log(bot))).toBe(before);
+    expect(logSubjects(bot)).toEqual(commits);
   });
 
   test("refuses when no check has logged since the lock was taken", () => {
@@ -238,16 +224,6 @@ describe("state commands", () => {
     expect(r.out).toContain("1 outages · 0 open");
     expect(cli(bot, ["outage", "end"]).out).toContain("no-op");
     expect(cli(bot, ["outage", "record", "napping"]).code).toBe(2);
-  });
-
-  test("outage lines an earlier bot wrote into the cycle log are read too", () => {
-    bot = makeBot();
-    mkdirSync(join(bot.root, "logs"), { recursive: true });
-    writeFileSync(
-      join(bot.root, "logs/cycle.jsonl"),
-      `{"at":"${T0}","outcome":"outage","kind":"stopped","started":"2026-03-02T13:00:00Z","ended":null,"note":"old"}\n`,
-    );
-    expect(cli(bot, ["outage", "list"]).out).toContain("1 open");
   });
 
   test("lock status and release", () => {

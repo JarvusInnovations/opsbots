@@ -1,9 +1,12 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BASE_SETTINGS, cli, git, makeBot, readLines, setSettings, writeStream, type Bot } from "./helpers";
+import { BASE_SETTINGS, cli, git, logOf, makeBot, setSettings, writeStream, type Bot } from "./helpers";
 import { validateSettings, withDefaults } from "../src/opsbot-core/settings";
 import { frontmatterType, reviewCounts } from "../src/opsbot-core/memory";
+
+// every cycle writes through gitsheets-axi (the log branch): a test of several takes seconds
+setDefaultTimeout(120_000);
 
 let bot: Bot;
 afterEach(() => bot?.cleanup());
@@ -94,13 +97,14 @@ describe("memory is committed with the cycle", () => {
     mem(bot, "sub/b.md", "fact b\n");
     writeFileSync(join(bot.root, "stray.txt"), "not memory\n");
     expect(cli(bot, ["check"], { now: "2026-03-02T15:00:00Z" }).code).toBe(0);
-    expect(headFiles(bot)).toEqual(["logs/cycle.jsonl", "logs/intake/seen", "logs/intake/watermark", "memory/MEMORY.md", "memory/a.md", "memory/sub/b.md"]);
+    // the program branch's commit holds the memory alone; the log is on its branch
+    expect(headFiles(bot)).toEqual(["memory/MEMORY.md", "memory/a.md", "memory/sub/b.md"]);
     expect(git(bot.root, "status", "--porcelain").trim()).toBe("?? stray.txt");
 
     rmSync(join(bot.root, "memory", "a.md"));
     mem(bot, "MEMORY.md", "");
     expect(cli(bot, ["check"], { now: "2026-03-02T15:10:00Z" }).code).toBe(0);
-    expect(headFiles(bot)).toEqual(["logs/cycle.jsonl", "logs/intake/watermark", "memory/MEMORY.md", "memory/a.md"]);
+    expect(headFiles(bot)).toEqual(["memory/MEMORY.md", "memory/a.md"]);
     expect(git(bot.root, "ls-files", "memory").trim().split("\n").sort()).toEqual(["memory/MEMORY.md", "memory/sub/b.md"]);
     expect(git(bot.root, "status", "--porcelain").trim()).toBe("?? stray.txt");
   }, SLOW);
@@ -117,7 +121,7 @@ describe("memory is committed with the cycle", () => {
     writeFileSync(join(bot.root, "stray.txt"), "x\n");
     const r = cli(bot, ["cycle", "end", "--records", "1"], { now: "2026-03-02T15:05:00Z" });
     expect(r.code).toBe(0);
-    expect(headFiles(bot)).toEqual(["logs/cycle.jsonl", "logs/intake/watermark", "memory/new.md", "memory/old.md"]);
+    expect(headFiles(bot)).toEqual(["memory/new.md", "memory/old.md"]);
     expect(git(bot.root, "ls-files", "memory").trim()).toBe("memory/new.md");
     expect(git(bot.root, "status", "--porcelain").trim()).toBe("?? stray.txt");
   }, SLOW);
@@ -187,7 +191,7 @@ describe("memory review", () => {
     const d = cli(bot, ["memory", "review", "--done", "--note", "folded fold.md into protocols/x.md; pruned prune.md"], { now: "2026-03-02T15:00:00Z" });
     expect(d.code).toBe(0);
     expect(d.out).toContain("kept 1 · updated 1 · removed 2 (folded or pruned) · added 1");
-    const last = readLines(join(bot.root, "logs", "cycle.jsonl")).pop()!;
+    const last = logOf(bot).pop()!;
     expect(last).toEqual({ at: "2026-03-02T15:00:00Z", outcome: "memory-review", files: 4, kept: 1, updated: 1, removed: 2, added: 1, note: "folded fold.md into protocols/x.md; pruned prune.md" });
     // the snapshot is gone: a second --done has nothing to compare with
     expect(cli(bot, ["memory", "review", "--done"]).code).toBe(1);
@@ -195,7 +199,7 @@ describe("memory review", () => {
     // the review line and the folder are committed by the next check
     cli(bot, ["check"], { now: "2026-03-02T15:10:00Z" });
     expect(headFiles(bot)).toContain("memory/added.md");
-    expect(git(bot.root, "show", "HEAD:logs/cycle.jsonl")).toContain('"outcome":"memory-review"');
+    expect(logOf(bot).some((l) => l.outcome === "memory-review")).toBe(true);
     expect(cli(bot, ["log", "tail"]).out).toContain("kept 1 · updated 1 · removed 2 · added 1");
   }, SLOW);
 

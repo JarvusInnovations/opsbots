@@ -137,7 +137,7 @@ export function capSection(text: string, limit: number): string {
   return `${kept.join("\n")}\n… ${more} more line${more === 1 ? "" : "s"}`;
 }
 
-function logSummary(root: string, now: number): string[] {
+export function logSummary(root: string, now: number): string[] {
   const all = readCycleLog(root).filter((l) => {
     const t = parseIso(l.at);
     return t !== null && t >= now - DAY2;

@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "c911ed0" : "dev";
+    VERSION = true ? "7cb69f2" : "dev";
   }
 });
 
@@ -48,76 +48,76 @@ var init_errors = __esm({
 });
 
 // node_modules/axi-sdk-js/node_modules/@toon-format/toon/dist/index.mjs
-function escapeString(value2) {
-  return value2.replace(/\\/g, `\\\\`).replace(/"/g, `\\"`).replace(/\n/g, `\\n`).replace(/\r/g, `\\r`).replace(/\t/g, `\\t`).replace(/[\u0000-\u001F]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+function escapeString(value) {
+  return value.replace(/\\/g, `\\\\`).replace(/"/g, `\\"`).replace(/\n/g, `\\n`).replace(/\r/g, `\\r`).replace(/\t/g, `\\t`).replace(/[\u0000-\u001F]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
 }
 function isBooleanOrNullLiteral(token) {
   return token === "true" || token === "false" || token === "null";
 }
-function setOwnProperty(target, key, value2) {
+function setOwnProperty(target, key, value) {
   if (key === "__proto__") {
     Object.defineProperty(target, key, {
-      value: value2,
+      value,
       enumerable: true,
       writable: true,
       configurable: true
     });
     return;
   }
-  target[key] = value2;
+  target[key] = value;
 }
-function normalizeValue(value2) {
-  if (value2 === null) return null;
-  if (typeof value2 === "object" && value2 !== null && "toJSON" in value2 && typeof value2.toJSON === "function") {
-    const next3 = value2.toJSON();
-    if (next3 !== value2) return normalizeValue(next3);
+function normalizeValue(value) {
+  if (value === null) return null;
+  if (typeof value === "object" && value !== null && "toJSON" in value && typeof value.toJSON === "function") {
+    const next3 = value.toJSON();
+    if (next3 !== value) return normalizeValue(next3);
   }
-  if (typeof value2 === "string" || typeof value2 === "boolean") return value2;
-  if (typeof value2 === "number") {
-    if (Object.is(value2, -0)) return 0;
-    if (!Number.isFinite(value2)) return null;
-    return value2;
+  if (typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (Object.is(value, -0)) return 0;
+    if (!Number.isFinite(value)) return null;
+    return value;
   }
-  if (typeof value2 === "bigint") {
-    if (value2 >= Number.MIN_SAFE_INTEGER && value2 <= Number.MAX_SAFE_INTEGER) return Number(value2);
-    return value2.toString();
+  if (typeof value === "bigint") {
+    if (value >= Number.MIN_SAFE_INTEGER && value <= Number.MAX_SAFE_INTEGER) return Number(value);
+    return value.toString();
   }
-  if (value2 instanceof Date) return value2.toISOString();
-  if (Array.isArray(value2)) return value2.map(normalizeValue);
-  if (value2 instanceof Set) return Array.from(value2).map(normalizeValue);
-  if (value2 instanceof Map) return Object.fromEntries(Array.from(value2, ([k, v]) => [String(k), normalizeValue(v)]));
-  if (isPlainObject(value2)) {
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(normalizeValue);
+  if (value instanceof Set) return Array.from(value).map(normalizeValue);
+  if (value instanceof Map) return Object.fromEntries(Array.from(value, ([k, v]) => [String(k), normalizeValue(v)]));
+  if (isPlainObject(value)) {
     const encodedValues = {};
-    for (const key in value2) if (Object.hasOwn(value2, key)) setOwnProperty(encodedValues, key, normalizeValue(value2[key]));
+    for (const key in value) if (Object.hasOwn(value, key)) setOwnProperty(encodedValues, key, normalizeValue(value[key]));
     return encodedValues;
   }
   return null;
 }
-function isJsonPrimitive(value2) {
-  return value2 === null || typeof value2 === "string" || typeof value2 === "number" || typeof value2 === "boolean";
+function isJsonPrimitive(value) {
+  return value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean";
 }
-function isJsonArray(value2) {
-  return Array.isArray(value2);
+function isJsonArray(value) {
+  return Array.isArray(value);
 }
-function isJsonObject(value2) {
-  return value2 !== null && typeof value2 === "object" && !Array.isArray(value2);
+function isJsonObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-function isEmptyObject(value2) {
-  return Object.keys(value2).length === 0;
+function isEmptyObject(value) {
+  return Object.keys(value).length === 0;
 }
-function isPlainObject(value2) {
-  if (value2 === null || typeof value2 !== "object") return false;
-  const prototype = Object.getPrototypeOf(value2);
+function isPlainObject(value) {
+  if (value === null || typeof value !== "object") return false;
+  const prototype = Object.getPrototypeOf(value);
   return prototype === null || prototype === Object.prototype;
 }
-function isArrayOfPrimitives(value2) {
-  return value2.length === 0 || value2.every((item) => isJsonPrimitive(item));
+function isArrayOfPrimitives(value) {
+  return value.length === 0 || value.every((item) => isJsonPrimitive(item));
 }
-function isArrayOfArrays(value2) {
-  return value2.length === 0 || value2.every((item) => isJsonArray(item));
+function isArrayOfArrays(value) {
+  return value.length === 0 || value.every((item) => isJsonArray(item));
 }
-function isArrayOfObjects(value2) {
-  return value2.length === 0 || value2.every((item) => isJsonObject(item));
+function isArrayOfObjects(value) {
+  return value.length === 0 || value.every((item) => isJsonObject(item));
 }
 function isValidUnquotedKey(key) {
   return /^[A-Z_][\w.]*$/i.test(key);
@@ -125,25 +125,25 @@ function isValidUnquotedKey(key) {
 function isIdentifierSegment(key) {
   return /^[A-Z_]\w*$/i.test(key);
 }
-function isSafeUnquoted(value2, delimiter2 = DEFAULT_DELIMITER) {
-  if (!value2) return false;
-  if (value2 !== value2.trim()) return false;
-  if (isBooleanOrNullLiteral(value2) || isNumericLike(value2)) return false;
-  if (value2.includes(":")) return false;
-  if (value2.includes('"') || value2.includes("\\")) return false;
-  if (/[[\]{}]/.test(value2)) return false;
-  if (/[\u0000-\u001F]/.test(value2)) return false;
-  if (value2.includes(delimiter2)) return false;
-  if (value2.startsWith("-")) return false;
+function isSafeUnquoted(value, delimiter2 = DEFAULT_DELIMITER) {
+  if (!value) return false;
+  if (value !== value.trim()) return false;
+  if (isBooleanOrNullLiteral(value) || isNumericLike(value)) return false;
+  if (value.includes(":")) return false;
+  if (value.includes('"') || value.includes("\\")) return false;
+  if (/[[\]{}]/.test(value)) return false;
+  if (/[\u0000-\u001F]/.test(value)) return false;
+  if (value.includes(delimiter2)) return false;
+  if (value.startsWith("-")) return false;
   return true;
 }
-function isNumericLike(value2) {
-  return NUMERIC_LIKE_PATTERN.test(value2) || LEADING_ZERO_PATTERN.test(value2);
+function isNumericLike(value) {
+  return NUMERIC_LIKE_PATTERN.test(value) || LEADING_ZERO_PATTERN.test(value);
 }
-function tryFoldKeyChain(key, value2, siblings, options, rootLiteralKeys, pathPrefix, flattenDepth) {
+function tryFoldKeyChain(key, value, siblings, options, rootLiteralKeys, pathPrefix, flattenDepth) {
   if (options.keyFolding !== "safe") return;
-  if (!isJsonObject(value2)) return;
-  const { segments, tail: tail2, leafValue } = collectSingleKeyChain(key, value2, flattenDepth ?? options.flattenDepth);
+  if (!isJsonObject(value)) return;
+  const { segments, tail: tail2, leafValue } = collectSingleKeyChain(key, value, flattenDepth ?? options.flattenDepth);
   if (segments.length < 2) return;
   if (!segments.every((seg) => isIdentifierSegment(seg))) return;
   const foldedKey = buildFoldedKey(segments);
@@ -183,15 +183,15 @@ function collectSingleKeyChain(startKey, startValue, maxDepth) {
 function buildFoldedKey(segments) {
   return segments.join(".");
 }
-function encodePrimitive(value2, delimiter2) {
-  if (value2 === null) return NULL_LITERAL;
-  if (typeof value2 === "boolean") return String(value2);
-  if (typeof value2 === "number") return String(value2);
-  return encodeStringLiteral(value2, delimiter2);
+function encodePrimitive(value, delimiter2) {
+  if (value === null) return NULL_LITERAL;
+  if (typeof value === "boolean") return String(value);
+  if (typeof value === "number") return String(value);
+  return encodeStringLiteral(value, delimiter2);
 }
-function encodeStringLiteral(value2, delimiter2 = DEFAULT_DELIMITER) {
-  if (isSafeUnquoted(value2, delimiter2)) return value2;
-  return `"${escapeString(value2)}"`;
+function encodeStringLiteral(value, delimiter2 = DEFAULT_DELIMITER) {
+  if (isSafeUnquoted(value, delimiter2)) return value;
+  return `"${escapeString(value)}"`;
 }
 function encodeKey(key) {
   if (isValidUnquotedKey(key)) return key;
@@ -214,26 +214,26 @@ function formatHeader(length, options) {
   header += ":";
   return header;
 }
-function* encodeJsonValue(value2, options, depth) {
-  if (isJsonPrimitive(value2)) {
-    const encodedPrimitive = encodePrimitive(value2, options.delimiter);
+function* encodeJsonValue(value, options, depth) {
+  if (isJsonPrimitive(value)) {
+    const encodedPrimitive = encodePrimitive(value, options.delimiter);
     if (encodedPrimitive !== "") yield encodedPrimitive;
     return;
   }
-  if (isJsonArray(value2)) yield* encodeArrayLines(void 0, value2, depth, options);
-  else if (isJsonObject(value2)) yield* encodeObjectLines(value2, depth, options);
+  if (isJsonArray(value)) yield* encodeArrayLines(void 0, value, depth, options);
+  else if (isJsonObject(value)) yield* encodeObjectLines(value, depth, options);
 }
-function* encodeObjectLines(value2, depth, options, rootLiteralKeys, pathPrefix, remainingDepth) {
-  const keys = Object.keys(value2);
+function* encodeObjectLines(value, depth, options, rootLiteralKeys, pathPrefix, remainingDepth) {
+  const keys = Object.keys(value);
   if (depth === 0 && !rootLiteralKeys) rootLiteralKeys = new Set(keys.filter((k) => k.includes(".")));
   const effectiveFlattenDepth = remainingDepth ?? options.flattenDepth;
-  for (const [key, val] of Object.entries(value2)) yield* encodeKeyValuePairLines(key, val, depth, options, keys, rootLiteralKeys, pathPrefix, effectiveFlattenDepth);
+  for (const [key, val] of Object.entries(value)) yield* encodeKeyValuePairLines(key, val, depth, options, keys, rootLiteralKeys, pathPrefix, effectiveFlattenDepth);
 }
-function* encodeKeyValuePairLines(key, value2, depth, options, siblings, rootLiteralKeys, pathPrefix, flattenDepth) {
+function* encodeKeyValuePairLines(key, value, depth, options, siblings, rootLiteralKeys, pathPrefix, flattenDepth) {
   const currentPath = pathPrefix ? `${pathPrefix}.${key}` : key;
   const effectiveFlattenDepth = flattenDepth ?? options.flattenDepth;
   if (options.keyFolding === "safe" && siblings) {
-    const foldResult = tryFoldKeyChain(key, value2, siblings, options, rootLiteralKeys, pathPrefix, effectiveFlattenDepth);
+    const foldResult = tryFoldKeyChain(key, value, siblings, options, rootLiteralKeys, pathPrefix, effectiveFlattenDepth);
     if (foldResult) {
       const { foldedKey, remainder, leafValue, segmentCount } = foldResult;
       const encodedFoldedKey = encodeKey(foldedKey);
@@ -259,35 +259,35 @@ function* encodeKeyValuePairLines(key, value2, depth, options, siblings, rootLit
     }
   }
   const encodedKey = encodeKey(key);
-  if (isJsonPrimitive(value2)) yield indentedLine(depth, `${encodedKey}: ${encodePrimitive(value2, options.delimiter)}`, options.indent);
-  else if (isJsonArray(value2)) yield* encodeArrayLines(key, value2, depth, options);
-  else if (isJsonObject(value2)) {
+  if (isJsonPrimitive(value)) yield indentedLine(depth, `${encodedKey}: ${encodePrimitive(value, options.delimiter)}`, options.indent);
+  else if (isJsonArray(value)) yield* encodeArrayLines(key, value, depth, options);
+  else if (isJsonObject(value)) {
     yield indentedLine(depth, `${encodedKey}:`, options.indent);
-    if (!isEmptyObject(value2)) yield* encodeObjectLines(value2, depth + 1, options, rootLiteralKeys, currentPath, effectiveFlattenDepth);
+    if (!isEmptyObject(value)) yield* encodeObjectLines(value, depth + 1, options, rootLiteralKeys, currentPath, effectiveFlattenDepth);
   }
 }
-function* encodeArrayLines(key, value2, depth, options) {
-  if (value2.length === 0) {
+function* encodeArrayLines(key, value, depth, options) {
+  if (value.length === 0) {
     yield indentedLine(depth, key != null ? `${encodeKey(key)}: []` : "[]", options.indent);
     return;
   }
-  if (isArrayOfPrimitives(value2)) {
-    yield indentedLine(depth, encodeInlineArrayLine(value2, options.delimiter, key), options.indent);
+  if (isArrayOfPrimitives(value)) {
+    yield indentedLine(depth, encodeInlineArrayLine(value, options.delimiter, key), options.indent);
     return;
   }
-  if (isArrayOfArrays(value2)) {
-    if (value2.every((arr) => isArrayOfPrimitives(arr))) {
-      yield* encodeArrayOfArraysAsListItemsLines(key, value2, depth, options);
+  if (isArrayOfArrays(value)) {
+    if (value.every((arr) => isArrayOfPrimitives(arr))) {
+      yield* encodeArrayOfArraysAsListItemsLines(key, value, depth, options);
       return;
     }
   }
-  if (isArrayOfObjects(value2)) {
-    const header = extractTabularHeader(value2);
-    if (header) yield* encodeArrayOfObjectsAsTabularLines(key, value2, header, depth, options);
-    else yield* encodeMixedArrayAsListItemsLines(key, value2, depth, options);
+  if (isArrayOfObjects(value)) {
+    const header = extractTabularHeader(value);
+    if (header) yield* encodeArrayOfObjectsAsTabularLines(key, value, header, depth, options);
+    else yield* encodeMixedArrayAsListItemsLines(key, value, depth, options);
     return;
   }
-  yield* encodeMixedArrayAsListItemsLines(key, value2, depth, options);
+  yield* encodeMixedArrayAsListItemsLines(key, value, depth, options);
 }
 function* encodeArrayOfArraysAsListItemsLines(prefix2, values, depth, options) {
   yield indentedLine(depth, formatHeader(values.length, {
@@ -378,14 +378,14 @@ function* encodeObjectAsListItemLines(obj, depth, options) {
   }
   if (restEntries.length > 0) yield* encodeObjectLines(Object.fromEntries(restEntries), depth + 1, options);
 }
-function* encodeListItemValueLines(value2, depth, options) {
-  if (isJsonPrimitive(value2)) yield indentedListItem(depth, encodePrimitive(value2, options.delimiter), options.indent);
-  else if (isJsonArray(value2)) if (isArrayOfPrimitives(value2)) yield indentedListItem(depth, encodeInlineArrayLine(value2, options.delimiter), options.indent);
+function* encodeListItemValueLines(value, depth, options) {
+  if (isJsonPrimitive(value)) yield indentedListItem(depth, encodePrimitive(value, options.delimiter), options.indent);
+  else if (isJsonArray(value)) if (isArrayOfPrimitives(value)) yield indentedListItem(depth, encodeInlineArrayLine(value, options.delimiter), options.indent);
   else {
-    yield indentedListItem(depth, formatHeader(value2.length, { delimiter: options.delimiter }), options.indent);
-    for (const item of value2) yield* encodeListItemValueLines(item, depth + 1, options);
+    yield indentedListItem(depth, formatHeader(value.length, { delimiter: options.delimiter }), options.indent);
+    for (const item of value) yield* encodeListItemValueLines(item, depth + 1, options);
   }
-  else if (isJsonObject(value2)) yield* encodeObjectAsListItemLines(value2, depth, options);
+  else if (isJsonObject(value)) yield* encodeObjectAsListItemLines(value, depth, options);
 }
 function indentedLine(depth, content, indentSize) {
   return " ".repeat(indentSize * depth) + content;
@@ -398,16 +398,16 @@ function applyReplacer(root, replacer) {
   if (replacedRoot === void 0) return transformChildren(root, replacer, []);
   return transformChildren(normalizeValue(replacedRoot), replacer, []);
 }
-function transformChildren(value2, replacer, path) {
-  if (isJsonObject(value2)) return transformObject(value2, replacer, path);
-  if (isJsonArray(value2)) return transformArray(value2, replacer, path);
-  return value2;
+function transformChildren(value, replacer, path) {
+  if (isJsonObject(value)) return transformObject(value, replacer, path);
+  if (isJsonArray(value)) return transformArray(value, replacer, path);
+  return value;
 }
 function transformObject(obj, replacer, path) {
   const result = {};
-  for (const [key, value2] of Object.entries(obj)) {
+  for (const [key, value] of Object.entries(obj)) {
     const childPath = [...path, key];
-    const replacedValue = replacer(key, value2, childPath);
+    const replacedValue = replacer(key, value, childPath);
     if (replacedValue === void 0) continue;
     setOwnProperty(result, key, transformChildren(normalizeValue(replacedValue), replacer, childPath));
   }
@@ -416,9 +416,9 @@ function transformObject(obj, replacer, path) {
 function transformArray(arr, replacer, path) {
   const result = [];
   for (let i = 0; i < arr.length; i++) {
-    const value2 = arr[i];
+    const value = arr[i];
     const childPath = [...path, i];
-    const replacedValue = replacer(String(i), value2, childPath);
+    const replacedValue = replacer(String(i), value, childPath);
     if (replacedValue === void 0) continue;
     const normalizedValue = normalizeValue(replacedValue);
     result.push(transformChildren(normalizedValue, replacer, childPath));
@@ -861,7 +861,7 @@ async function defaultRunInstall(plan, stdout, context) {
   }
   stdout.write(`running: ${plan.command}
 `);
-  return new Promise((resolve10) => {
+  return new Promise((resolve11) => {
     const [command, ...args] = argv;
     const child = spawn(packageManagerExecutable(command, context.platform), args, {
       stdio: ["ignore", "pipe", "pipe"],
@@ -874,10 +874,10 @@ async function defaultRunInstall(plan, stdout, context) {
       process.stderr.write(chunk);
     });
     child.on("error", (error) => {
-      resolve10({ ok: false, message: error.message });
+      resolve11({ ok: false, message: error.message });
     });
     child.on("close", (code) => {
-      resolve10(code === 0 ? { ok: true } : { ok: false, message: `${plan.command} exited with code ${code}` });
+      resolve11(code === 0 ? { ok: true } : { ok: false, message: `${plan.command} exited with code ${code}` });
     });
   });
 }
@@ -1347,69 +1347,69 @@ var init_dist2 = __esm({
 });
 
 // node_modules/@toon-format/toon/dist/index.mjs
-function escapeString2(value2) {
-  return value2.replace(/\\/g, `\\\\`).replace(/"/g, `\\"`).replace(/\n/g, `\\n`).replace(/\r/g, `\\r`).replace(/\t/g, `\\t`).replace(/[\u0000-\u001F]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+function escapeString2(value) {
+  return value.replace(/\\/g, `\\\\`).replace(/"/g, `\\"`).replace(/\n/g, `\\n`).replace(/\r/g, `\\r`).replace(/\t/g, `\\t`).replace(/[\u0000-\u001F]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
 }
 function isBooleanOrNullLiteral2(token) {
   return token === "true" || token === "false" || token === "null";
 }
-function setOwnProperty2(target, key, value2) {
+function setOwnProperty2(target, key, value) {
   if (key === "__proto__") {
     Object.defineProperty(target, key, {
-      value: value2,
+      value,
       enumerable: true,
       writable: true,
       configurable: true
     });
     return;
   }
-  target[key] = value2;
+  target[key] = value;
 }
-function isRawString(value2) {
-  return value2 instanceof RawString;
+function isRawString(value) {
+  return value instanceof RawString;
 }
-function normalizeValue2(value2) {
-  if (value2 === null) return null;
-  if (isRawString(value2)) return value2;
-  if (typeof value2 === "object" && value2 !== null && "toJSON" in value2 && typeof value2.toJSON === "function") {
-    const next3 = value2.toJSON();
-    if (next3 !== value2) return normalizeValue2(next3);
+function normalizeValue2(value) {
+  if (value === null) return null;
+  if (isRawString(value)) return value;
+  if (typeof value === "object" && value !== null && "toJSON" in value && typeof value.toJSON === "function") {
+    const next3 = value.toJSON();
+    if (next3 !== value) return normalizeValue2(next3);
   }
-  if (typeof value2 === "string") {
-    assertNoLoneSurrogate(value2, "string value");
-    return value2;
+  if (typeof value === "string") {
+    assertNoLoneSurrogate(value, "string value");
+    return value;
   }
-  if (typeof value2 === "boolean") return value2;
-  if (typeof value2 === "number") {
-    if (Object.is(value2, -0)) return 0;
-    if (!Number.isFinite(value2)) return null;
-    return value2;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (Object.is(value, -0)) return 0;
+    if (!Number.isFinite(value)) return null;
+    return value;
   }
-  if (typeof value2 === "bigint") {
-    if (value2 >= Number.MIN_SAFE_INTEGER && value2 <= Number.MAX_SAFE_INTEGER) return Number(value2);
-    return value2.toString();
+  if (typeof value === "bigint") {
+    if (value >= Number.MIN_SAFE_INTEGER && value <= Number.MAX_SAFE_INTEGER) return Number(value);
+    return value.toString();
   }
-  if (value2 instanceof Date) return value2.toISOString();
-  if (Array.isArray(value2)) return Array.from(value2, normalizeValue2);
-  if (value2 instanceof Set) return Array.from(value2).map(normalizeValue2);
-  if (value2 instanceof Map) return Object.fromEntries(Array.from(value2, ([k, v]) => [String(k), normalizeValue2(v)]));
-  if (isPlainObject2(value2)) {
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return Array.from(value, normalizeValue2);
+  if (value instanceof Set) return Array.from(value).map(normalizeValue2);
+  if (value instanceof Map) return Object.fromEntries(Array.from(value, ([k, v]) => [String(k), normalizeValue2(v)]));
+  if (isPlainObject2(value)) {
     const encodedValues = {};
-    for (const key in value2) if (Object.hasOwn(value2, key)) {
+    for (const key in value) if (Object.hasOwn(value, key)) {
       assertNoLoneSurrogate(key, "object key");
-      setOwnProperty2(encodedValues, key, normalizeValue2(value2[key]));
+      setOwnProperty2(encodedValues, key, normalizeValue2(value[key]));
     }
     return encodedValues;
   }
   return null;
 }
-function assertNoLoneSurrogate(value2, context) {
-  if (!SURROGATE_PATTERN.test(value2)) return;
-  for (let index = 0; index < value2.length; index++) {
-    const code = value2.charCodeAt(index);
+function assertNoLoneSurrogate(value, context) {
+  if (!SURROGATE_PATTERN.test(value)) return;
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
     if (code < 55296 || code > 57343) continue;
     const isHighSurrogate = code <= 56319;
-    const next3 = value2.charCodeAt(index + 1);
+    const next3 = value.charCodeAt(index + 1);
     if (isHighSurrogate && next3 >= 56320 && next3 <= 57343) {
       index++;
       continue;
@@ -1417,34 +1417,34 @@ function assertNoLoneSurrogate(value2, context) {
     throw new TypeError(`Cannot encode ${context} containing an unpaired surrogate U+${code.toString(16).toUpperCase()} at index ${index}`);
   }
 }
-function isJsonPrimitive2(value2) {
-  return value2 === null || typeof value2 === "string" || typeof value2 === "number" || typeof value2 === "boolean";
+function isJsonPrimitive2(value) {
+  return value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean";
 }
-function isEncodablePrimitive(value2) {
-  return isJsonPrimitive2(value2) || isRawString(value2);
+function isEncodablePrimitive(value) {
+  return isJsonPrimitive2(value) || isRawString(value);
 }
-function isJsonArray2(value2) {
-  return Array.isArray(value2);
+function isJsonArray2(value) {
+  return Array.isArray(value);
 }
-function isJsonObject2(value2) {
-  return value2 !== null && typeof value2 === "object" && !Array.isArray(value2) && !isRawString(value2);
+function isJsonObject2(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) && !isRawString(value);
 }
-function isEmptyObject2(value2) {
-  return Object.keys(value2).length === 0;
+function isEmptyObject2(value) {
+  return Object.keys(value).length === 0;
 }
-function isPlainObject2(value2) {
-  if (value2 === null || typeof value2 !== "object") return false;
-  const prototype = Object.getPrototypeOf(value2);
+function isPlainObject2(value) {
+  if (value === null || typeof value !== "object") return false;
+  const prototype = Object.getPrototypeOf(value);
   return prototype === null || prototype === Object.prototype;
 }
-function isArrayOfPrimitives2(value2) {
-  return value2.length === 0 || value2.every((item) => isEncodablePrimitive(item));
+function isArrayOfPrimitives2(value) {
+  return value.length === 0 || value.every((item) => isEncodablePrimitive(item));
 }
-function isArrayOfArrays2(value2) {
-  return value2.length === 0 || value2.every((item) => isJsonArray2(item));
+function isArrayOfArrays2(value) {
+  return value.length === 0 || value.every((item) => isJsonArray2(item));
 }
-function isArrayOfObjects2(value2) {
-  return value2.length === 0 || value2.every((item) => isJsonObject2(item));
+function isArrayOfObjects2(value) {
+  return value.length === 0 || value.every((item) => isJsonObject2(item));
 }
 function assertValidDelimiter(delimiter2) {
   if (!Object.values(DELIMITERS2).includes(delimiter2)) throw new TypeError(`Invalid delimiter ${JSON.stringify(delimiter2)}. Valid delimiters are: comma (,), tab (\\t), pipe (|)`);
@@ -1452,32 +1452,32 @@ function assertValidDelimiter(delimiter2) {
 function isValidUnquotedKey2(key) {
   return /^[A-Z_][\w.]*$/i.test(key);
 }
-function isSafeUnquoted2(value2, delimiter2 = DEFAULT_DELIMITER2) {
-  if (!value2) return false;
-  if (/^[ \t]|[ \t]$/.test(value2)) return false;
-  if (isBooleanOrNullLiteral2(value2) || isNumericLike2(value2)) return false;
-  if (value2.includes(":")) return false;
-  if (value2.includes('"') || value2.includes("\\")) return false;
-  if (/[[\]{}]/.test(value2)) return false;
-  if (/[\u0000-\u001F]/.test(value2)) return false;
-  if (value2.includes(delimiter2)) return false;
-  if (value2.startsWith("-")) return false;
-  if (value2.startsWith("#")) return false;
+function isSafeUnquoted2(value, delimiter2 = DEFAULT_DELIMITER2) {
+  if (!value) return false;
+  if (/^[ \t]|[ \t]$/.test(value)) return false;
+  if (isBooleanOrNullLiteral2(value) || isNumericLike2(value)) return false;
+  if (value.includes(":")) return false;
+  if (value.includes('"') || value.includes("\\")) return false;
+  if (/[[\]{}]/.test(value)) return false;
+  if (/[\u0000-\u001F]/.test(value)) return false;
+  if (value.includes(delimiter2)) return false;
+  if (value.startsWith("-")) return false;
+  if (value.startsWith("#")) return false;
   return true;
 }
-function isNumericLike2(value2) {
-  return NUMERIC_LIKE_PATTERN2.test(value2);
+function isNumericLike2(value) {
+  return NUMERIC_LIKE_PATTERN2.test(value);
 }
-function encodePrimitive2(value2, delimiter2) {
-  if (isRawString(value2)) return value2.value;
-  if (value2 === null) return NULL_LITERAL2;
-  if (typeof value2 === "boolean") return String(value2);
-  if (typeof value2 === "number") return String(value2);
-  return encodeStringLiteral2(value2, delimiter2);
+function encodePrimitive2(value, delimiter2) {
+  if (isRawString(value)) return value.value;
+  if (value === null) return NULL_LITERAL2;
+  if (typeof value === "boolean") return String(value);
+  if (typeof value === "number") return String(value);
+  return encodeStringLiteral2(value, delimiter2);
 }
-function encodeStringLiteral2(value2, delimiter2 = DEFAULT_DELIMITER2) {
-  if (isSafeUnquoted2(value2, delimiter2)) return value2;
-  return `"${escapeString2(value2)}"`;
+function encodeStringLiteral2(value, delimiter2 = DEFAULT_DELIMITER2) {
+  if (isSafeUnquoted2(value, delimiter2)) return value;
+  return `"${escapeString2(value)}"`;
 }
 function encodeKey2(key) {
   if (isValidUnquotedKey2(key)) return key;
@@ -1516,8 +1516,8 @@ function extractTabularFields(rows) {
   }
   return fieldNodes;
 }
-function extractKeyedTabularFields(value2) {
-  const entryValues = Object.values(value2);
+function extractKeyedTabularFields(value) {
+  const entryValues = Object.values(value);
   if (entryValues.length < 2) return;
   if (!entryValues.every((entryValue) => isJsonObject2(entryValue) && !isEmptyObject2(entryValue))) return;
   return extractTabularFields(entryValues);
@@ -1528,8 +1528,8 @@ function collectRowLeaves(row, fields) {
   return leaves;
 }
 function classifyColumn(name, values) {
-  if (values.every((value2) => isEncodablePrimitive(value2))) return { name };
-  if (!values.every((value2) => isJsonObject2(value2) && !isEmptyObject2(value2))) return;
+  if (values.every((value) => isEncodablePrimitive(value))) return { name };
+  if (!values.every((value) => isJsonObject2(value) && !isEmptyObject2(value))) return;
   const children = extractTabularFields(values);
   if (!children) return;
   return {
@@ -1539,46 +1539,46 @@ function classifyColumn(name, values) {
 }
 function collectLeafValues(row, fields, leaves) {
   for (const field of fields) {
-    const value2 = row[field.name];
-    if (field.children) collectLeafValues(value2, field.children, leaves);
-    else leaves.push(value2);
+    const value = row[field.name];
+    if (field.children) collectLeafValues(value, field.children, leaves);
+    else leaves.push(value);
   }
 }
-function* encodeJsonValue2(value2, options, depth) {
-  if (isEncodablePrimitive(value2)) {
-    const encodedPrimitive = typeof value2 === "string" && value2.startsWith("\uFEFF") ? `"${escapeString2(value2)}"` : encodePrimitive2(value2, options.delimiter);
+function* encodeJsonValue2(value, options, depth) {
+  if (isEncodablePrimitive(value)) {
+    const encodedPrimitive = typeof value === "string" && value.startsWith("\uFEFF") ? `"${escapeString2(value)}"` : encodePrimitive2(value, options.delimiter);
     if (encodedPrimitive !== "") yield encodedPrimitive;
     return;
   }
-  if (isJsonArray2(value2)) yield* encodeArrayLines2(void 0, value2, depth, options);
-  else if (isJsonObject2(value2)) {
-    const keyedFields = extractKeyedTabularFields(value2);
+  if (isJsonArray2(value)) yield* encodeArrayLines2(void 0, value, depth, options);
+  else if (isJsonObject2(value)) {
+    const keyedFields = extractKeyedTabularFields(value);
     if (keyedFields) {
-      yield* encodeKeyedObjectLines(void 0, value2, keyedFields, depth, options);
+      yield* encodeKeyedObjectLines(void 0, value, keyedFields, depth, options);
       return;
     }
-    yield* encodeObjectLines2(value2, depth, options);
+    yield* encodeObjectLines2(value, depth, options);
   }
 }
-function* encodeObjectLines2(value2, depth, options) {
-  for (const [key, val] of Object.entries(value2)) yield* encodeKeyValuePairLines2(key, val, depth, options);
+function* encodeObjectLines2(value, depth, options) {
+  for (const [key, val] of Object.entries(value)) yield* encodeKeyValuePairLines2(key, val, depth, options);
 }
-function* encodeKeyValuePairLines2(key, value2, depth, options) {
+function* encodeKeyValuePairLines2(key, value, depth, options) {
   const encodedKey = encodeKey2(key);
-  if (isEncodablePrimitive(value2)) yield indentedLine2(depth, `${encodedKey}: ${encodePrimitive2(value2, options.delimiter)}`, options.indentSize);
-  else if (isJsonArray2(value2)) yield* encodeArrayLines2(key, value2, depth, options);
-  else if (isJsonObject2(value2)) {
-    const keyedFields = extractKeyedTabularFields(value2);
+  if (isEncodablePrimitive(value)) yield indentedLine2(depth, `${encodedKey}: ${encodePrimitive2(value, options.delimiter)}`, options.indentSize);
+  else if (isJsonArray2(value)) yield* encodeArrayLines2(key, value, depth, options);
+  else if (isJsonObject2(value)) {
+    const keyedFields = extractKeyedTabularFields(value);
     if (keyedFields) {
-      yield* encodeKeyedObjectLines(key, value2, keyedFields, depth, options);
+      yield* encodeKeyedObjectLines(key, value, keyedFields, depth, options);
       return;
     }
     yield indentedLine2(depth, `${encodedKey}:`, options.indentSize);
-    if (!isEmptyObject2(value2)) yield* encodeObjectLines2(value2, depth + 1, options);
+    if (!isEmptyObject2(value)) yield* encodeObjectLines2(value, depth + 1, options);
   }
 }
-function* encodeKeyedObjectLines(key, value2, fields, depth, options) {
-  const entries = Object.entries(value2);
+function* encodeKeyedObjectLines(key, value, fields, depth, options) {
+  const entries = Object.entries(value);
   yield indentedLine2(depth, formatHeader2(entries.length, {
     key,
     fields,
@@ -1593,28 +1593,28 @@ function* encodeKeyedEntryRowsLines(entries, fields, depth, options) {
     yield indentedLine2(depth, `${encodeKey2(entryKey)}: ${encodeAndJoinPrimitives2(leaves, options.delimiter)}`, options.indentSize);
   }
 }
-function* encodeArrayLines2(key, value2, depth, options) {
-  if (value2.length === 0) {
+function* encodeArrayLines2(key, value, depth, options) {
+  if (value.length === 0) {
     yield indentedLine2(depth, key != null ? `${encodeKey2(key)}: []` : "[]", options.indentSize);
     return;
   }
-  if (isArrayOfPrimitives2(value2)) {
-    yield indentedLine2(depth, encodeInlineArrayLine2(value2, options.delimiter, key), options.indentSize);
+  if (isArrayOfPrimitives2(value)) {
+    yield indentedLine2(depth, encodeInlineArrayLine2(value, options.delimiter, key), options.indentSize);
     return;
   }
-  if (isArrayOfArrays2(value2)) {
-    if (value2.every((arr) => isArrayOfPrimitives2(arr))) {
-      yield* encodeArrayOfArraysAsListItemsLines2(key, value2, depth, options);
+  if (isArrayOfArrays2(value)) {
+    if (value.every((arr) => isArrayOfPrimitives2(arr))) {
+      yield* encodeArrayOfArraysAsListItemsLines2(key, value, depth, options);
       return;
     }
   }
-  if (isArrayOfObjects2(value2)) {
-    const fields = extractTabularFields(value2);
-    if (fields) yield* encodeArrayOfObjectsAsTabularLines2(key, value2, fields, depth, options);
-    else yield* encodeMixedArrayAsListItemsLines2(key, value2, depth, options);
+  if (isArrayOfObjects2(value)) {
+    const fields = extractTabularFields(value);
+    if (fields) yield* encodeArrayOfObjectsAsTabularLines2(key, value, fields, depth, options);
+    else yield* encodeMixedArrayAsListItemsLines2(key, value, depth, options);
     return;
   }
-  yield* encodeMixedArrayAsListItemsLines2(key, value2, depth, options);
+  yield* encodeMixedArrayAsListItemsLines2(key, value, depth, options);
 }
 function* encodeArrayOfArraysAsListItemsLines2(prefix2, values, depth, options) {
   yield indentedLine2(depth, formatHeader2(values.length, {
@@ -1704,15 +1704,15 @@ function* encodeObjectAsListItemLines2(obj, depth, options) {
   }
   if (restEntries.length > 0) yield* encodeObjectLines2(Object.fromEntries(restEntries), depth + 1, options);
 }
-function* encodeListItemValueLines2(value2, depth, options) {
-  if (isEncodablePrimitive(value2)) yield indentedListItem2(depth, encodePrimitive2(value2, options.delimiter), options.indentSize);
-  else if (isJsonArray2(value2)) {
-    if (isArrayOfPrimitives2(value2)) yield indentedListItem2(depth, encodeInlineArrayLine2(value2, options.delimiter), options.indentSize);
+function* encodeListItemValueLines2(value, depth, options) {
+  if (isEncodablePrimitive(value)) yield indentedListItem2(depth, encodePrimitive2(value, options.delimiter), options.indentSize);
+  else if (isJsonArray2(value)) {
+    if (isArrayOfPrimitives2(value)) yield indentedListItem2(depth, encodeInlineArrayLine2(value, options.delimiter), options.indentSize);
     else {
-      yield indentedListItem2(depth, formatHeader2(value2.length, { delimiter: options.delimiter }), options.indentSize);
-      for (const item of value2) yield* encodeListItemValueLines2(item, depth + 1, options);
+      yield indentedListItem2(depth, formatHeader2(value.length, { delimiter: options.delimiter }), options.indentSize);
+      for (const item of value) yield* encodeListItemValueLines2(item, depth + 1, options);
     }
-  } else if (isJsonObject2(value2)) yield* encodeObjectAsListItemLines2(value2, depth, options);
+  } else if (isJsonObject2(value)) yield* encodeObjectAsListItemLines2(value, depth, options);
 }
 function indentedLine2(depth, content, indentSize) {
   return " ".repeat(indentSize * depth) + content;
@@ -1729,29 +1729,29 @@ function transformReplaced(original, replaced, replacer, path) {
   if (isRawString(replaced) && !isEncodablePrimitive(original)) return transformChildren2(original, replacer, path);
   return transformChildren2(normalizeValue2(replaced), replacer, path);
 }
-function transformChildren2(value2, replacer, path) {
-  if (isJsonObject2(value2)) return transformObject2(value2, replacer, path);
-  if (isJsonArray2(value2)) return transformArray2(value2, replacer, path);
-  return value2;
+function transformChildren2(value, replacer, path) {
+  if (isJsonObject2(value)) return transformObject2(value, replacer, path);
+  if (isJsonArray2(value)) return transformArray2(value, replacer, path);
+  return value;
 }
 function transformObject2(obj, replacer, path) {
   const result = {};
-  for (const [key, value2] of Object.entries(obj)) {
+  for (const [key, value] of Object.entries(obj)) {
     const childPath = [...path, key];
-    const replacedValue = replacer(key, value2, childPath);
+    const replacedValue = replacer(key, value, childPath);
     if (replacedValue === void 0) continue;
-    setOwnProperty2(result, key, transformReplaced(value2, replacedValue, replacer, childPath));
+    setOwnProperty2(result, key, transformReplaced(value, replacedValue, replacer, childPath));
   }
   return result;
 }
 function transformArray2(arr, replacer, path) {
   const result = [];
   for (let i = 0; i < arr.length; i++) {
-    const value2 = arr[i];
+    const value = arr[i];
     const childPath = [...path, i];
-    const replacedValue = replacer(String(i), value2, childPath);
+    const replacedValue = replacer(String(i), value, childPath);
     if (replacedValue === void 0) continue;
-    result.push(transformReplaced(value2, replacedValue, replacer, childPath));
+    result.push(transformReplaced(value, replacedValue, replacer, childPath));
   }
   return result;
 }
@@ -1784,9 +1784,9 @@ var init_dist3 = __esm({
     DEFAULT_DELIMITER2 = DELIMITERS2.comma;
     COMMENT_LINE_PATTERN = new RegExp(`(?:^\uFEFF?|\\n) *#`);
     RawString = class {
-      constructor(value2) {
-        if (COMMENT_LINE_PATTERN.test(value2)) throw new TypeError(`Raw string must not contain a line starting with "#": ${JSON.stringify(value2)}`);
-        this.value = value2;
+      constructor(value) {
+        if (COMMENT_LINE_PATTERN.test(value)) throw new TypeError(`Raw string must not contain a line starting with "#": ${JSON.stringify(value)}`);
+        this.value = value;
       }
     };
     SURROGATE_PATTERN = /[\uD800-\uDFFF]/;
@@ -1923,7 +1923,7 @@ var init_reference = __esm({
           },
           {
             usage: "wake backstop --key <key> --at <ISO time> [--grace <seconds>] --reason <text>",
-            summary: "The listeners' one wake routine, so no listener carries its own; a listener runs it detached, one at a time, and logs its line. Waits `--grace` (default 20 s) for a check begun after `--at` or the key in `logs/intake/seen`; waits out a cycle already running and looks again; skips the wait while the bot is asleep; then runs `nudge --now`, again every 10 s, until its outcome is `woke` or `cooldown`, a newer check begins, the key is seen, or 30 minutes pass. Prints one line, `backstop:` with `woken by monitor`, `nudged after <n>s`, `nudged after cycle`, `already woken`, `asleep: nudged` or `gave up`, and exits 0; its progress notes go to stderr. Exit 2 on a missing key, time or reason."
+            summary: "The listeners' one wake routine, so no listener carries its own; a listener runs it detached, one at a time, and logs its line. Waits `--grace` (default 20 s) for a check begun after `--at` or the key seen on the log branch; waits out a cycle already running and looks again; skips the wait while the bot is asleep; then runs `nudge --now`, again every 10 s, until its outcome is `woke` or `cooldown`, a newer check begins, the key is seen, or 30 minutes pass. Prints one line, `backstop:` with `woken by monitor`, `nudged after <n>s`, `nudged after cycle`, `already woken`, `asleep: nudged` or `gave up`, and exits 0; its progress notes go to stderr. Exit 2 on a missing key, time or reason."
           },
           { usage: "next-delay", summary: "Seconds until the next cycle and why, from the cycle log and the cadence table. With `loop.schedule: monitor`, never over 1740 (29 min), and the reason says when that cap applied." }
         ]
@@ -1953,7 +1953,12 @@ var init_reference = __esm({
             usage: "outage record <kind> [--note TEXT] [--started ISO] [--ended ISO] | outage end | outage list",
             summary: "Record, close or list outages: failed-turn, refused, plan-limit, session-ended, stopped."
           },
-          { usage: "log tail [--n N]", summary: "The last N cycle-log lines (default 10)." }
+          { usage: "log tail [--n N]", summary: "The last N cycle-log lines (default 10)." },
+          { usage: "log append <ledger> | posts/<channel>", summary: "Append the JSON record(s) on stdin to a ledger declared in `log.ledgers` (each must carry its declared fields) or to a channel's post log. Inside a cycle it rides the cycle's commit; outside, it is its own commit. Never the working tree." },
+          { usage: "log state get <name> [--json-out PATH] | log state set <name>", summary: "Read a baseline, or replace it with the JSON object on stdin (a name declared in `log.state`, carrying its declared fields). An unchanged value writes nothing." },
+          { usage: "log read <sheet> [--since ISO] [--filter CLAUSE]... [--repo PATH|REMOTE] [--branch NAME] [--json-out PATH]", summary: "Records of `cycles`, `seen`, `outages`, `routines`, `posts/<channel>` or `ledgers/<name>`, oldest first, staged ones included; `--since` walks only the days from then on; `--repo` fetches another bot's log branch (`opsbot/log`, or `--branch`) into a private copy under the git directory and reads it." },
+          { usage: "log seen <key>", summary: "Exit 0 when the key was reported to the session (from the log branch and what is staged for it), 1 when not: the listeners ask this." },
+          { usage: "log migrate [--dry-run] [--assign PATH=ledger[:NAME]|state[:NAME]|ignore|keep]...", summary: "Move a bot from the old log files to the log branch, once: every line of the kit's log files, the files the old settings listed, the post logs and the routine runs become records of the branch in one commit (each keeping its own time; a line it cannot place is a record of ledger `unparsed`), and `opsbot/log-migrate` is prepared from HEAD with one commit that removes those files and the settings only they needed and sets `log.branch`. Nothing on the current branch or in the working tree changes; it prints what to push and the pull request to open. `--dry-run` prints the counts per file and sheet and writes nothing. Stops (exit 1, nothing written) until every tracked file under `logs/` no setting names, and every data file a hook names, is assigned with `--assign`. Refuses (exit 2) a bot whose cycle log shows a release older than the one before this, naming the release to update to first." }
         ]
       },
       {
@@ -1993,7 +1998,7 @@ var init_reference = __esm({
           { usage: "routines history <id>", summary: "The routine's runs in order with outcome, days since the one before and any missed stretch or slots; then the time since the last and whether it is due." },
           {
             usage: "routines done <id> --notes TEXT [--outcome done|partial|skipped|blocked] [--checked ITEM]... [--handed-to WHO] [--at ISO]",
-            summary: "Record one run under `routines.runs_dir` (`YYYY/MM/<id>.md`), committed with the next cycle; prints when the routine is next due. Refuses an unknown or inactive routine, empty notes, an unknown outcome or a future `--at`. Never touches the definitions."
+            summary: "Record one run on the log branch's `routines` sheet (`routines/<routine>/YYYY/MM/DD/<hhmmss>-<hash>`), committed with the next log commit; prints when the routine is next due. Refuses an unknown or inactive routine, empty notes, an unknown outcome or a future `--at`. Never touches the definitions."
           },
           {
             usage: "routines validate [--head]",
@@ -2027,7 +2032,7 @@ var init_reference = __esm({
             summary: "Register the SessionStart (`cold-start --write`) and PreToolUse (`gate check`) hooks; project scope by default."
           },
           { usage: "hooks list [--point P]", summary: "Every script that will run at each lifecycle point, in order, with its source." },
-          { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails." }
+          { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails; and a log branch (`log.branch`, default `opsbot/log`) that names the branch checked out, or no `gitsheets-axi` 2.15.0 or later to write it; `log.ledgers` or `log.state` that is not names with lists of field names; and, naming `log migrate`, every setting only the old log files needed (the list of files each cycle committed, `routines.runs_dir`, and `repo_sync` `pull-on-clean` or `never-pull`)." }
         ]
       }
     ];
@@ -2076,10 +2081,18 @@ function requireRoot() {
   }
   return root;
 }
+function dirsOf(root) {
+  if (gitDirs.has(root)) return gitDirs.get(root);
+  const r = git(root, ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"]);
+  const [own, common] = r.code === 0 ? r.stdout.trim().split("\n").map((l) => l.trim()) : [];
+  const d = own && common ? { own, common } : null;
+  gitDirs.set(root, d);
+  return d;
+}
 function gitPath(root, name) {
-  const r = git(root, ["rev-parse", "--path-format=absolute", "--git-path", name]);
-  if (r.code !== 0) return join2(root, ".git", name);
-  return r.stdout.trim();
+  const d = dirsOf(root);
+  if (!d) return join2(root, ".git", name);
+  return join2(name.startsWith("info/") ? d.common : d.own, name);
 }
 function hasHead(root) {
   return git(root, ["rev-parse", "--verify", "--quiet", "HEAD"]).code === 0;
@@ -2103,19 +2116,6 @@ function trailers() {
     out.push(`Claude-Session: https://claude.ai/code/${env.CLAUDE_CODE_BRIDGE_SESSION_ID}`);
   }
   return out.join("\n");
-}
-function changedCommitPaths(root, listed, already = []) {
-  const out = [];
-  const have = new Set(already.map((f) => resolve2(root, f)));
-  for (const rel2 of listed) {
-    const abs = resolve2(root, rel2);
-    if (have.has(abs) || !existsSync3(abs)) continue;
-    const st = git(root, ["status", "--porcelain", "--untracked-files=all", "--", abs]);
-    if (st.code !== 0 || !st.stdout.trim()) continue;
-    have.add(abs);
-    out.push(abs);
-  }
-  return out;
 }
 function commitOnly(root, files, subject) {
   const t = trailers();
@@ -2195,11 +2195,12 @@ function isValidTimeZone(tz) {
     return false;
   }
 }
-var BLOCKERS, ISO_RE;
+var gitDirs, BLOCKERS, ISO_RE;
 var init_repo = __esm({
   "src/opsbot-core/repo.ts"() {
     "use strict";
     init_dist2();
+    gitDirs = /* @__PURE__ */ new Map();
     BLOCKERS = [
       ["rebase-merge", "a rebase is in progress"],
       ["rebase-apply", "a rebase is in progress"],
@@ -2263,10 +2264,723 @@ var init_cadence = __esm({
   }
 });
 
-// src/opsbot-core/record.ts
-import { existsSync as existsSync4, mkdtempSync, readdirSync, readFileSync as readFileSync2, rmSync } from "node:fs";
+// src/opsbot-core/legacy.ts
+function oldSetup(root, settingsAtHead) {
+  const text = settingsAtHead !== void 0 ? settingsAtHead : showHead(root, "opsbot.json");
+  if (text !== null) {
+    try {
+      const v = JSON.parse(text);
+      if (v && typeof v === "object" && v[OLD_PATHS_KEY] !== void 0) return `opsbot.json sets ${OLD_PATHS_KEY}`;
+      if (v && typeof v === "object" && v.log && typeof v.log === "object" && typeof v.log.branch === "string" && v.log.branch) return null;
+    } catch {
+    }
+  }
+  const r = git(root, ["ls-tree", "--name-only", "HEAD", "--", ...OLD_KIT_FILES]);
+  const tracked = r.code === 0 ? r.stdout.split("\n").map((x) => x.trim()).filter(Boolean) : [];
+  return tracked.length ? `${tracked.join(", ")} ${tracked.length === 1 ? "is" : "are"} tracked` : null;
+}
+function oldSettingProblems(raw) {
+  const cli = cliInvocation();
+  const out = [];
+  if (raw[OLD_PATHS_KEY] !== void 0) {
+    out.push(`${OLD_PATHS_KEY} is gone: the loop's log is written only to the log branch now; run \`${cli} log migrate --dry-run\`, then \`${cli} log migrate\`, which moves every file it lists there and prepares the commit that removes it`);
+  }
+  const r = raw.routines;
+  if (r && typeof r === "object" && !Array.isArray(r) && r.runs_dir !== void 0) {
+    out.push(`routines.runs_dir is gone: routine runs are records of the log branch's routines sheet; \`${cli} log migrate\` moves the runs there and removes the setting`);
+  }
+  if (raw.repo_sync === "pull-on-clean" || raw.repo_sync === "never-pull") {
+    out.push(`repo_sync ${JSON.stringify(raw.repo_sync)} is now ${JSON.stringify(raw.repo_sync === "never-pull" ? "never" : "pull")} (pull or never); \`${cli} log migrate\` rewrites it`);
+  }
+  return out;
+}
+var OLD_CYCLE_LOG, OLD_OUTAGES, OLD_SEEN, OLD_WATERMARK, OLD_KIT_FILES, OLD_RUNS_DIR, OLD_POST_LOGS, OLD_PATHS_KEY, OLD_TOP_KEYS;
+var init_legacy = __esm({
+  "src/opsbot-core/legacy.ts"() {
+    "use strict";
+    init_invocation();
+    init_repo();
+    OLD_CYCLE_LOG = "logs/cycle.jsonl";
+    OLD_OUTAGES = "logs/outages.jsonl";
+    OLD_SEEN = "logs/intake/seen";
+    OLD_WATERMARK = "logs/intake/watermark";
+    OLD_KIT_FILES = [OLD_CYCLE_LOG, OLD_OUTAGES, OLD_SEEN, OLD_WATERMARK];
+    OLD_RUNS_DIR = "records/routine-runs";
+    OLD_POST_LOGS = { slack: "logs/slack-posts.jsonl", whatsapp: "logs/whatsapp-posts.jsonl" };
+    OLD_PATHS_KEY = "commit_paths";
+    OLD_TOP_KEYS = [OLD_PATHS_KEY];
+  }
+});
+
+// src/opsbot-core/log.ts
+import { createHash } from "node:crypto";
+import { existsSync as existsSync4, mkdtempSync, readFileSync as readFileSync2, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as join3 } from "node:path";
+function ident(sheet, r) {
+  const at = String(r.at ?? "");
+  if (sheet === "seen") return String(r.hash ?? "");
+  if (sheet === "cycles") return `${at}|${String(r.outcome ?? "")}`;
+  if (sheet === "outages") return `${at}|${String(r.kind ?? "")}|${String(r.edge ?? "")}`;
+  if (sheet === "posts") return `${String(r.channel ?? "")}|${at}|${String(r.hash ?? "")}`;
+  if (sheet === "ledgers") return `${String(r.ledger ?? "")}|${at}|${String(r.hash ?? "")}`;
+  if (sheet === "state") return String(r.name ?? "");
+  return `${String(r.routine ?? "")}|${at}|${String(r.hash ?? "")}`;
+}
+function logWriter(root) {
+  const hit = writerCache.get(root);
+  if (hit) return hit;
+  const text = showHead(root, "opsbot.json");
+  const why = oldSetup(root, text);
+  let branch = null;
+  if (!why) {
+    try {
+      const v = text === null ? null : JSON.parse(text);
+      if (v && typeof v.log === "object" && v.log && typeof v.log.branch === "string" && v.log.branch) branch = v.log.branch;
+    } catch {
+    }
+  }
+  const w = why ? { notMigrated: why } : { branch: branch ?? DEFAULT_LOG_BRANCH };
+  writerCache.set(root, w);
+  return w;
+}
+function notMigratedError(root, why) {
+  const prepared = revParse(root, ref(MIGRATE_BRANCH));
+  const cli = cliInvocation();
+  const help = prepared ? [
+    `\`${cli} log migrate\` prepared ${MIGRATE_BRANCH} (${prepared.slice(0, 12)}): push it and merge its pull request, then pull it into this checkout; \`${cli} log migrate --dry-run\` shows it again`
+  ] : [`Run \`${cli} log migrate --dry-run\`, then \`${cli} log migrate\`, and merge the pull request it prepares`];
+  return new AxiError(
+    `this checkout is set up for the log files (${why}); this release writes the log only to its branch, so nothing is written until the migration is merged here`,
+    "CANNOT_RUN",
+    help
+  );
+}
+function logBranch(root) {
+  const w = logWriter(root);
+  if ("notMigrated" in w) throw notMigratedError(root, w.notMigrated);
+  return w.branch;
+}
+function forgetLogBranch() {
+  writerCache.clear();
+  forgetReads();
+}
+function remembered(key, f) {
+  if (reads.has(key)) return reads.get(key);
+  const v = f();
+  reads.set(key, v);
+  return v;
+}
+function forgetReads() {
+  reads.clear();
+}
+function gitsheetsBin() {
+  return process.env.OPSBOT_GITSHEETS_AXI || "gitsheets-axi";
+}
+function gitsheetsVersion() {
+  const r = run(gitsheetsBin(), ["--version"], { timeoutMs: 3e4 });
+  if (r.code !== 0) return null;
+  const m = r.stdout.match(/(\d+)\.(\d+)\.(\d+)/);
+  return m ? m[0] : null;
+}
+function versionAtLeast(a, b) {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] ?? 0) > (pb[i] ?? 0)) return true;
+    if ((pa[i] ?? 0) < (pb[i] ?? 0)) return false;
+  }
+  return true;
+}
+function gs(root, branch, args, input, timeoutMs = GS_TIMEOUT_MS) {
+  forgetReads();
+  const r = run(gitsheetsBin(), ["--branch", branch, ...args], { cwd: root, input, timeoutMs });
+  const text = `${r.stdout}
+${r.stderr}`;
+  const code = r.code === 0 ? null : text.match(/^code:\s*(\S+)/m)?.[1] ?? (r.code === 124 ? "TIMEOUT" : "FAILED");
+  const err = text.split("\n").find((l) => l.startsWith("error:"));
+  const message = (err ? err.replace(/^error:\s*/, "").replace(/^"|"$/g, "") : "") || firstLine(r.stderr) || firstLine(r.stdout) || `exit ${r.code}`;
+  return { code: r.code, out: r.stdout, error: code, message: message.slice(0, 300) };
+}
+function committed(out) {
+  return out.match(/^commit:\s*([0-9a-f]{40})\s*$/m)?.[1] ?? null;
+}
+function revParse(root, r) {
+  const x = git(root, ["rev-parse", "--verify", "-q", `${r}^{commit}`]);
+  return x.code === 0 ? x.stdout.trim() || null : null;
+}
+function programHead(root) {
+  return revParse(root, "HEAD");
+}
+function haveLocal(root, b) {
+  const key = `have\0${root}\0${b}`;
+  if (reads.get(key) === true) return true;
+  let have = !!revParse(root, ref(b));
+  if (!have) {
+    const remote = revParse(root, `refs/remotes/origin/${b}`);
+    have = !!remote && git(root, ["branch", "-q", "--no-track", b, remote]).code === 0;
+    forgetReads();
+  }
+  if (have) reads.set(key, true);
+  return have;
+}
+function readTip(root, b) {
+  return readTips(root, b, 1)[0] ?? null;
+}
+function freshTip(root, b) {
+  forgetReads();
+  return readTip(root, b);
+}
+function readTips(root, b, n) {
+  return remembered(`tips\0${root}\0${b}\0${n}`, () => readTipsNow(root, b, n));
+}
+function readTipsNow(root, b, n) {
+  if (!haveLocal(root, b)) return [];
+  const r = git(root, ["log", "--first-parent", `-${n}`, "--diff-merges=first-parent", "--name-only", "--format=%x1e%H%x1f%P%x1f%(trailers:only,unfold)%x1f", ref(b)]);
+  if (r.code !== 0) return [];
+  return r.stdout.split("").slice(1).map(parseTip);
+}
+function parseTip(body) {
+  const [hash = "", parents = "", tr = "", names = ""] = body.split("");
+  const trailers2 = {};
+  for (const line of tr.split("\n")) {
+    const m = line.match(/^([A-Za-z0-9-]+):\s*(.*)$/);
+    if (m) trailers2[m[1]] = m[2].trim();
+  }
+  return {
+    hash: hash.trim(),
+    parents: parents.trim().split(/\s+/).filter(Boolean),
+    trailers: trailers2,
+    cyclePaths: names.split("\n").map((s) => s.trim()).filter((s) => s.startsWith("cycles/"))
+  };
+}
+function cyclePathTime(p) {
+  const m = p.match(CYCLE_PATH_RE);
+  if (!m) return null;
+  return { at: `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`, outcome: m[7] };
+}
+function tipLastCycleAt(tip) {
+  if (!tip) return null;
+  let best = null;
+  const q = tip.trailers["Quiet-Until"];
+  if (q && parseIso(q) !== null) best = q;
+  for (const p of tip.cyclePaths) {
+    const t = cyclePathTime(p);
+    if (t && LIVE_OUTCOMES.includes(t.outcome) && (best === null || t.at > best)) best = t.at;
+  }
+  return best;
+}
+function tipWatermark(tip) {
+  const w = tip?.trailers.Watermark;
+  return w && parseIso(w) !== null ? w : null;
+}
+function isOpenQuiet(tip, nowMs2) {
+  if (!tip || !tip.trailers["Quiet-Cycles"]) return false;
+  const until = tip.trailers["Quiet-Until"] ?? "";
+  return until.slice(0, 13) === iso(nowMs2).slice(0, 13);
+}
+function readPending(root) {
+  try {
+    const v = JSON.parse(readFileSync2(gitPath(root, PENDING), "utf8"));
+    const p = emptyPending();
+    for (const s of SHEETS) if (Array.isArray(v[s])) p[s] = v[s];
+    if (typeof v.watermark === "string") p.watermark = v.watermark;
+    return p;
+  } catch {
+    return emptyPending();
+  }
+}
+function writePending(root, p) {
+  const f = gitPath(root, PENDING);
+  if (SHEETS.every((s) => p[s].length === 0) && !p.watermark) {
+    rmSync(f, { force: true });
+    return;
+  }
+  const tmp = `${f}.${process.pid}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(p)}
+`);
+  renameSync(tmp, f);
+}
+function stage(root, add) {
+  const p = readPending(root);
+  for (const s of SHEETS) {
+    if (!add[s]?.length) continue;
+    if (s === "state") {
+      const names = new Set(add[s].map((r) => ident(s, r)));
+      p[s] = p[s].filter((r) => !names.has(ident(s, r)));
+    }
+    p[s].push(...add[s].map(clean));
+  }
+  if (add.watermark) p.watermark = add.watermark;
+  writePending(root, p);
+}
+function dropStaged(root, took) {
+  const p = readPending(root);
+  for (const s of SHEETS) {
+    const gone = new Set((took[s] ?? []).map((r) => ident(s, r)));
+    p[s] = p[s].filter((r) => !gone.has(ident(s, r)));
+  }
+  if (took.watermark && p.watermark === took.watermark) delete p.watermark;
+  writePending(root, p);
+}
+function hasStaged(p) {
+  return SHEETS.some((s) => p[s].length > 0);
+}
+function clean(v) {
+  if (Array.isArray(v)) return v.filter((x) => x !== null && x !== void 0).map(clean);
+  if (v && typeof v === "object") {
+    const o = {};
+    for (const [k, x] of Object.entries(v)) if (x !== null && x !== void 0) o[k] = clean(x);
+    return o;
+  }
+  return v;
+}
+function recordHash(r) {
+  return createHash("sha256").update(canonical(r)).digest("hex").slice(0, 12);
+}
+function canonical(v) {
+  const sort = (x) => {
+    if (Array.isArray(x)) return x.map(sort);
+    if (x && typeof x === "object") {
+      const o = {};
+      for (const k of Object.keys(x).sort()) o[k] = sort(x[k]);
+      return o;
+    }
+    return x;
+  };
+  return JSON.stringify(sort(clean(v)));
+}
+function routineRecord(r) {
+  const { hash: _h, ...body } = clean(r);
+  return { ...body, hash: recordHash(body) };
+}
+function seenHash(key) {
+  return createHash("sha256").update(key).digest("hex").slice(0, 20);
+}
+function seenRecords(keys, at) {
+  return keys.map((key) => ({ at, hash: seenHash(key), key }));
+}
+function initBranch(root, b) {
+  return initSheet(root, b, "cycles", ["--message", "log: the sheets of the loop's log"]);
+}
+function initSheet(root, b, s, commitArgs) {
+  const dir = mkdtempSync(join3(tmpdir(), "opsbot-log-init-"));
+  try {
+    const schema = join3(dir, `${s}.json`);
+    writeFileSync(schema, JSON.stringify(SHEET_CONFIGS[s].schema));
+    const r = gs(root, b, ["init", s, "--path", SHEET_CONFIGS[s].path, "--schema", schema, ...commitArgs]);
+    return r.code === 0 ? null : `gitsheets-axi init ${s} failed: ${r.message}`;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+function sheetConfigs(root, b) {
+  const r = git(root, ["ls-tree", "--name-only", `${ref(b)}:.gitsheets`]);
+  const out = /* @__PURE__ */ new Set();
+  if (r.code !== 0) return out;
+  for (const n of r.stdout.split("\n")) {
+    const m = n.trim().match(/^(.+)\.toml$/);
+    if (m && SHEETS.includes(m[1])) out.add(m[1]);
+  }
+  return out;
+}
+function ensureBranch(root, b) {
+  if (haveLocal(root, b)) return null;
+  if (git(root, ["remote", "get-url", "origin"]).code === 0) {
+    const f = run("git", ["-C", root, "fetch", "-q", "origin", `+${ref(b)}:refs/remotes/origin/${b}`], { timeoutMs: PUSH_TIMEOUT_MS });
+    if (f.code === 0 && haveLocal(root, b)) return null;
+  }
+  return initBranch(root, b);
+}
+function sessionTrailers(extra) {
+  return extra.split("\n").map((l) => l.trim()).filter((l) => /^[A-Za-z0-9-]+:\s*\S/.test(l));
+}
+function trailerArgs(list) {
+  return list.flatMap((t) => ["--trailer", t]);
+}
+function baseTrailers(head2, watermark, check) {
+  return [`Program: ${head2 ?? "none"}`, `Watermark: ${watermark ?? "none"}`, `Check: ${check}`];
+}
+function writeLog(root, b, w, session = "") {
+  const why = ensureBranch(root, b);
+  if (why) return { ok: false, why };
+  const sheets = SHEETS.filter((s) => (w.records[s]?.length ?? 0) > 0);
+  let retried = false;
+  const attempt = (todo) => {
+    const tip = freshTip(root, b);
+    if (!tip) return { ok: false, why: `the log branch ${b} cannot be read` };
+    const head2 = programHead(root);
+    const trailers2 = trailerArgs([...baseTrailers(head2, w.watermark, w.check), ...sessionTrailers(session)]);
+    const also = head2 && tip.trailers.Program !== head2 ? ["--also-parent", head2] : [];
+    const before = snapshotTrees(root, b);
+    let made = null;
+    const done2 = [];
+    if (todo.length === 0) {
+      const r = gs(root, b, ["commit", "--allow-empty", "--message", w.subject, ...also, ...trailers2], void 0, w.timeoutMs);
+      if (r.code !== 0) return { ok: false, why: `gitsheets-axi commit failed: ${r.message}` };
+      return { ok: true, hash: revParse(root, ref(b)) ?? "" };
+    }
+    const present = sheetConfigs(root, b);
+    for (const s of todo.filter((x) => !present.has(x))) {
+      const why2 = initSheet(root, b, s, ["--message", w.subject, ...trailers2, ...made ? ["--replace", made] : also]);
+      if (why2) return { ok: false, why: why2 };
+      const now = revParse(root, ref(b));
+      if (now && now !== (made ?? tip.hash)) made = now;
+    }
+    for (const s of todo) {
+      const input = w.records[s].map((x) => JSON.stringify(clean(x))).join("\n");
+      const args = ["upsert", s, "--message", w.subject, ...trailers2, ...made ? ["--replace", made] : also];
+      const r = gs(root, b, args, `${input}
+`, w.timeoutMs);
+      if (r.code !== 0) {
+        if (r.error === "TIP_MISMATCH" && !retried) {
+          retried = true;
+          return attempt(todo.filter((x) => !done2.includes(x)));
+        }
+        return { ok: false, why: `gitsheets-axi upsert ${s} failed: ${r.message}` };
+      }
+      const now = committed(r.out) ?? revParse(root, ref(b));
+      if (now && now !== (made ?? tip.hash)) made = now;
+      done2.push(s);
+    }
+    noteWritten(root, b, before, Object.fromEntries(done2.map((s) => [s, w.records[s]])));
+    return { ok: true, hash: made ?? tip.hash };
+  };
+  return attempt(sheets);
+}
+function commitStaged(root, b, extra, o, session = "") {
+  const p = readPending(root);
+  const records = {};
+  for (const s of SHEETS) {
+    const all = [...p[s], ...(extra[s] ?? []).map(clean)];
+    if (all.length) records[s] = all;
+  }
+  const tip = readTip(root, b);
+  const wm = o.watermark !== void 0 ? o.watermark : laterOf(p.watermark ?? null, tipWatermark(tip));
+  const r = writeLog(root, b, { records, subject: o.subject, watermark: wm, check: o.check ?? tip?.trailers.Check ?? "full" }, session);
+  if (r.ok) dropStaged(root, { ...p, watermark: p.watermark });
+  return r;
+}
+function laterOf(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return a > b ? a : b;
+}
+function writeQuiet(root, b, q, nowMs2, session = "") {
+  const why = ensureBranch(root, b);
+  if (why) return { ok: false, why };
+  const tip = freshTip(root, b);
+  if (!tip) return { ok: false, why: `the log branch ${b} cannot be read` };
+  const head2 = programHead(root);
+  const base = baseTrailers(head2, q.watermark, q.check);
+  const own = sessionTrailers(session);
+  const n = Number(tip.trailers["Quiet-Cycles"] ?? 0);
+  const open5 = isOpenQuiet(tip, nowMs2) && tip.trailers.Check === q.check && tip.trailers.Program === (head2 ?? "none") && n > 0;
+  if (open5) {
+    const since = tip.trailers["Quiet-Since"] ?? q.now;
+    const r2 = gs(root, b, [
+      "commit",
+      "--allow-empty",
+      "--replace",
+      tip.hash,
+      "--message",
+      quietSubject(n + 1, since, q.now),
+      ...trailerArgs([...base, `Quiet-Cycles: ${n + 1}`, `Quiet-Since: ${since}`, `Quiet-Until: ${q.now}`, `Since: ${q.since}`, ...own])
+    ]);
+    if (r2.code === 0) return { ok: true, hash: revParse(root, ref(b)) ?? "", cycles: n + 1 };
+    if (r2.error !== "TIP_MISMATCH" && r2.error !== "TIP_PUBLISHED") return { ok: false, why: `gitsheets-axi commit failed: ${r2.message}` };
+  }
+  const cur = freshTip(root, b) ?? tip;
+  const also = head2 && cur.trailers.Program !== head2 ? ["--also-parent", head2] : [];
+  const r = gs(root, b, [
+    "commit",
+    "--allow-empty",
+    ...also,
+    "--message",
+    quietSubject(1, q.now, q.now),
+    ...trailerArgs([...base, "Quiet-Cycles: 1", `Quiet-Since: ${q.now}`, `Quiet-Until: ${q.now}`, `Since: ${q.since}`, ...own])
+  ]);
+  if (r.code !== 0) return { ok: false, why: `gitsheets-axi commit failed: ${r.message}` };
+  return { ok: true, hash: revParse(root, ref(b)) ?? "", cycles: 1 };
+}
+function quietSubject(n, since, until) {
+  return n === 1 ? `cycle: nothing new at ${until.slice(11, 16)}Z` : `cycle: nothing new \xD7${n}, ${since.slice(11, 16)}Z to ${until.slice(11, 16)}Z`;
+}
+function pushLog(root, b, nowMs2) {
+  if (git(root, ["remote", "get-url", "origin"]).code !== 0) return { pushed: false, refused: false, why: "no remote named origin" };
+  const tip = freshTip(root, b);
+  if (!tip) return { pushed: false, refused: false, why: null };
+  const target = isOpenQuiet(tip, nowMs2) ? tip.parents[0] : tip.hash;
+  if (!target) return { pushed: false, refused: false, why: null };
+  const remote = revParse(root, `refs/remotes/origin/${b}`);
+  if (remote && git(root, ["merge-base", "--is-ancestor", target, remote]).code === 0) return { pushed: false, refused: false, why: null };
+  const r = gs(root, b, ["push", "--to", target], void 0, PUSH_TIMEOUT_MS);
+  if (r.code === 0) return { pushed: true, refused: false, why: null };
+  if (r.error === "NON_FAST_FORWARD") {
+    const ls = run("git", ["-C", root, "ls-remote", "origin", ref(b)], { timeoutMs: PUSH_TIMEOUT_MS });
+    const theirs = ls.code === 0 ? ls.stdout.split(/\s/)[0]?.slice(0, 12) : null;
+    return {
+      pushed: false,
+      refused: true,
+      why: `log push refused: the remote's ${b} is at ${theirs || "a commit this host does not have"}, not on this host's log; another host may be running this bot`
+    };
+  }
+  return { pushed: false, refused: false, why: `log push failed: ${r.message.slice(0, 120)}` };
+}
+function readCache(root) {
+  try {
+    return JSON.parse(readFileSync2(gitPath(root, CACHE), "utf8"));
+  } catch {
+    return {};
+  }
+}
+function writeCache(root, c) {
+  const f = gitPath(root, CACHE);
+  const tmp = `${f}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(c));
+    renameSync(tmp, f);
+  } catch {
+  }
+}
+function sheetTrees(root, b) {
+  return remembered(`trees\0${root}\0${b}`, () => sheetTreesNow(root, b));
+}
+function sheetTreesNow(root, b) {
+  const r = git(root, ["ls-tree", ref(b)]);
+  const out = {};
+  if (r.code !== 0) return out;
+  for (const line of r.stdout.split("\n")) {
+    const m = line.match(/^\d+ tree ([0-9a-f]+)\t(.+)$/);
+    if (m && SHEETS.includes(m[2])) out[m[2]] = m[1];
+  }
+  return out;
+}
+function snapshotTrees(root, b) {
+  return sheetTreesNow(root, b);
+}
+function noteWritten(root, b, before, written) {
+  const after = sheetTreesNow(root, b);
+  const c = readCache(root);
+  for (const s of SHEETS) {
+    if (!written[s]?.length) continue;
+    const cur = c[s];
+    const was = before[s] ?? "";
+    if (!after[s]) continue;
+    if (cur && cur.tree === was || !cur && !was) {
+      const map = new Map((cur?.records ?? []).map((r) => [ident(s, r), r]));
+      for (const r of written[s]) map.set(ident(s, r), clean(r));
+      c[s] = { tree: after[s], records: [...map.values()] };
+    }
+  }
+  writeCache(root, c);
+}
+function query(root, b, sheet, filter) {
+  const r = queryRecords(root, b, sheet, filter ? [filter] : []);
+  return "error" in r ? null : r.records;
+}
+function queryRecords(root, b, sheet, filters) {
+  const dir = mkdtempSync(join3(tmpdir(), "opsbot-log-q-"));
+  try {
+    const out = join3(dir, "rows.json");
+    const args = ["query", sheet, "--limit", "1", `--json-out=${out}`, ...filters.flatMap((f) => ["--filter", f])];
+    const r = gs(root, b, args);
+    if (r.code !== 0) return { error: `gitsheets-axi query ${sheet} failed: ${r.message}` };
+    if (!existsSync4(out)) return { records: [] };
+    const v = JSON.parse(readFileSync2(out, "utf8"));
+    return { records: Array.isArray(v) ? v : [] };
+  } catch (e) {
+    return { error: `gitsheets-axi query ${sheet} could not be read: ${e.message}` };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+function sheetRecords(root, b, sheet) {
+  if (!haveLocal(root, b)) return [];
+  const trees = sheetTrees(root, b);
+  const tree = trees[sheet];
+  if (!tree) return [];
+  const c = readCache(root);
+  const cur = c[sheet];
+  if (cur && cur.tree === tree) return cur.records;
+  let records = null;
+  if (cur) {
+    const d = git(root, ["diff-tree", "-r", "--name-only", cur.tree, tree]);
+    const days = d.code === 0 ? d.stdout.split("\n").map((p) => p.match(DAY_IN_PATH)).filter((m) => !!m).map((m) => `${m[1]}-${m[2]}-${m[3]}`) : [];
+    const changed = d.code === 0 ? d.stdout.split("\n").filter((p) => p.trim()).length : -1;
+    if (changed >= 0 && days.length === changed && days.length > 0) {
+      const from = days.sort()[0];
+      const fresh = query(root, b, sheet, `at>=${from}`);
+      if (fresh) records = [...cur.records.filter((r) => String(r.at ?? "") < from), ...fresh];
+    }
+  }
+  if (records === null) records = query(root, b, sheet, null);
+  if (records === null) return cur?.records ?? [];
+  c[sheet] = { tree, records };
+  writeCache(root, c);
+  return records;
+}
+function quietRuns(root, b) {
+  return remembered(`quiet\0${root}\0${b}`, () => quietRunsNow(root, b));
+}
+function quietRunsNow(root, b) {
+  if (!haveLocal(root, b)) return [];
+  const c = readCache(root);
+  const cached2 = c.quiet && c.quiet.branch === b ? c.quiet : null;
+  const since = cached2 && git(root, ["merge-base", "--is-ancestor", cached2.base, ref(b)]).code === 0 ? cached2 : null;
+  const r = git(root, ["log", "--first-parent", "--format=%x1e%H%x1f%P%x1f%(trailers:only,unfold)", since ? `${since.base}..${ref(b)}` : ref(b)]);
+  if (r.code !== 0) return [];
+  const commits = r.stdout.split("").slice(1).map((block) => {
+    const [hash = "", parents = "", tr = ""] = block.split("");
+    const t = {};
+    for (const line of tr.split("\n")) {
+      const m = line.match(/^([A-Za-z0-9-]+):\s*(.*)$/);
+      if (m) t[m[1]] = m[2].trim();
+    }
+    return { hash: hash.trim(), parent: parents.trim().split(/\s+/)[0] ?? "", t };
+  });
+  const fresh = commits.filter((x) => x.t["Quiet-Cycles"]).map((x) => x.t).reverse();
+  const runs = [...since?.runs ?? [], ...fresh];
+  const tip = commits[0];
+  if (tip && tip.parent) {
+    const below = [...since?.runs ?? [], ...commits.slice(1).filter((x) => x.t["Quiet-Cycles"]).map((x) => x.t).reverse()];
+    writeCache(root, { ...readCache(root), quiet: { branch: b, base: tip.parent, runs: below } });
+  }
+  return runs;
+}
+function quietLines(t) {
+  const n = Math.max(1, Number(t["Quiet-Cycles"] ?? 1) || 1);
+  const from = parseIso(t["Quiet-Since"]);
+  const to = parseIso(t["Quiet-Until"] ?? t.Watermark);
+  if (from === null || to === null) return [];
+  const fast = t.Check === "fast";
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const at = n === 1 ? to : from + Math.round((to - from) * i / (n - 1));
+    const line = { at: iso(at), outcome: "nothing-new", inputs: {}, new: 0, failed: [], check: fast ? "fast" : "full" };
+    if (fast) line.fast = true;
+    if (i === n - 1) {
+      if (t.Since) line.since = t.Since;
+      line.watermark = t.Watermark && t.Watermark !== "none" ? t.Watermark : null;
+    }
+    out.push(line);
+  }
+  return out;
+}
+function branchCycleLines(root, b) {
+  const recs = sheetRecords(root, b, "cycles");
+  const quiet = quietRuns(root, b).flatMap(quietLines);
+  const staged = readPending(root).cycles;
+  return [...recs, ...quiet, ...staged].sort(byAtInCycle);
+}
+function branchOutageLines(root, b) {
+  return [...sheetRecords(root, b, "outages"), ...readPending(root).outages].sort(byAt);
+}
+function branchSeen(root, b) {
+  const keys = /* @__PURE__ */ new Set();
+  for (const r of sheetRecords(root, b, "seen")) if (typeof r.key === "string") keys.add(r.key);
+  for (const r of readPending(root).seen) if (typeof r.key === "string") keys.add(r.key);
+  return keys;
+}
+function branchRoutineRecords(root, b) {
+  return [...sheetRecords(root, b, "routines"), ...readPending(root).routines].sort(byAt);
+}
+function branchWatermark(root, b) {
+  return laterOf(readPending(root).watermark ?? null, tipWatermark(readTip(root, b)));
+}
+function branchLastCycleAt(root, b) {
+  let best = null;
+  for (const t of readTips(root, b, 20)) {
+    best = tipLastCycleAt(t);
+    if (best) break;
+  }
+  for (const l of readPending(root).cycles) {
+    if (LIVE_OUTCOMES.includes(String(l.outcome)) && typeof l.at === "string" && (best === null || l.at > best)) best = l.at;
+  }
+  return best;
+}
+function seenFileFor(root, b) {
+  const f = gitPath(root, "opsbot-seen");
+  try {
+    writeFileSync(f, [...branchSeen(root, b)].map((k) => `${k}
+`).join(""));
+  } catch {
+  }
+  return f;
+}
+var DEFAULT_LOG_BRANCH, MIN_GITSHEETS, PENDING, CACHE, GS_TIMEOUT_MS, PUSH_TIMEOUT_MS, SHEETS, HH, MMSS, HHMMSS, DAY, AT, SHEET_CONFIGS, MIGRATE_BRANCH, writerCache, reads, ref, CYCLE_PATH_RE, LIVE_OUTCOMES, emptyPending, DAY_IN_PATH, byAt, RANK, rank, byAtInCycle;
+var init_log = __esm({
+  "src/opsbot-core/log.ts"() {
+    "use strict";
+    init_dist2();
+    init_invocation();
+    init_legacy();
+    init_repo();
+    DEFAULT_LOG_BRANCH = "opsbot/log";
+    MIN_GITSHEETS = "2.15.0";
+    PENDING = "opsbot-log-pending.json";
+    CACHE = "opsbot-log-cache.json";
+    GS_TIMEOUT_MS = 12e4;
+    PUSH_TIMEOUT_MS = 6e4;
+    SHEETS = ["cycles", "outages", "seen", "routines", "posts", "ledgers", "state"];
+    HH = "${{ typeof at == 'string' ? at.slice(11,13) : wild }}";
+    MMSS = "${{ typeof at == 'string' ? at.slice(14,16) + at.slice(17,19) : wild }}";
+    HHMMSS = "${{ typeof at == 'string' ? at.slice(11,13) + at.slice(14,16) + at.slice(17,19) : wild }}";
+    DAY = "${{ at: YYYY/MM/DD }}";
+    AT = { type: "string", format: "date-time" };
+    SHEET_CONFIGS = {
+      cycles: {
+        path: `${DAY}/${HH}/${MMSS}-\${{ outcome }}`,
+        schema: { type: "object", required: ["at", "outcome"], properties: { at: AT, outcome: { type: "string" } } }
+      },
+      seen: {
+        path: `${DAY}/\${{ hash }}`,
+        schema: { type: "object", required: ["at", "hash", "key"], properties: { at: AT, hash: { type: "string" }, key: { type: "string" } } }
+      },
+      outages: {
+        path: `${DAY}/${HHMMSS}-\${{ kind }}-\${{ edge }}`,
+        schema: {
+          type: "object",
+          required: ["at", "kind", "edge", "outcome"],
+          properties: { at: AT, kind: { type: "string" }, edge: { type: "string", enum: ["start", "end"] }, outcome: { type: "string" } }
+        }
+      },
+      routines: {
+        path: `\${{ routine }}/${DAY}/${HHMMSS}-\${{ hash }}`,
+        schema: { type: "object", required: ["at", "routine", "hash"], properties: { at: AT, routine: { type: "string" }, hash: { type: "string" } } }
+      },
+      posts: {
+        path: `\${{ channel }}/${DAY}/${HHMMSS}-\${{ hash }}`,
+        schema: { type: "object", required: ["at", "channel", "hash"], properties: { at: AT, channel: { type: "string" }, hash: { type: "string" } } }
+      },
+      ledgers: {
+        path: `\${{ ledger }}/${DAY}/${HHMMSS}-\${{ hash }}`,
+        schema: { type: "object", required: ["at", "ledger", "hash"], properties: { at: AT, ledger: { type: "string" }, hash: { type: "string" } } }
+      },
+      state: {
+        path: "${{ name }}",
+        schema: { type: "object", required: ["name", "value"], properties: { name: { type: "string" }, at: AT, value: { type: "object" } } }
+      }
+    };
+    MIGRATE_BRANCH = "opsbot/log-migrate";
+    writerCache = /* @__PURE__ */ new Map();
+    reads = /* @__PURE__ */ new Map();
+    ref = (b) => `refs/heads/${b}`;
+    CYCLE_PATH_RE = /^cycles\/(\d{4})\/(\d{2})\/(\d{2})\/(\d{2})\/(\d{2})(\d{2})-(.+)\.toml$/;
+    LIVE_OUTCOMES = ["nothing-new", "new", "degraded", "finished"];
+    emptyPending = () => ({ cycles: [], seen: [], outages: [], routines: [], posts: [], ledgers: [], state: [] });
+    DAY_IN_PATH = /(?:^|\/)(\d{4})\/(\d{2})\/(\d{2})(?:\/|$)/;
+    byAt = (a, b) => String(a.at) < String(b.at) ? -1 : String(a.at) > String(b.at) ? 1 : 0;
+    RANK = { wake: 0, "nothing-new": 1, new: 1, degraded: 1, finished: 2, sleep: 3 };
+    rank = (r) => RANK[String(r.outcome)] ?? 1;
+    byAtInCycle = (a, b) => byAt(a, b) || rank(a) - rank(b);
+  }
+});
+
+// src/opsbot-core/record.ts
+import { existsSync as existsSync5, mkdtempSync as mkdtempSync2, readdirSync, readFileSync as readFileSync3, rmSync as rmSync2 } from "node:fs";
+import { tmpdir as tmpdir2 } from "node:os";
+import { join as join4 } from "node:path";
 function isObj(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -2329,19 +3043,19 @@ function recallEntries(v) {
   }));
 }
 function sheetConfig(root, sheet, head2 = false) {
-  const rel2 = `${SHEETS_DIR}/${sheet}.toml`;
-  const p = join3(root, rel2);
-  if (!head2 && existsSync4(p)) {
+  const rel = `${SHEETS_DIR}/${sheet}.toml`;
+  const p = join4(root, rel);
+  if (!head2 && existsSync5(p)) {
     try {
-      return readFileSync2(p, "utf8");
+      return readFileSync3(p, "utf8");
     } catch {
     }
   }
-  return showHead(root, rel2);
+  return showHead(root, rel);
 }
 function listSheets(root) {
-  const dir = join3(root, SHEETS_DIR);
-  if (!existsSync4(dir)) return [];
+  const dir = join4(root, SHEETS_DIR);
+  if (!existsSync5(dir)) return [];
   try {
     return readdirSync(dir).filter((f) => f.endsWith(".toml")).map((f) => f.slice(0, -5)).sort();
   } catch {
@@ -2359,7 +3073,7 @@ function sheetFieldOrder(config) {
 function recallSheetProblems(root, recalls, head2 = false) {
   const problems = [];
   recalls.forEach((r, i) => {
-    const cfg = head2 ? sheetConfig(root, r.sheet, true) : existsSync4(join3(root, SHEETS_DIR, `${r.sheet}.toml`)) ? sheetConfig(root, r.sheet) : null;
+    const cfg = head2 ? sheetConfig(root, r.sheet, true) : existsSync5(join4(root, SHEETS_DIR, `${r.sheet}.toml`)) ? sheetConfig(root, r.sheet) : null;
     if (cfg === null) {
       problems.push(`record.recall[${i}] names sheet ${r.sheet}, but ${SHEETS_DIR}/${r.sheet}.toml does not exist${head2 ? " at HEAD" : ""}`);
       return;
@@ -2385,7 +3099,7 @@ function resolveFilter(clauses, ms, timeZone) {
     return m ? `${m[1]}${m[2]}${today}` : c;
   });
 }
-function gitsheetsBin() {
+function gitsheetsBin2() {
   return process.env.OPSBOT_GITSHEETS_AXI || "gitsheets-axi";
 }
 function recallCommand(r, clauses) {
@@ -2397,22 +3111,22 @@ function queryRecall(root, r, ms, timeZone) {
   if (sheetConfig(root, r.sheet) === null) return { error: `sheet ${r.sheet} is missing: no ${SHEETS_DIR}/${r.sheet}.toml`, clauses };
   let dir = null;
   try {
-    dir = mkdtempSync(join3(tmpdir(), "opsbot-recall-"));
-    const out = join3(dir, "rows.json");
-    const res = run(gitsheetsBin(), ["query", r.sheet, ...clauses.flatMap((c) => ["--filter", c]), `--json-out=${out}`], { cwd: root, timeoutMs: QUERY_TIMEOUT_MS });
+    dir = mkdtempSync2(join4(tmpdir2(), "opsbot-recall-"));
+    const out = join4(dir, "rows.json");
+    const res = run(gitsheetsBin2(), ["query", r.sheet, ...clauses.flatMap((c) => ["--filter", c]), `--json-out=${out}`], { cwd: root, timeoutMs: QUERY_TIMEOUT_MS });
     if (res.code !== 0) {
       const err = res.stdout.split("\n").find((l) => l.startsWith("error:"));
       const why = (err ? err.replace(/^error:\s*/, "").replace(/^"|"$/g, "") : "") || firstLine(res.stderr) || firstLine(res.stdout) || "no message";
       return { error: `gitsheets-axi query failed (exit ${res.code}): ${why}`, clauses };
     }
-    if (!existsSync4(out)) return { error: "gitsheets-axi query wrote no result file", clauses };
-    const v = JSON.parse(readFileSync2(out, "utf8"));
+    if (!existsSync5(out)) return { error: "gitsheets-axi query wrote no result file", clauses };
+    const v = JSON.parse(readFileSync3(out, "utf8"));
     if (!Array.isArray(v)) return { error: "gitsheets-axi query's result file is not a JSON array", clauses };
     return { rows: v.filter(isObj), clauses };
   } catch (e) {
     return { error: `the query could not run: ${e.message}`, clauses };
   } finally {
-    if (dir) rmSync(dir, { recursive: true, force: true });
+    if (dir) rmSync2(dir, { recursive: true, force: true });
   }
 }
 function cell(v) {
@@ -2474,8 +3188,8 @@ var init_record = __esm({
 });
 
 // src/opsbot-core/settings.ts
-import { existsSync as existsSync5, readFileSync as readFileSync3 } from "node:fs";
-import { join as join4 } from "node:path";
+import { existsSync as existsSync6, readFileSync as readFileSync4 } from "node:fs";
+import { join as join5 } from "node:path";
 function wakeEntry(v) {
   if (typeof v === "string") return v.trim() ? { entry: { file: v, inputs: null } } : { problem: "wake.files entries must not be empty" };
   if (typeof v !== "object" || v === null || Array.isArray(v)) return { problem: "wake.files entries must be file paths (strings) or {file, inputs} objects" };
@@ -2558,12 +3272,13 @@ function validateSettings(raw) {
     "repo_sync",
     "wake",
     "host",
-    "commit_paths",
+    ...OLD_TOP_KEYS,
     "sleep",
     "memory",
     "routines",
     "check",
-    "record"
+    "record",
+    "log"
   ]);
   str2(raw, "name", "", true, NAME_RE, "must be lowercase letters, digits and dashes, starting with a letter");
   str2(raw, "mark", "", true);
@@ -2574,8 +3289,9 @@ function validateSettings(raw) {
   str2(raw, "rule_card", "", false);
   str2(raw, "gate_word", "", false, /^[A-Z]{3,}$/, "must be three or more capital letters");
   posInt(raw, "lock_max_minutes", "");
-  if (raw.repo_sync !== void 0 && raw.repo_sync !== "pull-on-clean" && raw.repo_sync !== "never-pull") {
-    problems.push(`repo_sync must be pull-on-clean or never-pull (got ${JSON.stringify(raw.repo_sync)})`);
+  problems.push(...oldSettingProblems(raw));
+  if (raw.repo_sync !== void 0 && raw.repo_sync !== "pull" && raw.repo_sync !== "never" && raw.repo_sync !== "pull-on-clean" && raw.repo_sync !== "never-pull") {
+    problems.push(`repo_sync must be pull or never (got ${JSON.stringify(raw.repo_sync)})`);
   }
   const loop = obj(raw, "loop", "", true);
   if (loop) {
@@ -2669,7 +3385,6 @@ function validateSettings(raw) {
       problems.push("check.full_minutes must be a whole number of minutes, 0 or more (0 turns fast checks off)");
     }
   }
-  if (raw.commit_paths !== void 0) problems.push(...commitPathProblems(raw.commit_paths));
   if (raw.memory !== void 0 && raw.memory !== false) {
     if (!isObj2(raw.memory)) problems.push("memory must be an object ({dir, review_days}) or false");
     else {
@@ -2681,11 +3396,34 @@ function validateSettings(raw) {
   const routines = obj(raw, "routines", "", false);
   if (routines) {
     allow(routines, "routines.", ["dir", "runs_dir"]);
-    for (const k of ["dir", "runs_dir"]) {
-      if (routines[k] !== void 0) problems.push(...repoDirProblems(routines[k], `routines.${k}`));
-    }
+    if (routines.dir !== void 0) problems.push(...repoDirProblems(routines.dir, "routines.dir"));
   }
   if (raw.record !== void 0) problems.push(...recordProblems(raw.record));
+  const log = obj(raw, "log", "", false);
+  if (log) {
+    allow(log, "log.", ["branch", "ledgers", "state"]);
+    str2(log, "branch", "log.", false, LOG_BRANCH_RE, `must be a branch name such as ${JSON.stringify("opsbot/log")}`);
+    for (const k of ["ledgers", "state"]) {
+      const v = log[k];
+      if (v === void 0) continue;
+      if (!isObj2(v)) {
+        problems.push(`log.${k} must be an object: each name with the list of fields a record must carry`);
+        continue;
+      }
+      for (const [name, fields] of Object.entries(v)) {
+        if (name === "//") continue;
+        if (!LOG_NAME_RE.test(name)) problems.push(`log.${k} name ${JSON.stringify(name)} must be lower-case letters, digits, - and _ (64 at most)`);
+        if (!Array.isArray(fields) || !fields.every((f) => typeof f === "string" && f !== "")) {
+          problems.push(`log.${k}.${name} must be a list of field names`);
+          continue;
+        }
+        if (new Set(fields).size !== fields.length) problems.push(`log.${k}.${name} names a field twice`);
+        if (k === "ledgers") {
+          for (const f of fields) if (LEDGER_RESERVED.includes(f)) problems.push(`log.ledgers.${name}: ${f} is set by the log itself; name the field otherwise`);
+        }
+      }
+    }
+  }
   const sleep = obj(raw, "sleep", "", false);
   if (sleep) {
     allow(sleep, "sleep.", ["after_minutes", "probe_minutes", "max_minutes", "compact"]);
@@ -2696,22 +3434,6 @@ function validateSettings(raw) {
     if (loopSchedule !== "monitor") {
       problems.push("sleep requires loop.schedule to be monitor: the prompt is then a plain message the sleep timer can type, and there is no self-paced loop to end");
     }
-  }
-  return problems;
-}
-function commitPathProblems(v) {
-  if (!Array.isArray(v)) return ["commit_paths must be an array of repo-relative file paths"];
-  const problems = [];
-  for (const f of v) {
-    if (typeof f !== "string" || !f.trim()) {
-      problems.push("commit_paths entries must be non-empty strings");
-      continue;
-    }
-    const segs = f.split(/[\\/]+/).filter((x) => x !== "" && x !== ".");
-    if (f.startsWith("/") || /^[A-Za-z]:/.test(f)) problems.push(`commit_paths ${JSON.stringify(f)} must be relative to the repo, not absolute`);
-    else if (segs.includes("..")) problems.push(`commit_paths ${JSON.stringify(f)} must not contain a .. segment`);
-    else if (segs[0] === ".git" || segs[0] === ".claude") problems.push(`commit_paths ${JSON.stringify(f)} is under ${segs[0]}/, which the core never commits`);
-    else if (segs.length === 0) problems.push(`commit_paths ${JSON.stringify(f)} names the repo itself, not a file`);
   }
   return problems;
 }
@@ -2794,10 +3516,9 @@ function withDefaults(raw) {
     liveness,
     runtime: { adapter: "herdr", agent: rt.agent },
     streams,
-    repo_sync: pick(raw.repo_sync, "pull-on-clean"),
+    repo_sync: raw.repo_sync === "never" ? "never" : "pull",
     wake: { files: wakeList.map((e) => e.file), entries: wakeList },
     check: { full_minutes: isObj2(raw.check) && typeof raw.check.full_minutes === "number" ? raw.check.full_minutes : DEFAULT_CHECK.full_minutes },
-    commit_paths: Array.isArray(raw.commit_paths) ? raw.commit_paths : [],
     sleep: isObj2(raw.sleep) ? {
       after_minutes: pick(raw.sleep.after_minutes, DEFAULT_SLEEP.after_minutes),
       probe_minutes: pick(raw.sleep.probe_minutes, DEFAULT_SLEEP.probe_minutes),
@@ -2809,11 +3530,24 @@ function withDefaults(raw) {
       review_days: isObj2(raw.memory) && typeof raw.memory.review_days === "number" ? raw.memory.review_days : DEFAULT_MEMORY.review_days
     },
     routines: {
-      dir: cleanDir(isObj2(raw.routines) ? raw.routines.dir : void 0, DEFAULT_ROUTINES.dir),
-      runs_dir: cleanDir(isObj2(raw.routines) ? raw.routines.runs_dir : void 0, DEFAULT_ROUTINES.runs_dir)
+      dir: cleanDir(isObj2(raw.routines) ? raw.routines.dir : void 0, DEFAULT_ROUTINES.dir)
     },
-    record: { recall: recallEntries(raw.record) }
+    record: { recall: recallEntries(raw.record) },
+    log: {
+      branch: isObj2(raw.log) && typeof raw.log.branch === "string" && raw.log.branch ? raw.log.branch : DEFAULT_LOG_BRANCH,
+      ledgers: logNames(isObj2(raw.log) ? raw.log.ledgers : void 0),
+      state: logNames(isObj2(raw.log) ? raw.log.state : void 0)
+    }
   };
+}
+function logNames(v) {
+  const out = {};
+  if (!isObj2(v)) return out;
+  for (const [name, fields] of Object.entries(v)) {
+    if (name === "//" || !Array.isArray(fields)) continue;
+    out[name] = fields.filter((f) => typeof f === "string" && f !== "");
+  }
+  return out;
 }
 function parseSettingsText(text, where) {
   let raw;
@@ -2829,7 +3563,7 @@ function loadSettings(root) {
   const text = showHead(root, SETTINGS_FILE);
   if (text === null) {
     throw new AxiError(`${SETTINGS_FILE} is not committed in this checkout`, "CANNOT_RUN", [
-      existsSync5(join4(root, SETTINGS_FILE)) ? `Commit ${SETTINGS_FILE}: what runs is what was reviewed` : `Copy the skill's templates/opsbot.json to ${SETTINGS_FILE}, fill it in, and commit it`
+      existsSync6(join5(root, SETTINGS_FILE)) ? `Commit ${SETTINGS_FILE}: what runs is what was reviewed` : `Copy the skill's templates/opsbot.json to ${SETTINGS_FILE}, fill it in, and commit it`
     ]);
   }
   const { raw, problems } = parseSettingsText(text, `${SETTINGS_FILE} at HEAD`);
@@ -2848,14 +3582,16 @@ function trySettings(root) {
   };
   const head2 = tryText(showHead(root, SETTINGS_FILE));
   if (head2) return head2;
-  const p = join4(root, SETTINGS_FILE);
-  return existsSync5(p) ? tryText(readFileSync3(p, "utf8")) : null;
+  const p = join5(root, SETTINGS_FILE);
+  return existsSync6(p) ? tryText(readFileSync4(p, "utf8")) : null;
 }
-var SETTINGS_FILE, LOOP_MODES, MODE_AUTOCOMPACT, LOOP_SCHEDULES, MODE_MODEL, DEFAULT_MEMORY, DEFAULT_ROUTINES, DEFAULT_CHECK, DEFAULT_SLEEP, DEFAULT_CADENCE, DEFAULT_LIVENESS, MONITOR_NUDGE_MINUTES, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR;
+var SETTINGS_FILE, LOOP_MODES, MODE_AUTOCOMPACT, LOOP_SCHEDULES, MODE_MODEL, DEFAULT_MEMORY, DEFAULT_ROUTINES, DEFAULT_CHECK, DEFAULT_SLEEP, LOG_NAME_RE, LEDGER_RESERVED, DEFAULT_CADENCE, DEFAULT_LIVENESS, MONITOR_NUDGE_MINUTES, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR, LOG_BRANCH_RE;
 var init_settings = __esm({
   "src/opsbot-core/settings.ts"() {
     "use strict";
     init_dist2();
+    init_legacy();
+    init_log();
     init_repo();
     init_record();
     SETTINGS_FILE = "opsbot.json";
@@ -2864,9 +3600,11 @@ var init_settings = __esm({
     LOOP_SCHEDULES = ["self", "monitor"];
     MODE_MODEL = { strategist: "fable", dispatcher: "opus" };
     DEFAULT_MEMORY = { dir: "memory", review_days: 7 };
-    DEFAULT_ROUTINES = { dir: "routines", runs_dir: "records/routine-runs" };
+    DEFAULT_ROUTINES = { dir: "routines" };
     DEFAULT_CHECK = { full_minutes: 10 };
     DEFAULT_SLEEP = { after_minutes: 60, probe_minutes: 10, max_minutes: 480, compact: true };
+    LOG_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+    LEDGER_RESERVED = ["ledger", "hash"];
     DEFAULT_CADENCE = {
       hot: 180,
       warm: 600,
@@ -2891,12 +3629,13 @@ var init_settings = __esm({
     CADENCE_SECONDS = ["hot", "warm", "quiet_working", "quiet", "night", "cap"];
     LIVENESS_KEYS = Object.keys(DEFAULT_LIVENESS);
     ONE_HOUR = 3600;
+    LOG_BRANCH_RE = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*\.lock(?:\/|$))[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/;
   }
 });
 
 // src/opsbot-core/lifecycle.ts
-import { accessSync as accessSync2, constants as constants2, existsSync as existsSync6, mkdirSync, readdirSync as readdirSync2, realpathSync as realpathSync2, statSync, writeFileSync } from "node:fs";
-import { join as join5, relative } from "node:path";
+import { accessSync as accessSync2, constants as constants2, existsSync as existsSync7, mkdirSync, readdirSync as readdirSync2, realpathSync as realpathSync2, statSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join6, relative } from "node:path";
 function parsePoint(s) {
   const t = s.replace(/\/+$/, "");
   for (const p of POINTS) {
@@ -2905,14 +3644,14 @@ function parsePoint(s) {
   return null;
 }
 function discover(root, point) {
-  const dir = join5(root, OPSBOT_D, POINT_DIRS[point]);
+  const dir = join6(root, OPSBOT_D, POINT_DIRS[point]);
   const scripts = [];
   const skipped = [];
-  if (!existsSync6(dir)) return { scripts, skipped };
+  if (!existsSync7(dir)) return { scripts, skipped };
   const names = readdirSync2(dir).sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
   for (const name of names) {
     if (name.startsWith(".")) continue;
-    const path = join5(dir, name);
+    const path = join6(dir, name);
     let st;
     try {
       st = statSync(path);
@@ -2936,18 +3675,18 @@ function discover(root, point) {
       real2 = realpathSync2(path);
     } catch {
     }
-    const rel2 = relative(root, real2);
-    scripts.push({ point, name, path, source: rel2.startsWith("..") ? real2 : rel2 });
+    const rel = relative(root, real2);
+    scripts.push({ point, name, path, source: rel.startsWith("..") ? real2 : rel });
   }
   return { scripts, skipped };
 }
 function configSnapshot(root, text) {
   const p = gitPath(root, "opsbot-config.json");
   try {
-    writeFileSync(p, text);
+    writeFileSync2(p, text);
   } catch {
-    mkdirSync(join5(root, ".git"), { recursive: true });
-    writeFileSync(p, text);
+    mkdirSync(join6(root, ".git"), { recursive: true });
+    writeFileSync2(p, text);
   }
   return p;
 }
@@ -2962,8 +3701,12 @@ function baseEnv(root, settings, configPath, point, extra = {}) {
     ...extra
   };
 }
+function scriptTimeoutMs() {
+  const t = Number(process.env.OPSBOT_TEST_SCRIPT_TIMEOUT_MS);
+  return Number.isInteger(t) && t > 0 ? t : SCRIPT_TIMEOUT_MS;
+}
 function runScript(script, root, env, input) {
-  return run(script.path, [], { cwd: root, env, input, timeoutMs: SCRIPT_TIMEOUT_MS });
+  return run(script.path, [], { cwd: root, env, input, timeoutMs: scriptTimeoutMs() });
 }
 var OPSBOT_D, POINTS, POINT_DIRS, SCRIPT_TIMEOUT_MS;
 var init_lifecycle = __esm({
@@ -2986,49 +3729,18 @@ var init_lifecycle = __esm({
 });
 
 // src/opsbot-core/state.ts
-import { appendFileSync, existsSync as existsSync7, mkdirSync as mkdirSync2, readFileSync as readFileSync4, rmSync as rmSync2, statSync as statSync2, truncateSync, writeFileSync as writeFileSync2 } from "node:fs";
-import { dirname as dirname3, join as join6 } from "node:path";
-function paths(root) {
-  return {
-    log: join6(root, CYCLE_LOG),
-    seen: join6(root, SEEN_FILE),
-    watermark: join6(root, WATERMARK_FILE),
-    outages: join6(root, OUTAGES_FILE),
-    lock: gitPath(root, LOCK_NAME)
-  };
-}
-function readJsonl(file) {
-  if (!existsSync7(file)) return [];
-  const out = [];
-  for (const line of readFileSync4(file, "utf8").split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const v = JSON.parse(line);
-      if (v && typeof v === "object" && typeof v.at === "string" && typeof v.outcome === "string") out.push(v);
-    } catch {
-    }
-  }
-  return out;
-}
-function appendJsonl(file, obj) {
-  mkdirSync2(dirname3(file), { recursive: true });
-  appendFileSync(file, `${JSON.stringify(obj)}
-`);
-}
-function fileSize(file) {
-  try {
-    return statSync2(file).size;
-  } catch {
-    return 0;
-  }
-}
-function truncateTo(file, size) {
-  if (!existsSync7(file)) return;
-  if (size === 0 && fileSize(file) > 0) truncateSync(file, 0);
-  else truncateSync(file, size);
+import { readFileSync as readFileSync5, rmSync as rmSync3, writeFileSync as writeFileSync3, existsSync as existsSync8 } from "node:fs";
+function lockPath(root) {
+  return gitPath(root, LOCK_NAME);
 }
 function readCycleLog(root) {
-  return readJsonl(paths(root).log);
+  return branchCycleLines(root, logBranch(root));
+}
+function appendCycleLine(root, line) {
+  stage(root, { cycles: [line] });
+}
+function lastCycleTime(root) {
+  return branchLastCycleAt(root, logBranch(root));
 }
 function lastCycleAt(lines) {
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -3044,11 +3756,7 @@ function lastCheck(lines) {
   return null;
 }
 function outageLines(root) {
-  const p = paths(root);
-  const lines = [...readJsonl(p.log), ...readJsonl(p.outages)].filter(
-    (l) => l.outcome === "outage" || l.outcome === "outage-end"
-  );
-  return lines.sort((a, b) => a.at < b.at ? -1 : a.at > b.at ? 1 : 0);
+  return branchOutageLines(root, logBranch(root)).filter((l) => l.outcome === "outage" || l.outcome === "outage-end");
 }
 function outages(root) {
   const lines = outageLines(root);
@@ -3077,47 +3785,34 @@ function recordOutage(root, o) {
     ended: o.ended ?? null,
     note: o.note
   };
-  appendJsonl(paths(root).outages, line);
+  appendOutage(root, line);
   return line;
 }
 function recordOutageEnd(root, started, ended) {
   const line = { at: nowIso(), outcome: "outage-end", started, ended };
-  appendJsonl(paths(root).outages, line);
+  appendOutage(root, line);
   return line;
 }
+function appendOutage(root, line) {
+  logBranch(root);
+  const end = line.outcome === "outage-end";
+  const kind = end ? outages(root).find((o) => o.started === line.started)?.kind ?? "outage" : line.kind;
+  stage(root, { outages: [{ ...line, kind, edge: end ? "end" : "start" }] });
+}
 function readWatermark(root) {
-  const f = paths(root).watermark;
-  if (!existsSync7(f)) return null;
-  const line = readFileSync4(f, "utf8").split("\n")[0]?.trim() ?? "";
-  return line || null;
+  return branchWatermark(root, logBranch(root));
 }
 function validWatermark(wm) {
   return !!wm && ISO_RE.test(wm) && parseIso(wm) !== null;
 }
-function writeWatermark(root, wm) {
-  const f = paths(root).watermark;
-  mkdirSync2(dirname3(f), { recursive: true });
-  writeFileSync2(f, `${wm}
-`);
-}
 function readSeen(root) {
-  const f = paths(root).seen;
-  if (!existsSync7(f)) return /* @__PURE__ */ new Set();
-  return new Set(
-    readFileSync4(f, "utf8").split("\n").filter((l) => l !== "")
-  );
-}
-function appendSeen(root, keys) {
-  const f = paths(root).seen;
-  mkdirSync2(dirname3(f), { recursive: true });
-  appendFileSync(f, keys.map((k) => `${k}
-`).join(""));
+  return branchSeen(root, logBranch(root));
 }
 function readLock(root) {
-  const f = paths(root).lock;
-  if (!existsSync7(f)) return { hold: null, raw: false };
+  const f = lockPath(root);
+  if (!existsSync8(f)) return { hold: null, raw: false };
   try {
-    const v = JSON.parse(readFileSync4(f, "utf8"));
+    const v = JSON.parse(readFileSync5(f, "utf8"));
     return {
       hold: { pid: String(v.pid ?? ""), session: String(v.session ?? ""), started: String(v.started ?? "") },
       raw: true
@@ -3173,24 +3868,24 @@ function loopSessionFile(root) {
 }
 function readLoopSession(root) {
   try {
-    const v = readFileSync4(loopSessionFile(root), "utf8").trim();
+    const v = readFileSync5(loopSessionFile(root), "utf8").trim();
     return /^[A-Za-z0-9-]{8,}$/.test(v) ? v : null;
   } catch {
     return null;
   }
 }
 function takeLock(root) {
-  const f = paths(root).lock;
+  const f = lockPath(root);
   const hold = {
     pid: process.env.CLAUDE_PID ?? "",
     session: process.env.CLAUDE_CODE_SESSION_ID ?? "",
     started: nowIso()
   };
   try {
-    writeFileSync2(f, `${JSON.stringify(hold)}
+    writeFileSync3(f, `${JSON.stringify(hold)}
 `, { flag: "wx" });
     if (hold.session) try {
-      writeFileSync2(loopSessionFile(root), `${hold.session}
+      writeFileSync3(loopSessionFile(root), `${hold.session}
 `);
     } catch {
     }
@@ -3200,17 +3895,14 @@ function takeLock(root) {
   }
 }
 function releaseLock(root) {
-  rmSync2(paths(root).lock, { force: true });
+  rmSync3(lockPath(root), { force: true });
 }
-var CYCLE_LOG, SEEN_FILE, WATERMARK_FILE, OUTAGES_FILE, LOCK_NAME, OUTAGE_KINDS, CHECK_OUTCOMES, CYCLE_OUTCOMES;
+var LOCK_NAME, OUTAGE_KINDS, CHECK_OUTCOMES, CYCLE_OUTCOMES;
 var init_state = __esm({
   "src/opsbot-core/state.ts"() {
     "use strict";
     init_repo();
-    CYCLE_LOG = "logs/cycle.jsonl";
-    SEEN_FILE = "logs/intake/seen";
-    WATERMARK_FILE = "logs/intake/watermark";
-    OUTAGES_FILE = "logs/outages.jsonl";
+    init_log();
     LOCK_NAME = "opsbot-cycle.lock";
     OUTAGE_KINDS = ["failed-turn", "refused", "plan-limit", "session-ended", "stopped"];
     CHECK_OUTCOMES = ["nothing-new", "new", "degraded"];
@@ -3363,56 +4055,19 @@ function parseToml(src) {
   }
   return out;
 }
-function quote2(s) {
-  let out = '"';
-  for (const ch of s) {
-    const c = ch.codePointAt(0);
-    if (ch === '"') out += '\\"';
-    else if (ch === "\\") out += "\\\\";
-    else if (ch === "\n") out += "\\n";
-    else if (ch === "	") out += "\\t";
-    else if (ch === "\r") out += "\\r";
-    else if (ch === "\b") out += "\\b";
-    else if (ch === "\f") out += "\\f";
-    else if (c < 32 || c === 127) out += `\\u${c.toString(16).padStart(4, "0").toUpperCase()}`;
-    else out += ch;
-  }
-  return `${out}"`;
-}
-function value(v) {
-  if (typeof v === "string") return quote2(v);
-  if (typeof v === "boolean") return v ? "true" : "false";
-  if (typeof v === "number") {
-    if (!Number.isInteger(v)) throw new FrontmatterError(`only whole numbers are written (got ${v})`);
-    return String(v);
-  }
-  return `[${v.map(value).join(", ")}]`;
-}
-function serializeRecord(data, body) {
-  const keys = Object.keys(data).sort();
-  const lines = keys.map((k) => `${BARE_KEY.test(k) ? k : quote2(k)} = ${value(data[k])}`);
-  const b = body.replace(/\r\n/g, "\n").replace(/^\n+/, "").replace(/\n+$/, "");
-  return `+++
-${lines.join("\n")}
-+++
-${b ? `
-${b}
-` : ""}`;
-}
-var FrontmatterError, BARE_KEY, DATE_LIKE;
+var FrontmatterError, DATE_LIKE;
 var init_frontmatter = __esm({
   "src/opsbot-core/frontmatter.ts"() {
     "use strict";
     FrontmatterError = class extends Error {
     };
-    BARE_KEY = /^[A-Za-z0-9_-]+$/;
     DATE_LIKE = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?)?$/;
   }
 });
 
 // src/opsbot-core/routine-store.ts
-import { existsSync as existsSync8, mkdirSync as mkdirSync3, readdirSync as readdirSync3, readFileSync as readFileSync5, writeFileSync as writeFileSync3 } from "node:fs";
-import { basename as basename3, dirname as dirname4, join as join7, relative as relative2, resolve as resolve3, sep } from "node:path";
+import { existsSync as existsSync9, readdirSync as readdirSync3, readFileSync as readFileSync6 } from "node:fs";
+import { basename as basename3, join as join7, relative as relative2, resolve as resolve3, sep } from "node:path";
 function zonedParts(ms, timeZone) {
   const f = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -3500,7 +4155,7 @@ function computeState(def, runs, now, timeZone) {
   const since = sinceMs(def.since, timeZone);
   const anchor = last ? last.atMs : since;
   if (anchor === null) return { ...base, due: true, dueAt: null, next: null, key: `routine:${def.id}:after:never` };
-  const dueAt = anchor + def.intervalDays * DAY;
+  const dueAt = anchor + def.intervalDays * DAY2;
   const due2 = now >= dueAt;
   return {
     ...base,
@@ -3616,10 +4271,10 @@ function definitionFiles(root, dir, head2) {
     return out.sort((a, b) => a.file < b.file ? -1 : 1);
   }
   const abs = resolve3(root, dir);
-  if (!existsSync8(abs)) return out;
+  if (!existsSync9(abs)) return out;
   for (const e of readdirSync3(abs, { withFileTypes: true })) {
     if (!e.isFile() || !keep(e.name)) continue;
-    out.push({ file: `${dir}/${e.name}`, text: readFileSync5(join7(abs, e.name), "utf8") });
+    out.push({ file: `${dir}/${e.name}`, text: readFileSync6(join7(abs, e.name), "utf8") });
   }
   return out.sort((a, b) => a.file < b.file ? -1 : 1);
 }
@@ -3647,87 +4302,62 @@ function readDefinitions(root, s, opts = {}) {
   }
   return { defs, problems, files: files.length };
 }
-function walk(dir) {
-  if (!existsSync8(dir)) return [];
-  const out = [];
-  for (const e of readdirSync3(dir, { withFileTypes: true })) {
-    if (e.name.startsWith(".")) continue;
-    const p = join7(dir, e.name);
-    if (e.isDirectory()) out.push(...walk(p));
-    else if (e.isFile() && e.name.endsWith(".md") && e.name !== "README.md") out.push(p);
-  }
-  return out.sort();
+function readRuns(root, _s) {
+  const branch = logBranch(root);
+  return branchRuns(branch, branchRoutineRecords(root, branch));
 }
-function notesOf(body) {
-  return body.replace(/^#\s+[^\n]*\n*/, "").trim();
+function writeRun(root, _s, r) {
+  return writeBranchRun(root, logBranch(root), r);
 }
-function readRuns(root, s) {
+function branchRunFile(branch, routine, at, hash) {
+  return `${branch}:routines/${routine}/${at.slice(0, 4)}/${at.slice(5, 7)}/${at.slice(8, 10)}/${at.slice(11, 13)}${at.slice(14, 16)}${at.slice(17, 19)}-${hash}`;
+}
+function branchRuns(branch, recs) {
   const runs = [];
   const problems = [];
-  for (const abs of walk(resolve3(root, s.routines.runs_dir))) {
-    const file = rel(root, abs);
-    try {
-      const { data, body } = parseRecord(readFileSync5(abs, "utf8"));
-      const at = typeof data.at === "string" ? data.at : null;
-      const atMs = at ? Date.parse(at) : NaN;
-      if (typeof data.routine !== "string" || !data.routine) throw new FrontmatterError("no routine");
-      if (at === null || Number.isNaN(atMs)) throw new FrontmatterError("no readable at");
-      runs.push({
-        id: typeof data.id === "string" ? data.id : basename3(file, ".md"),
-        routine: data.routine,
-        at,
-        atMs,
-        outcome: typeof data.outcome === "string" ? data.outcome : "done",
-        by: typeof data.by === "string" ? data.by : null,
-        checked: Array.isArray(data.checked) ? data.checked.map(String) : [],
-        handed_to: typeof data.handed_to === "string" ? data.handed_to : null,
-        notes: notesOf(body),
-        file
-      });
-    } catch (e) {
-      problems.push(`${file}: ${e.message}`);
+  for (const d of recs) {
+    const at = typeof d.at === "string" ? d.at : null;
+    const atMs = at ? Date.parse(at) : NaN;
+    if (typeof d.routine !== "string" || !d.routine || at === null || Number.isNaN(atMs)) {
+      problems.push(`a run on ${branch} without a routine or a readable at: ${JSON.stringify(d).slice(0, 120)}`);
+      continue;
     }
+    runs.push({
+      id: typeof d.id === "string" ? d.id : `${d.routine}-${at.slice(0, 10)}-${at.slice(11, 13)}${at.slice(14, 16)}`,
+      routine: d.routine,
+      at,
+      atMs,
+      outcome: typeof d.outcome === "string" ? d.outcome : "done",
+      by: typeof d.by === "string" ? d.by : null,
+      checked: Array.isArray(d.checked) ? d.checked.map(String) : [],
+      handed_to: typeof d.handed_to === "string" ? d.handed_to : null,
+      notes: typeof d.notes === "string" ? d.notes : "",
+      file: branchRunFile(branch, d.routine, at, typeof d.hash === "string" ? d.hash : routineRecord(d).hash)
+    });
   }
   return { runs, problems };
 }
-function writeRun(root, s, r) {
+function writeBranchRun(root, branch, r) {
   const at = iso(r.atMs);
-  const dir = resolve3(root, s.routines.runs_dir, at.slice(0, 4), at.slice(5, 7));
   const stem = `${r.routine}-${at.slice(0, 10)}-${at.slice(11, 13)}${at.slice(14, 16)}`;
+  const ids = new Set(branchRuns(branch, branchRoutineRecords(root, branch)).runs.map((x) => x.id));
   let id = stem;
-  for (let n = 2; existsSync8(join7(dir, `${id}.md`)); n++) id = `${stem}-${n}`;
+  for (let n = 2; ids.has(id); n++) id = `${stem}-${n}`;
   const title = `${r.title}: ${r.outcome} ${at.slice(0, 10)}`;
-  const data = { id, routine: r.routine, at, outcome: r.outcome, by: r.by, checked: r.checked, title };
-  if (r.handed_to) data.handed_to = r.handed_to;
-  const path = join7(dir, `${id}.md`);
-  mkdirSync3(dirname4(path), { recursive: true });
-  writeFileSync3(path, serializeRecord(data, `# ${title}
-
-${r.notes.trim()}`));
-  return { file: rel(root, path), id };
+  const rec = { id, routine: r.routine, at, outcome: r.outcome, by: r.by, checked: r.checked, title, notes: r.notes.trim() };
+  if (r.handed_to) rec.handed_to = r.handed_to;
+  const filed = routineRecord(rec);
+  stage(root, { routines: [filed] });
+  return { file: branchRunFile(branch, r.routine, at, filed.hash), id };
 }
-function changedRunFiles(root, s, already = []) {
-  const dir = resolve3(root, s.routines.runs_dir);
-  const r = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames", "--", dir]);
-  if (r.code !== 0) return [];
-  const have = new Set(already.map((f) => resolve3(root, f)));
-  const out = [];
-  for (const rec of r.stdout.split("\0")) {
-    if (rec.length < 4 || rec.slice(0, 2) === "AD") continue;
-    const abs = resolve3(root, rec.slice(3));
-    if (have.has(abs)) continue;
-    have.add(abs);
-    out.push(abs);
-  }
-  return out;
-}
-var DAY, CADENCE_DAYS, OUTCOMES, ID_RE, HM_RE2, DATE_RE, KEYS, DOW, rel;
+var DAY2, CADENCE_DAYS, OUTCOMES, ID_RE, HM_RE2, DATE_RE, KEYS, DOW;
 var init_routine_store = __esm({
   "src/opsbot-core/routine-store.ts"() {
     "use strict";
     init_frontmatter();
     init_repo();
-    DAY = 864e5;
+    init_log();
+    DAY2 = 864e5;
     CADENCE_DAYS = { daily: 1, weekly: 7, monthly: 30, quarterly: 91, yearly: 365 };
     OUTCOMES = ["done", "partial", "skipped", "blocked"];
     ID_RE = /^[a-z0-9][a-z0-9-]{1,60}$/;
@@ -3735,13 +4365,12 @@ var init_routine_store = __esm({
     DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
     KEYS = ["id", "title", "cadence", "every", "at", "days", "since", "active", "owner", "hands_to"];
     DOW = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-    rel = (root, p) => relative2(root, p).split(sep).join("/");
   }
 });
 
 // src/opsbot-core/memory.ts
-import { createHash } from "node:crypto";
-import { existsSync as existsSync9, readdirSync as readdirSync4, readFileSync as readFileSync6, rmSync as rmSync3, statSync as statSync3, writeFileSync as writeFileSync4 } from "node:fs";
+import { createHash as createHash2 } from "node:crypto";
+import { existsSync as existsSync10, readdirSync as readdirSync4, readFileSync as readFileSync7, rmSync as rmSync4, statSync as statSync2, writeFileSync as writeFileSync5 } from "node:fs";
 import { join as join8, relative as relative3, resolve as resolve4, sep as sep2 } from "node:path";
 function memoryDir(root, s) {
   return s.memory ? resolve4(root, s.memory.dir) : null;
@@ -3764,13 +4393,13 @@ function changedMemoryFiles(root, s, already = []) {
   }
   return out;
 }
-function walk2(dir, base = dir) {
-  if (!existsSync9(dir)) return [];
+function walk(dir, base = dir) {
+  if (!existsSync10(dir)) return [];
   const out = [];
   for (const e of readdirSync4(dir, { withFileTypes: true })) {
     if (e.name.startsWith(".")) continue;
     const p = join8(dir, e.name);
-    if (e.isDirectory()) out.push(...walk2(p, base));
+    if (e.isDirectory()) out.push(...walk(p, base));
     else if (e.isFile()) out.push(relative3(base, p).split(sep2).join("/"));
   }
   return out.sort();
@@ -3797,18 +4426,18 @@ function listMemory(root, dir) {
   const dirty = new Set(
     changedPaths(root, dir).map((p) => relative3(dir, p).split(sep2).join("/"))
   );
-  return walk2(dir).filter((n) => n !== MEMORY_INDEX).map((name) => {
+  return walk(dir).filter((n) => n !== MEMORY_INDEX).map((name) => {
     const abs = join8(dir, name);
-    const buf = readFileSync6(abs);
-    const mtime2 = statSync3(abs).mtimeMs;
-    const committed = commits.get(relative3(root, abs).split(sep2).join("/"));
-    const changed = dirty.has(name) || committed === void 0 ? mtime2 : Math.min(committed, mtime2);
+    const buf = readFileSync7(abs);
+    const mtime2 = statSync2(abs).mtimeMs;
+    const committed2 = commits.get(relative3(root, abs).split(sep2).join("/"));
+    const changed = dirty.has(name) || committed2 === void 0 ? mtime2 : Math.min(committed2, mtime2);
     return {
       name,
       bytes: buf.length,
       type: frontmatterType(buf.toString("utf8")),
       changed: Number.isFinite(changed) ? changed : null,
-      sha: createHash("sha1").update(buf).digest("hex")
+      sha: createHash2("sha1").update(buf).digest("hex")
     };
   });
 }
@@ -3835,7 +4464,7 @@ function memoryRuns(root, s, runs) {
       checked: [],
       handed_to: null,
       notes: typeof l.note === "string" ? l.note : `kept ${l.kept ?? 0}, updated ${l.updated ?? 0}, removed ${l.removed ?? 0}, added ${l.added ?? 0}`,
-      file: "logs/cycle.jsonl"
+      file: "the cycle log"
     });
   }
   return [...recorded, ...legacy].sort(byTime);
@@ -3856,8 +4485,8 @@ function memoryStatus(root, s, now, given = {}) {
   const files = listMemory(root, dir);
   const idxPath = join8(dir, MEMORY_INDEX);
   let index = null;
-  if (existsSync9(idxPath)) {
-    const t = readFileSync6(idxPath, "utf8");
+  if (existsSync10(idxPath)) {
+    const t = readFileSync7(idxPath, "utf8");
     index = { bytes: Buffer.byteLength(t), lines: t.split("\n").filter((l) => l.trim()).length };
   }
   const runs = memoryRuns(root, s, given.runs);
@@ -3866,7 +4495,7 @@ function memoryStatus(root, s, now, given = {}) {
   const unreviewed = files.filter((f) => revAt === null || f.changed === null || f.changed > revAt);
   const times = unreviewed.map((f) => f.changed).filter((t) => t !== null);
   const oldest = times.length ? now - Math.min(...times) : null;
-  const limit = s.memory.review_days * DAY2;
+  const limit = s.memory.review_days * DAY3;
   let due2 = false;
   let why;
   let dueAt = null;
@@ -3939,19 +4568,19 @@ function snapshotPath(root) {
   return gitPath(root, REVIEW_SNAPSHOT);
 }
 function writeSnapshot(root, snap) {
-  writeFileSync4(snapshotPath(root), `${JSON.stringify(snap)}
+  writeFileSync5(snapshotPath(root), `${JSON.stringify(snap)}
 `);
 }
 function readSnapshot(root) {
   try {
-    const v = JSON.parse(readFileSync6(snapshotPath(root), "utf8"));
+    const v = JSON.parse(readFileSync7(snapshotPath(root), "utf8"));
     return v && typeof v.files === "object" && v.files !== null ? v : null;
   } catch {
     return null;
   }
 }
 function clearSnapshot(root) {
-  rmSync3(snapshotPath(root), { force: true });
+  rmSync4(snapshotPath(root), { force: true });
 }
 function reviewCounts(snap, now) {
   const cur = new Map(now.map((f) => [f.name, f.sha]));
@@ -3965,7 +4594,7 @@ function reviewCounts(snap, now) {
   for (const f of now) if (!(f.name in snap.files)) c.added++;
   return c;
 }
-var MEMORY_INDEX, REVIEW_SNAPSHOT, REVIEW_OUTCOME, MEMORY_ROUTINE, DAY2;
+var MEMORY_INDEX, REVIEW_SNAPSHOT, REVIEW_OUTCOME, MEMORY_ROUTINE, DAY3;
 var init_memory = __esm({
   "src/opsbot-core/memory.ts"() {
     "use strict";
@@ -3976,17 +4605,17 @@ var init_memory = __esm({
     REVIEW_SNAPSHOT = "opsbot-memory-review.json";
     REVIEW_OUTCOME = "memory-review";
     MEMORY_ROUTINE = "memory-review";
-    DAY2 = 864e5;
+    DAY3 = 864e5;
   }
 });
 
 // src/opsbot-core/routines.ts
-import { existsSync as existsSync10, readFileSync as readFileSync7 } from "node:fs";
+import { existsSync as existsSync11, readFileSync as readFileSync8 } from "node:fs";
 import { join as join9 } from "node:path";
 function memoryInstructions() {
   const f = join9(skillDir(), MEMORY_GUIDE);
-  if (!existsSync10(f)) return `The memory review protocol: ${f}. Run \`memory review --begin\`, work the worksheet, then \`memory review --done --note "<what was folded where>"\`.`;
-  return readFileSync7(f, "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "").trim();
+  if (!existsSync11(f)) return `The memory review protocol: ${f}. Run \`memory review --begin\`, work the worksheet, then \`memory review --done --note "<what was folded where>"\`.`;
+  return readFileSync8(f, "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "").trim();
 }
 function builtinMemoryRoutine(s) {
   if (!s.memory) return null;
@@ -4101,8 +4730,8 @@ var init_errors2 = __esm({
 });
 
 // node_modules/agent-recall-axi/dist/src/lib/model.js
-function isKind(value2) {
-  return KINDS.includes(value2);
+function isKind(value) {
+  return KINDS.includes(value);
 }
 var KINDS, AUTHORITY, HIDDEN_BY_DEFAULT, DEFAULT_KINDS;
 var init_model = __esm({
@@ -4274,7 +4903,7 @@ async function* readLinesBackward(path, blockSize = BLOCK_SIZE) {
       return;
     let end = size;
     let carry = [];
-    const join27 = (head2) => carry.length === 0 ? head2 : Buffer.concat([head2, ...carry.reverse()]);
+    const join28 = (head2) => carry.length === 0 ? head2 : Buffer.concat([head2, ...carry.reverse()]);
     let first = true;
     const emit = (offset, bytes2) => {
       if (first) {
@@ -4292,7 +4921,7 @@ async function* readLinesBackward(path, blockSize = BLOCK_SIZE) {
         const nl = buf.lastIndexOf(NL, stop - 1);
         if (nl === -1)
           break;
-        const line2 = emit(start + nl + 1, join27(buf.subarray(nl + 1, stop)));
+        const line2 = emit(start + nl + 1, join28(buf.subarray(nl + 1, stop)));
         carry = [];
         if (line2)
           yield line2;
@@ -4302,7 +4931,7 @@ async function* readLinesBackward(path, blockSize = BLOCK_SIZE) {
         carry.push(buf.subarray(0, stop));
       end = start;
     }
-    const line = emit(0, join27(Buffer.alloc(0)));
+    const line = emit(0, join28(Buffer.alloc(0)));
     if (line)
       yield line;
   } finally {
@@ -4359,7 +4988,7 @@ var init_reader = __esm({
 
 // node_modules/agent-recall-axi/dist/src/lib/adapters/claude-code/classify.js
 import { basename as basename4, join as join10 } from "node:path";
-import { existsSync as existsSync11 } from "node:fs";
+import { existsSync as existsSync12 } from "node:fs";
 function isSilentType(type) {
   if (type === void 0)
     return true;
@@ -4598,10 +5227,10 @@ function parsePointer(text, sidecar) {
     preview = text.slice(pv.index + pv[0].length);
   preview = preview.replace(/\s*<\/persisted-output>\s*$/, "").replace(/\n?\.\.\.\s*$/, "");
   let path = stored;
-  let exists = existsSync11(stored);
+  let exists = existsSync12(stored);
   if (sidecar) {
     const relocated = join10(sidecar, "tool-results", basename4(stored));
-    if (relocated !== stored && existsSync11(relocated)) {
+    if (relocated !== stored && existsSync12(relocated)) {
       path = relocated;
       exists = true;
     }
@@ -4969,9 +5598,9 @@ var init_detect = __esm({
 });
 
 // node_modules/agent-recall-axi/dist/src/lib/adapters/claude-code/sessions.js
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
-import { basename as basename5, dirname as dirname5, join as join11 } from "node:path";
+import { basename as basename5, dirname as dirname4, join as join11 } from "node:path";
 import { homedir as homedir3 } from "node:os";
 function defaultRoot(env = process.env) {
   const config = env.CLAUDE_CONFIG_DIR;
@@ -5053,14 +5682,14 @@ async function* listProjects(root) {
     yield await projectForDir(join11(root, name));
 }
 function shortId(id, path) {
-  return /^[0-9a-f]{8}/i.test(id) ? id.slice(0, 8).toLowerCase() : createHash2("sha1").update(basename5(path)).digest("hex").slice(0, 8);
+  return /^[0-9a-f]{8}/i.test(id) ? id.slice(0, 8).toLowerCase() : createHash3("sha1").update(basename5(path)).digest("hex").slice(0, 8);
 }
 function sessionForPath(path, project) {
   const file = basename5(path).replace(/\.jsonl$/, "");
-  const parentDir = dirname5(path);
+  const parentDir = dirname4(path);
   if (basename5(parentDir) === "subagents") {
     const id = file.replace(/^agent-/, "");
-    const sidecar = dirname5(parentDir);
+    const sidecar = dirname4(parentDir);
     const s2 = {
       id,
       short: shortId(id, path),
@@ -5215,7 +5844,7 @@ var init_claude_code = __esm({
 // node_modules/agent-recall-axi/dist/src/lib/scope.js
 import { stat as stat2 } from "node:fs/promises";
 import { homedir as homedir4 } from "node:os";
-import { dirname as dirname6, join as join12, resolve as resolve5 } from "node:path";
+import { dirname as dirname5, join as join12, resolve as resolve5 } from "node:path";
 function rootOf(scope = {}) {
   return scope.root ?? claudeCode.root(scope.env ?? process.env);
 }
@@ -5242,43 +5871,43 @@ async function projectForCwd(root, dir, scanned) {
   const projects = scanned ?? await allProjects(root);
   return projects.find((p) => p.cwd === dir);
 }
-function expandHome(value2) {
-  if (value2 === "~")
+function expandHome(value) {
+  if (value === "~")
     return homedir4();
-  if (value2.startsWith("~/"))
-    return join12(homedir4(), value2.slice(2));
-  return value2;
+  if (value.startsWith("~/"))
+    return join12(homedir4(), value.slice(2));
+  return value;
 }
-function looksLikePath(value2) {
-  return value2.startsWith("/") || value2.startsWith(".") || value2.startsWith("~");
+function looksLikePath(value) {
+  return value.startsWith("/") || value.startsWith(".") || value.startsWith("~");
 }
 async function resolveScope(scope = {}) {
   const root = rootOf(scope);
   if (scope.project === "all")
     return { root, all: true, projects: await allProjects(root) };
   if (scope.project !== void 0) {
-    const value2 = scope.project;
-    const abs = resolve5(scope.cwd ?? process.cwd(), expandHome(value2));
-    if (looksLikePath(value2) || await isDir2(abs)) {
+    const value = scope.project;
+    const abs = resolve5(scope.cwd ?? process.cwd(), expandHome(value));
+    if (looksLikePath(value) || await isDir2(abs)) {
       const p = await projectForCwd(root, abs);
       if (p)
         return { root, all: false, projects: [p] };
-      throw new AgentSessionError(`no session logs for ${value2}`, "NO_SESSIONS", NO_SESSIONS_HINTS, { project: abs });
+      throw new AgentSessionError(`no session logs for ${value}`, "NO_SESSIONS", NO_SESSIONS_HINTS, { project: abs });
     }
-    if (await isDir2(join12(root, value2))) {
-      return { root, all: false, projects: [await projectForDir(join12(root, value2))] };
+    if (await isDir2(join12(root, value))) {
+      return { root, all: false, projects: [await projectForDir(join12(root, value))] };
     }
-    const matches2 = (await allProjects(root)).filter((p) => p.cwd.includes(value2));
+    const matches2 = (await allProjects(root)).filter((p) => p.cwd.includes(value));
     if (matches2.length === 1)
       return { root, all: false, projects: matches2 };
     if (matches2.length > 1) {
-      throw new AgentSessionError(`--project ${value2} matches ${matches2.length} projects`, "VALIDATION_ERROR", matches2.slice(0, 10).map((p) => `--project ${p.cwd}`), { candidates: matches2.map((p) => p.cwd) });
+      throw new AgentSessionError(`--project ${value} matches ${matches2.length} projects`, "VALIDATION_ERROR", matches2.slice(0, 10).map((p) => `--project ${p.cwd}`), { candidates: matches2.map((p) => p.cwd) });
     }
-    throw new AgentSessionError(`no project matches ${value2}`, "NO_SESSIONS", NO_SESSIONS_HINTS);
+    throw new AgentSessionError(`no project matches ${value}`, "NO_SESSIONS", NO_SESSIONS_HINTS);
   }
   const cwd = resolve5(scope.cwd ?? process.cwd());
   let scanned;
-  for (let dir = cwd; ; dir = dirname6(dir)) {
+  for (let dir = cwd; ; dir = dirname5(dir)) {
     const candidate = join12(root, encodeCwd(dir));
     if (await isDir2(candidate)) {
       const p = await projectForDir(candidate);
@@ -5289,7 +5918,7 @@ async function resolveScope(scope = {}) {
     const hit = scanned.find((p) => p.cwd === dir);
     if (hit)
       return { root, all: false, projects: [hit] };
-    if (dirname6(dir) === dir)
+    if (dirname5(dir) === dir)
       break;
   }
   throw new AgentSessionError(`no session logs for ${cwd}`, "NO_SESSIONS", NO_SESSIONS_HINTS, { cwd });
@@ -5308,12 +5937,12 @@ var init_scope = __esm({
 });
 
 // node_modules/agent-recall-axi/dist/src/invocation.js
-import { accessSync as accessSync3, constants as constants3, realpathSync as realpathSync3, statSync as statSync4 } from "node:fs";
+import { accessSync as accessSync3, constants as constants3, realpathSync as realpathSync3, statSync as statSync3 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { basename as basename6, delimiter, dirname as dirname7, join as join13 } from "node:path";
+import { basename as basename6, delimiter, dirname as dirname6, join as join13 } from "node:path";
 function real(path) {
   try {
-    if (!statSync4(path).isFile())
+    if (!statSync3(path).isFile())
       return void 0;
     return realpathSync3(path);
   } catch {
@@ -5324,7 +5953,7 @@ function bundleShim(entrypoint) {
   if (!entrypoint || basename6(entrypoint) !== BUNDLE_FILE)
     return void 0;
   const bundle = real(entrypoint) ?? entrypoint;
-  const shim = join13(dirname7(bundle), NAME);
+  const shim = join13(dirname6(bundle), NAME);
   try {
     accessSync3(shim, constants3.X_OK);
     return { bundle, shim };
@@ -5422,14 +6051,14 @@ var init_window_state = __esm({
 });
 
 // node_modules/agent-recall-axi/dist/src/version.js
-import { readFileSync as readFileSync8 } from "node:fs";
-import { dirname as dirname8, join as join14 } from "node:path";
+import { readFileSync as readFileSync9 } from "node:fs";
+import { dirname as dirname7, join as join14 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 function readVersion() {
-  const here = dirname8(fileURLToPath2(import.meta.url));
+  const here = dirname7(fileURLToPath2(import.meta.url));
   for (const candidate of [join14(here, "..", "package.json"), join14(here, "..", "..", "package.json")]) {
     try {
-      const pkg = JSON.parse(readFileSync8(candidate, "utf8"));
+      const pkg = JSON.parse(readFileSync9(candidate, "utf8"));
       if (pkg.version)
         return pkg.version;
     } catch {
@@ -5445,7 +6074,7 @@ var init_version2 = __esm({
 });
 
 // node_modules/agent-recall-axi/dist/src/lib/cache/store.js
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 import { lstat, mkdir, open as open2, readFile, rename, rm, stat as stat3, writeFile } from "node:fs/promises";
 import { homedir as homedir6 } from "node:os";
 import { join as join15 } from "node:path";
@@ -5589,7 +6218,7 @@ var sha, DERIVED_DIRS;
 var init_store = __esm({
   "node_modules/agent-recall-axi/dist/src/lib/cache/store.js"() {
     init_reader();
-    sha = (data) => createHash3("sha256").update(data).digest("hex");
+    sha = (data) => createHash4("sha256").update(data).digest("hex");
     DERIVED_DIRS = ["index", "stats", "terms"];
   }
 });
@@ -5643,12 +6272,12 @@ function points(table) {
   const last = table.checkpoints[table.checkpoints.length - 1];
   return last && last.seq === table.tail.seq ? table.checkpoints : [...table.checkpoints, table.tail];
 }
-async function fileSize2(path) {
+async function fileSize(path) {
   return (await stat4(path)).size;
 }
 async function tableMatches(table, path) {
   try {
-    const size = await fileSize2(path);
+    const size = await fileSize(path);
     if (size < table.end)
       return false;
     if (table.seq === 0)
@@ -5817,7 +6446,7 @@ async function ensureTable(session, opts) {
     return void 0;
   let size;
   try {
-    size = await fileSize2(session.path);
+    size = await fileSize(session.path);
   } catch {
     return table;
   }
@@ -5884,7 +6513,7 @@ async function hasNewline(path, from, to) {
 async function stateOf(table) {
   let size;
   try {
-    size = await fileSize2(table.path);
+    size = await fileSize(table.path);
   } catch {
     return "missing";
   }
@@ -6024,7 +6653,7 @@ __export(stats_exports, {
   statsFromTable: () => statsFromTable
 });
 import { readFile as readFile3, stat as stat5 } from "node:fs/promises";
-import { dirname as dirname9, join as join17 } from "node:path";
+import { dirname as dirname8, join as join17 } from "node:path";
 function mirrorOf(t) {
   const m = {
     v: MIRROR_VERSION,
@@ -6141,7 +6770,7 @@ async function headHuman(session) {
   return void 0;
 }
 async function indexEntry(session, mtimeMs) {
-  const dir = session.kind === "main" ? session.project?.dir ?? dirname9(session.path) : void 0;
+  const dir = session.kind === "main" ? session.project?.dir ?? dirname8(session.path) : void 0;
   if (!dir)
     return void 0;
   const e = (await readSessionsIndex(dir)).get(session.id);
@@ -6379,15 +7008,15 @@ function comparePosition(a, b) {
     return a.seq - b.seq;
   return (a.block ?? 0) - (b.block ?? 0);
 }
-function expandHome2(value2) {
-  if (value2 === "~")
+function expandHome2(value) {
+  if (value === "~")
     return homedir7();
-  if (value2.startsWith("~/"))
-    return join18(homedir7(), value2.slice(2));
-  return value2;
+  if (value.startsWith("~/"))
+    return join18(homedir7(), value.slice(2));
+  return value;
 }
-function looksLikePath2(ref) {
-  return ref.includes("/") || ref.startsWith(".") || ref.startsWith("~") || ref.endsWith(".jsonl");
+function looksLikePath2(ref2) {
+  return ref2.includes("/") || ref2.startsWith(".") || ref2.startsWith("~") || ref2.endsWith(".jsonl");
 }
 async function isFile(path) {
   try {
@@ -6488,8 +7117,8 @@ async function latest(scope) {
     throw new AgentSessionError(`no sessions in ${whereOf(resolved)}`, "NOT_FOUND", widenHints(resolved, scope));
   return best.s;
 }
-async function resolveSession(ref, scope = {}) {
-  const text = ref.trim();
+async function resolveSession(ref2, scope = {}) {
+  const text = ref2.trim();
   if (!text)
     throw new AgentSessionError("empty <session>", "VALIDATION_ERROR", [SESSION_GRAMMAR]);
   const abs = resolve7(scope.cwd ?? process.cwd(), expandHome2(text));
@@ -6509,8 +7138,8 @@ async function resolveSession(ref, scope = {}) {
   throw new AgentSessionError(`${text} is not a session reference`, "VALIDATION_ERROR", [SESSION_GRAMMAR]);
 }
 function badId(text) {
-  const short = /^([0-9a-f]{1,7}):\d/.exec(text.toLowerCase());
-  if (short) {
+  const short2 = /^([0-9a-f]{1,7}):\d/.exec(text.toLowerCase());
+  if (short2) {
     return new AgentSessionError(`${text} is not an id: the session part needs 8 hex characters`, "VALIDATION_ERROR", [ID_GRAMMAR]);
   }
   return new AgentSessionError(`${text} is not an id`, "VALIDATION_ERROR", [ID_GRAMMAR]);
@@ -6666,23 +7295,23 @@ function startOfLocalDay(y, m, d, tz) {
 function parseWhen(text, opts) {
   const now = opts.now ?? /* @__PURE__ */ new Date();
   const tz = opts.tz;
-  const value2 = text.trim();
+  const value = text.trim();
   const bump = opts.endOfDay ? 1 : 0;
   const fail = () => {
     throw new AgentSessionError(`not a time: ${text}`, "VALIDATION_ERROR", [WHEN_GRAMMAR]);
   };
-  if (value2 === "now")
+  if (value === "now")
     return now;
-  if (value2 === "today" || value2 === "yesterday") {
+  if (value === "today" || value === "yesterday") {
     const p = localParts2(now, tz);
-    const d = addLocalDays(p, (value2 === "yesterday" ? -1 : 0) + bump);
+    const d = addLocalDays(p, (value === "yesterday" ? -1 : 0) + bump);
     return startOfLocalDay(d.year, d.month, d.day, tz);
   }
-  const rel2 = /^([+-])(\d+)([mhdw])$/.exec(value2);
-  if (rel2) {
-    const sign = rel2[1] === "-" ? -1 : 1;
-    const n = Number(rel2[2]) * sign;
-    const unit = rel2[3];
+  const rel = /^([+-])(\d+)([mhdw])$/.exec(value);
+  if (rel) {
+    const sign = rel[1] === "-" ? -1 : 1;
+    const n = Number(rel[2]) * sign;
+    const unit = rel[3];
     if (unit === "d" || unit === "w") {
       const p = localParts2(now, tz);
       const d = addLocalDays(p, n * (unit === "w" ? 7 : 1) + bump);
@@ -6690,7 +7319,7 @@ function parseWhen(text, opts) {
     }
     return new Date(now.getTime() + n * UNIT_MS[unit]);
   }
-  const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value2);
+  const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (date) {
     const [y, m, d] = [Number(date[1]), Number(date[2]), Number(date[3])];
     if (!validDate(y, m, d))
@@ -6698,7 +7327,7 @@ function parseWhen(text, opts) {
     const next3 = addLocalDays({ year: y, month: m, day: d, hour: 0, minute: 0, second: 0 }, bump);
     return startOfLocalDay(next3.year, next3.month, next3.day, tz);
   }
-  const iso2 = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3})\d*)?)?(Z|[+-]\d{2}:?\d{2})?$/.exec(value2);
+  const iso2 = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3})\d*)?)?(Z|[+-]\d{2}:?\d{2})?$/.exec(value);
   if (iso2) {
     const [y, mo, d, h, mi] = [1, 2, 3, 4, 5].map((i) => Number(iso2[i]));
     const s = iso2[6] ? Number(iso2[6]) : 0;
@@ -6820,8 +7449,8 @@ function grammarFor(count2) {
   const k = count2 - 1;
   return `--window takes a 0-based window index (0..${k}), last, k.. (${k}.. runs to the end) or all`;
 }
-function invalid(value2) {
-  return new AgentSessionError(`--window ${String(value2)} is not a window`, "VALIDATION_ERROR", [WINDOW_GRAMMAR]);
+function invalid(value) {
+  return new AgentSessionError(`--window ${String(value)} is not a window`, "VALIDATION_ERROR", [WINDOW_GRAMMAR]);
 }
 function parseWindow(text) {
   const v = text.trim();
@@ -7254,14 +7883,14 @@ async function pan(session, anchor, before, after, includeAnchor, opts, given) {
   for await (const ev of heldEvents(session, held)) {
     if (ev.id.seq > table.seq)
       beyond++;
-    const rel2 = relation(ev.id, anchor);
-    if (rel2 < 0) {
+    const rel = relation(ev.id, anchor);
+    if (rel < 0) {
       if (before > 0) {
         pre.push(ev);
         if (before !== Infinity && pre.length > before * 2 + 64)
           pre = pre.slice(pre.length - before);
       }
-    } else if (rel2 === 0) {
+    } else if (rel === 0) {
       visBeforeAnchor ??= visIdx;
       anchorRows.push(ev);
     } else {
@@ -7273,7 +7902,7 @@ async function pan(session, anchor, before, after, includeAnchor, opts, given) {
         moreAfter = true;
     }
     visIdx++;
-    if (rel2 > 0 && done2())
+    if (rel > 0 && done2())
       break;
   }
   if (!toEnd && anchorSel === void 0)
@@ -7767,16 +8396,16 @@ function compileQuery(q, opts = {}) {
     why.push("kind");
   return out;
 }
-function stringValues(value2, out, depth = 0) {
+function stringValues(value, out, depth = 0) {
   if (depth > 32)
     return out;
-  if (typeof value2 === "string")
-    out.push(value2);
-  else if (Array.isArray(value2))
-    for (const v of value2)
+  if (typeof value === "string")
+    out.push(value);
+  else if (Array.isArray(value))
+    for (const v of value)
       stringValues(v, out, depth + 1);
-  else if (value2 && typeof value2 === "object")
-    for (const v of Object.values(value2))
+  else if (value && typeof value === "object")
+    for (const v of Object.values(value))
       stringValues(v, out, depth + 1);
   return out;
 }
@@ -8058,12 +8687,12 @@ async function* findAcross(scope, q) {
   compileQuery(q);
   const from = acrossFrom(q);
   const { since: _since, limit, ...rest } = q;
-  const query = { ...rest };
+  const query2 = { ...rest };
   if (from)
-    query.from = from;
+    query2.from = from;
   let yielded = 0;
   for (const { session } of (await scopeSessions(scope, from)).sessions) {
-    const hits = await sessionHits(session, query, { lines: 0, malformed: 0, hits: 0 });
+    const hits = await sessionHits(session, query2, { lines: 0, malformed: 0, hits: 0 });
     for (const hit of hits ?? []) {
       yield { ...hit, session };
       if (limit && ++yielded >= limit)
@@ -8076,15 +8705,15 @@ async function findAcrossListing(scope, q, onHit) {
   const from = acrossFrom(q);
   const limit = q.limit ?? 20;
   const { since: _since, limit: _limit, ...rest } = q;
-  const query = { ...rest };
+  const query2 = { ...rest };
   if (from)
-    query.from = from;
+    query2.from = from;
   const scoped = await scopeSessions(scope, from);
   const out = { scope: scoped.scope, hits: [], inContext: [], matching: 0, scanned: { sessions: 0, bytes: 0 }, sessions: [], unreadable: scoped.unreadable };
   if (scoped.firstUnreadable)
     out.firstUnreadable = scoped.firstUnreadable;
   for (const { session, bytes: bytes2 } of scoped.sessions) {
-    const hits = await sessionHits(session, query, { lines: 0, malformed: 0, hits: 0 });
+    const hits = await sessionHits(session, query2, { lines: 0, malformed: 0, hits: 0 });
     if (!hits) {
       out.unreadable++;
       out.firstUnreadable ??= session.path;
@@ -8377,8 +9006,8 @@ var init_resume_layout = __esm({
 });
 
 // node_modules/agent-recall-axi/dist/src/lib/resume.js
-function invalid2(what, value2, grammar) {
-  return new AgentSessionError(`resume-pack ${what} ${String(value2)} is not valid`, "VALIDATION_ERROR", [grammar]);
+function invalid2(what, value, grammar) {
+  return new AgentSessionError(`resume-pack ${what} ${String(value)} is not valid`, "VALIDATION_ERROR", [grammar]);
 }
 function resumeOpts(opts = {}) {
   const window = opts.window ?? "last";
@@ -8761,8 +9390,8 @@ async function recall(phrase, opts = {}) {
   }
   if (!phrase)
     throw new AgentSessionError("recall needs a phrase", "VALIDATION_ERROR", ['e.g. recall("redirect loop")']);
-  const query = { phrase, ...opts.regex ? { regex: true } : {}, ...opts.file !== void 0 ? { file: opts.file } : {}, ...opts.tool !== void 0 ? { tool: opts.tool } : {}, kinds: opts.kinds?.length ? opts.kinds : RECALL_KINDS };
-  const cq = compileQuery(query, { fold: false });
+  const query2 = { phrase, ...opts.regex ? { regex: true } : {}, ...opts.file !== void 0 ? { file: opts.file } : {}, ...opts.tool !== void 0 ? { tool: opts.tool } : {}, kinds: opts.kinds?.length ? opts.kinds : RECALL_KINDS };
+  const cq = compileQuery(query2, { fold: false });
   if (!opts.kinds?.length)
     cq.why = cq.why.filter((w) => w !== "kind");
   const from = opts.since ?? opts.from;
@@ -8973,13 +9602,13 @@ var init_lib = __esm({
 });
 
 // src/opsbot-core/transcript.ts
-import { closeSync, existsSync as existsSync12, openSync, readFileSync as readFileSync9, readSync, statSync as statSync5 } from "node:fs";
+import { closeSync, existsSync as existsSync13, openSync, readFileSync as readFileSync10, readSync, statSync as statSync4 } from "node:fs";
 function readEvents(path, maxBytes = TAIL_BYTES) {
   let text;
   try {
-    if (!existsSync12(path)) return [];
-    const size = statSync5(path).size;
-    if (size <= maxBytes) text = readFileSync9(path, "utf8");
+    if (!existsSync13(path)) return [];
+    const size = statSync4(path).size;
+    if (size <= maxBytes) text = readFileSync10(path, "utf8");
     else {
       const buf = Buffer.allocUnsafe(maxBytes);
       const fd = openSync(path, "r");
@@ -9188,7 +9817,7 @@ var init_transcript = __esm({
 });
 
 // src/opsbot-core/wake.ts
-import { readFileSync as readFileSync10, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "node:fs";
+import { readFileSync as readFileSync11, rmSync as rmSync5, writeFileSync as writeFileSync6 } from "node:fs";
 import { homedir as homedir8 } from "node:os";
 function expandHome3(p) {
   return p.replace(/^~(?=\/|$)/, homedir8());
@@ -9202,7 +9831,7 @@ function wakeInputs(s) {
 function lineCount(file) {
   let buf;
   try {
-    buf = readFileSync10(file);
+    buf = readFileSync11(file);
   } catch {
     return 0;
   }
@@ -9219,19 +9848,19 @@ function recordWakeBase(root, files, counts) {
   const p = gitPath(root, WAKE_BASE_NAME);
   try {
     if (files.length === 0) {
-      rmSync4(p, { force: true });
+      rmSync5(p, { force: true });
       return;
     }
     const lines = {};
     for (const f of files) lines[f] = counts?.[f] ?? lineCount(f);
-    writeFileSync5(p, `${JSON.stringify({ at: nowIso(), lines })}
+    writeFileSync6(p, `${JSON.stringify({ at: nowIso(), lines })}
 `);
   } catch {
   }
 }
 function readWakeRecord(root) {
   try {
-    const v = JSON.parse(readFileSync10(gitPath(root, WAKE_BASE_NAME), "utf8"));
+    const v = JSON.parse(readFileSync11(gitPath(root, WAKE_BASE_NAME), "utf8"));
     const lines = v && typeof v === "object" ? v.lines : null;
     if (!lines || typeof lines !== "object") return null;
     const out = {};
@@ -9335,7 +9964,7 @@ async function wakeWait(files, base, deadlineMs, pollMs = WAKE_POLL_MS) {
     files.forEach((f, i) => {
       let text = "";
       try {
-        text = readFileSync10(f, "utf8");
+        text = readFileSync11(f, "utf8");
       } catch {
         text = "";
       }
@@ -9430,13 +10059,13 @@ var init_wake = __esm({
 });
 
 // src/opsbot-core/sleep.ts
-import { existsSync as existsSync13, readFileSync as readFileSync11, rmSync as rmSync5, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync14, readFileSync as readFileSync12, rmSync as rmSync6, writeFileSync as writeFileSync7 } from "node:fs";
 function sleepFile(root) {
   return gitPath(root, SLEEP_STATE);
 }
 function readSleep(root) {
   try {
-    const v = JSON.parse(readFileSync11(sleepFile(root), "utf8"));
+    const v = JSON.parse(readFileSync12(sleepFile(root), "utf8"));
     return v && typeof v === "object" && typeof v.decided_at === "string" ? v : null;
   } catch {
     return null;
@@ -9446,11 +10075,11 @@ function activeSleep(root, s) {
   return s.sleep ? readSleep(root) : null;
 }
 function writeSleep(root, st) {
-  writeFileSync6(sleepFile(root), `${JSON.stringify(st)}
+  writeFileSync7(sleepFile(root), `${JSON.stringify(st)}
 `);
 }
 function clearSleep(root) {
-  rmSync5(sleepFile(root), { force: true });
+  rmSync6(sleepFile(root), { force: true });
 }
 function wakeLineCounts(s, base = null) {
   return Object.fromEntries(wakeFiles(s).map((f) => [f, baseFor(base, f) ?? lineCount(f)]));
@@ -9680,7 +10309,7 @@ var init_home2 = __esm({
 // src/opsbot-core/args.ts
 function parseArgs(args, spec, usage) {
   const bool = spec.bool ?? [];
-  const value2 = spec.value ?? [];
+  const value = spec.value ?? [];
   const positionals = [];
   const flags = {};
   for (let i = 0; i < args.length; i++) {
@@ -9691,12 +10320,12 @@ function parseArgs(args, spec, usage) {
       if (bool.includes(name)) {
         if (eq > 0) throw usageError(`--${name} takes no value`, usage);
         flags[name] = true;
-      } else if (value2.includes(name)) {
+      } else if (value.includes(name)) {
         const v = eq > 0 ? a.slice(eq + 1) : args[++i];
         if (v === void 0 || eq < 0 && v.startsWith("--")) throw usageError(`--${name} needs a value`, usage);
         flags[name] = v;
       } else {
-        const valid = [...value2, ...bool].map((f) => `--${f}`).join(", ");
+        const valid = [...value, ...bool].map((f) => `--${f}`).join(", ");
         throw usageError(`unknown flag --${name}`, usage, valid ? `valid flags here: ${valid}` : "this command takes no flags");
       }
     } else {
@@ -9734,7 +10363,6 @@ var init_args = __esm({
 });
 
 // src/opsbot-core/commands/check.ts
-import { existsSync as existsSync14, rmSync as rmSync6 } from "node:fs";
 function gateWordIn(text, word) {
   if (!/^[A-Z]{3,}$/.test(word)) return false;
   return new RegExp(`(?<![\\p{L}\\p{N}])${word}(?![\\p{L}\\p{N}])`, "u").test(text ?? "");
@@ -9802,7 +10430,7 @@ function runPeek(root) {
   return r.peek;
 }
 function runCheck(root, opts) {
-  const r = sweep(root, { commit: opts.commit, peek: false, fast: opts.fast ?? null, mode: opts.mode });
+  const r = sweep(root, { commit: opts.commit, peek: false, fast: opts.fast ?? null, mode: opts.mode, core: opts.core ?? [] });
   if (!("check" in r)) throw new Error("unreachable: a check returned a peek");
   return r.check;
 }
@@ -9812,23 +10440,24 @@ function sweep(root, opts) {
     throw new AxiError("no commit at HEAD in this checkout", "CANNOT_RUN", ["Commit opsbot.json first"]);
   }
   const { settings, text } = loadSettings(root);
-  const p = paths(root);
+  const branch = logBranch(root);
   const startMs = nowMs();
   const NOW = iso(startMs);
   const inputs = [];
-  const failed = (input, error, n2 = 0, quiet = 0) => inputs.push({ input, ok: false, new: n2, quiet, error });
+  const failed = (input, error, n = 0, quiet = 0) => inputs.push({ input, ok: false, new: n, quiet, error });
   let wm = readWatermark(root);
   let sinceMs2;
   if (wm !== null && validWatermark(wm)) {
     sinceMs2 = parseIso(wm) - MARGIN_MINUTES * 6e4;
   } else {
-    if (wm !== null) failed("watermark", "the watermark file does not hold one ISO-8601 UTC time");
+    if (wm !== null) failed("watermark", "the log tip's Watermark trailer is not one ISO-8601 UTC time");
     wm = null;
     sinceMs2 = startMs - FIRST_RUN_HOURS * 36e5;
   }
   const SINCE = fast ? fast.since : iso(sinceMs2);
   const seen = readSeen(root);
   const configPath = configSnapshot(root, text);
+  const seenFile = seenFileFor(root, branch);
   const all = discover(root, "heartbeat").scripts;
   const scripts = fast ? all.filter((s) => fast.inputs.includes(s.name)) : all;
   if (scripts.length === 0) {
@@ -9856,7 +10485,7 @@ function sweep(root, opts) {
   for (const s of scripts) {
     const env = baseEnv(root, settings, configPath, "heartbeat", {
       OPSBOT_SINCE: SINCE,
-      OPSBOT_SEEN: p.seen,
+      OPSBOT_SEEN: seenFile,
       OPSBOT_WATERMARK: wm ?? "",
       ...opts.peek ? { OPSBOT_PEEK: "1" } : {}
     });
@@ -9892,74 +10521,36 @@ function sweep(root, opts) {
       } else inputs.push({ input: "routines", ok: true, new: fresh.length, quiet });
     }
   }
+  for (const c of opts.core ?? []) {
+    const { fresh, quiet } = take(c.items.map((it) => ({ ...it, input: c.input })));
+    items.push(...fresh);
+    inputs.push({ input: c.input, ok: true, new: fresh.length, quiet });
+  }
   const NEW = items.length;
   const realInputs = () => inputs.filter((i) => i.input !== "watermark" && i.input !== "commit" && i.input !== "heartbeat.d");
   if (opts.peek) {
     const bad = inputs.filter((i) => !i.ok);
-    const code2 = bad.length ? 20 : NEW > 0 ? 10 : 0;
-    const outcome2 = code2 === 20 ? "degraded" : code2 === 10 ? "new" : "nothing-new";
+    const code = bad.length ? 20 : NEW > 0 ? 10 : 0;
+    const outcome2 = code === 20 ? "degraded" : code === 10 ? "new" : "nothing-new";
     const ats = items.map((it) => typeof it.at === "string" ? parseIso(it.at) : null).filter((t) => t !== null);
-    const n2 = realInputs().length;
-    const line2 = code2 === 0 ? `nothing new \xB7 ${n2} inputs \xB7 nothing recorded` : code2 === 10 ? `new \xB7 ${NEW} new \xB7 ${n2} inputs \xB7 nothing recorded` : `degraded \xB7 ${bad.length} failed \xB7 ${NEW} new \xB7 ${n2} inputs \xB7 nothing recorded`;
-    return { peek: { code: code2, outcome: outcome2, line: line2, inputs, new: NEW, earliest: ats.length ? iso(Math.min(...ats)) : null } };
+    const n = realInputs().length;
+    const line = code === 0 ? `nothing new \xB7 ${n} inputs \xB7 nothing recorded` : code === 10 ? `new \xB7 ${NEW} new \xB7 ${n} inputs \xB7 nothing recorded` : `degraded \xB7 ${bad.length} failed \xB7 ${NEW} new \xB7 ${n} inputs \xB7 nothing recorded`;
+    return { peek: { code, outcome: outcome2, line, inputs, new: NEW, earliest: ats.length ? iso(Math.min(...ats)) : null } };
   }
   const blocked = opts.commit ? blockedBy(root) : null;
   if (blocked) failed("commit", `cannot commit: ${blocked}`);
   const failedList = () => inputs.filter((i) => !i.ok).map((i) => ({ input: i.input, error: i.error ?? "" }));
   let outcome = failedList().length ? "degraded" : NEW > 0 ? "new" : "nothing-new";
-  const logSize = fileSize(p.log);
-  const seenSize = fileSize(p.seen);
-  const oldWm = readWatermark(root);
-  const writeState = () => {
-    appendSeen(root, recorded);
-    if (outcome === "nothing-new" && !fast) writeWatermark(root, NOW);
-    const cur2 = readWatermark(root);
-    const inputsObj = {};
-    for (const i of realInputs()) {
-      inputsObj[i.input] = { ok: i.ok, new: i.new };
-      if (i.quiet > 0) inputsObj[i.input].quiet = i.quiet;
-    }
-    const line2 = {
-      at: NOW,
-      outcome,
-      inputs: inputsObj,
-      new: NEW,
-      failed: failedList(),
-      watermark: cur2 ?? null
-    };
-    if (opts.mode) {
-      line2.check = opts.mode;
-      line2.since = SINCE;
-    }
-    if (fast) line2.fast = true;
-    appendJsonl(p.log, line2);
-  };
-  writeState();
-  if (opts.commit && !blocked) {
-    const subject = outcome === "nothing-new" ? "nothing new" : outcome === "new" ? `${NEW} new` : `degraded, ${NEW} new`;
-    const files = [p.seen, p.log];
-    if (existsSync14(p.watermark)) files.push(p.watermark);
-    if (existsSync14(p.outages)) files.push(p.outages);
-    files.push(...changedCommitPaths(root, settings.commit_paths, files));
-    files.push(...changedMemoryFiles(root, settings, files));
-    files.push(...changedRunFiles(root, settings, files));
-    const why = commitOnly(root, files, `chore(cycle): ${subject}`);
-    if (why) {
-      truncateTo(p.log, logSize);
-      truncateTo(p.seen, seenSize);
-      if (oldWm !== null) writeWatermark(root, oldWm);
-      else rmSync6(p.watermark, { force: true });
-      failed("commit", `cannot commit: ${why}`);
-      outcome = "degraded";
-      writeState();
-    }
-  }
+  return { check: branchState(root, branch, settings, { opts, fast, outcome, inputs, items, recorded, NOW, SINCE, startMs, blocked, failed, failedList, realInputs }) };
+}
+function finishCheck(root, settings, o) {
+  const { outcome, fast, items, NEW, startMs, realInputs, failedList } = o;
   const cur = readWatermark(root);
   const n = realInputs().length;
   const code = outcome === "nothing-new" ? 0 : outcome === "new" ? 10 : 20;
   if (outcome === "nothing-new") {
     const line2 = `nothing new \xB7 ${n} inputs \xB7 watermark ${cur ?? "none"}${fast ? " (held: fast check)" : ""}`;
-    return { check: { code, outcome, line: line2, output: { check: line2 } } };
+    return { code, outcome, line: line2, output: { check: line2 } };
   }
   const fl = failedList();
   const line = outcome === "degraded" ? `degraded \xB7 ${fl.length} failed \xB7 ${NEW} new \xB7 ${n} inputs \xB7 watermark ${cur ?? "none"} (not advanced)` : `new \xB7 ${NEW} new \xB7 ${n} inputs \xB7 watermark ${cur ?? "none"} (not advanced)`;
@@ -9970,7 +10561,61 @@ function sweep(root, opts) {
     output.items = items.map((it, i) => renderItem(it, i + 1, NEW, settings.gate_word, deco.byItem[i]));
     if (deco.failed.length) output.recall = deco.failed;
   }
-  return { check: { code, outcome, line, output } };
+  return { code, outcome, line, output };
+}
+function branchState(root, branch, settings, c) {
+  const { opts, fast, recorded, NOW, SINCE, startMs, failed, failedList, realInputs, items } = c;
+  let outcome = c.outcome;
+  const NEW = items.length;
+  const lineFor = () => {
+    const inputsObj = {};
+    for (const i of realInputs()) {
+      inputsObj[i.input] = { ok: i.ok, new: i.new };
+      if (i.quiet > 0) inputsObj[i.input].quiet = i.quiet;
+    }
+    const line = { at: NOW, outcome, inputs: inputsObj, new: NEW, failed: failedList() };
+    if (opts.mode) {
+      line.check = opts.mode;
+      line.since = SINCE;
+    }
+    if (fast) line.fast = true;
+    return line;
+  };
+  const seen = seenRecords(recorded, NOW);
+  const advance = outcome === "nothing-new" && !fast ? NOW : null;
+  const kind = fast ? "fast" : "full";
+  let program = false;
+  if (!opts.commit) {
+    stage(root, { cycles: [lineFor()], seen, ...advance ? { watermark: advance } : {} });
+  } else {
+    const quiet = outcome === "nothing-new" && recorded.length === 0 && !hasStaged(readPending(root));
+    const subject = outcome === "nothing-new" ? "nothing new" : outcome === "new" ? `${NEW} new` : `degraded, ${NEW} new`;
+    let why = null;
+    if (quiet) {
+      const w = writeQuiet(root, branch, { now: NOW, watermark: advance ?? branchWatermark(root, branch), check: kind, since: SINCE }, startMs, trailers());
+      if (!w.ok) why = w.why;
+    } else if (opts.mode && outcome !== "nothing-new") {
+      stage(root, { cycles: [lineFor()], seen });
+    } else {
+      const w = commitStaged(root, branch, { cycles: [lineFor()], seen }, { subject: `cycle: ${subject}`, watermark: advance ?? void 0, check: kind }, trailers());
+      if (!w.ok) why = w.why;
+    }
+    if (why) {
+      failed("commit", `cannot write the log: ${why}`);
+      outcome = "degraded";
+      stage(root, { cycles: [lineFor()], seen });
+    }
+    if (!c.blocked) {
+      const files = changedMemoryFiles(root, settings);
+      if (files.length) {
+        const w = commitOnly(root, files, "chore(bot): the files the cycle changed");
+        if (w) failed("commit", `cannot commit the program branch's files: ${w}`);
+        else program = true;
+        if (w && outcome !== "degraded") outcome = "degraded";
+      }
+    }
+  }
+  return { ...finishCheck(root, settings, { outcome, fast, items, NEW, startMs, realInputs, failedList }), program };
 }
 function checkCommand(args) {
   const { flags } = parseArgs(args, { bool: ["no-commit", "peek"] }, CHECK_USAGE);
@@ -10003,10 +10648,10 @@ var init_check = __esm({
     init_invocation();
     init_lifecycle();
     init_repo();
+    init_log();
     init_settings();
     init_record();
     init_memory();
-    init_routine_store();
     init_routines();
     init_state();
     MARGIN_MINUTES = 30;
@@ -10016,10 +10661,59 @@ var init_check = __esm({
   }
 });
 
+// src/opsbot-core/sync.ts
+function repoSync(root) {
+  const none = { moved: false, item: null, why: null };
+  const b = git(root, ["symbolic-ref", "--short", "-q", "HEAD"]);
+  if (b.code !== 0) return none;
+  const branch = b.stdout.trim();
+  if (git(root, ["remote", "get-url", "origin"]).code !== 0) return none;
+  const f = run("git", ["-C", root, "fetch", "-q", "--no-tags", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { timeoutMs: FETCH_TIMEOUT_MS });
+  if (f.code !== 0) {
+    const err = f.stderr.split("\n").filter((l) => l.trim()).pop() ?? `exit ${f.code}`;
+    if (/couldn't find remote ref/i.test(f.stderr)) return none;
+    return { ...none, why: `fetch failed: ${err.slice(0, 120)}` };
+  }
+  const head2 = git(root, ["rev-parse", "HEAD"]).stdout.trim();
+  const theirs = git(root, ["rev-parse", "--verify", "-q", `refs/remotes/origin/${branch}`]).stdout.trim();
+  if (!head2 || !theirs || head2 === theirs) return none;
+  if (git(root, ["merge-base", "--is-ancestor", theirs, head2]).code === 0) return none;
+  const behind = git(root, ["merge-base", "--is-ancestor", head2, theirs]).code === 0;
+  let reason;
+  if (behind) {
+    const dirty = git(root, ["status", "--porcelain", "--untracked-files=no"]).stdout.split("\n").filter((l) => l.trim());
+    if (dirty.length === 0) {
+      const m = git(root, ["merge", "--ff-only", "-q", theirs]);
+      if (m.code === 0) return { moved: true, item: null, why: null };
+      reason = `the fast-forward failed: ${(m.stderr.split("\n").find((l) => l.trim()) ?? `exit ${m.code}`).trim().slice(0, 160)}`;
+    } else {
+      const n = dirty.length;
+      reason = `${n} file${n === 1 ? " has" : "s have"} uncommitted changes (${dirty.slice(0, 3).map((l) => l.slice(3)).join(", ")}${n > 3 ? ", \u2026" : ""})`;
+    }
+  } else {
+    reason = "the two have diverged (commits here that the remote does not have)";
+  }
+  const text = `The checkout cannot fast-forward to its remote: ${branch} is at ${short(head2)} here and ${short(theirs)} on origin; ${reason}. The cycle goes on with the program at ${short(head2)}. A person resolves it (commit, push or rebase); it is said again only when origin/${branch} moves.`;
+  return {
+    moved: false,
+    item: { key: `repo-sync:${theirs}`, at: nowIso(), conv: "repo", kind: "repo-sync", from: "opsbot-core", text },
+    why: null
+  };
+}
+var FETCH_TIMEOUT_MS, short;
+var init_sync = __esm({
+  "src/opsbot-core/sync.ts"() {
+    "use strict";
+    init_repo();
+    FETCH_TIMEOUT_MS = 6e4;
+    short = (h) => h.slice(0, 12);
+  }
+});
+
 // src/opsbot-core/commands/coldstart.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync15, mkdirSync as mkdirSync4, readdirSync as readdirSync5, readFileSync as readFileSync12, rmSync as rmSync7, statSync as statSync6, writeFileSync as writeFileSync7 } from "node:fs";
+import { appendFileSync, existsSync as existsSync15, mkdirSync as mkdirSync3, readdirSync as readdirSync5, readFileSync as readFileSync13, rmSync as rmSync7, statSync as statSync5, writeFileSync as writeFileSync8 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
-import { dirname as dirname10, join as join20, resolve as resolve8 } from "node:path";
+import { dirname as dirname9, join as join20, resolve as resolve8 } from "node:path";
 function legacyCacheDir(name) {
   const base = process.env.XDG_CACHE_HOME || join20(homedir9(), ".cache");
   return join20(base, name);
@@ -10027,31 +10721,31 @@ function legacyCacheDir(name) {
 function ensureScratch(root) {
   const dir = join20(root, SCRATCH_DIR);
   const created = !existsSync15(dir);
-  mkdirSync4(dir, { recursive: true });
+  mkdirSync3(dir, { recursive: true });
   const exclude = gitPath(root, "info/exclude");
   let text = "";
   try {
-    text = readFileSync12(exclude, "utf8");
+    text = readFileSync13(exclude, "utf8");
   } catch {
   }
   const present = text.split("\n").some((l) => ["/.scratch", "/.scratch/", ".scratch", ".scratch/"].includes(l.trim()));
   if (!present) {
-    mkdirSync4(dirname10(exclude), { recursive: true });
-    appendFileSync2(exclude, `${text && !text.endsWith("\n") ? "\n" : ""}${SCRATCH_EXCLUDE}
+    mkdirSync3(dirname9(exclude), { recursive: true });
+    appendFileSync(exclude, `${text && !text.endsWith("\n") ? "\n" : ""}${SCRATCH_EXCLUDE}
 `);
   }
   return { dir, exclude, created, excluded: !present };
 }
 function writeSessionPointer(root, p) {
   try {
-    writeFileSync7(gitPath(root, "opsbot-session"), `${JSON.stringify(p)}
+    writeFileSync8(gitPath(root, "opsbot-session"), `${JSON.stringify(p)}
 `);
   } catch {
   }
 }
 function sessionPointer(root) {
   try {
-    const v = JSON.parse(readFileSync12(gitPath(root, "opsbot-session"), "utf8"));
+    const v = JSON.parse(readFileSync13(gitPath(root, "opsbot-session"), "utf8"));
     return v && typeof v.transcript_path === "string" ? v : null;
   } catch {
     return null;
@@ -10150,7 +10844,7 @@ function kitSections(mode, opts = {}) {
     const m = f.match(/^\d+[-_]mode-([a-z]+)\.md$/);
     return !m || m[1] === (mode ?? "strategist");
   }).filter((f) => opts.memory !== false || !/^\d+[-_]memory\.md$/.test(f)).filter((f) => opts.routines === true || !/^\d+[-_]routines\.md$/.test(f)).sort().map((f) => {
-    let text = readFileSync12(join20(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
+    let text = readFileSync13(join20(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
     const m = text.match(/^#\s+(.+)$/m);
     const title = m ? m[1].trim() : f.replace(/^\d+[-_]/, "").replace(/\.md$/, "");
     if (m) text = text.replace(m[0], "").replace(/^\n+/, "");
@@ -10284,9 +10978,9 @@ async function coldStartCommand(args) {
   if (!flags.write) return pack.replace(/\n$/, "");
   ensureScratch(root);
   const { dir, pack: packFile, pending } = packPaths(root);
-  mkdirSync4(dir, { recursive: true });
-  writeFileSync7(packFile, pack);
-  writeFileSync7(pending, `${nowIso()}
+  mkdirSync3(dir, { recursive: true });
+  writeFileSync8(packFile, pack);
+  writeFileSync8(pending, `${nowIso()}
 `);
   try {
     rmSync7(legacyPackPaths(s.name).pending, { force: true });
@@ -10322,7 +11016,7 @@ async function gateCommand(args) {
   if (!existsSync15(pending)) return { gate: "open" };
   let packSize = 0;
   try {
-    packSize = statSync6(pack).size;
+    packSize = statSync5(pack).size;
   } catch {
     packSize = 0;
   }
@@ -10380,7 +11074,7 @@ var init_coldstart = __esm({
 
 // src/opsbot-core/commands/start.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
-import { mkdirSync as mkdirSync5 } from "node:fs";
+import { mkdirSync as mkdirSync4 } from "node:fs";
 function autocompactTokens(v) {
   if (!v) return null;
   const m = String(v).trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*([km]?)$/);
@@ -10427,7 +11121,7 @@ function startCommand(args) {
   const memory = memoryDir(root, s) ?? false;
   const argv = startArgv(s, { cont: flags["continue"] === true, extra, loopSession: readLoopSession(root), memory });
   if (flags["dry-run"]) return { start: "would run", cwd: root, argv };
-  if (memory) mkdirSync5(memory, { recursive: true });
+  if (memory) mkdirSync4(memory, { recursive: true });
   const window = autocompactTokens(s.loop.autocompact);
   const env = { ...process.env, ...window ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) } : {}, ...memorySettings(memory).env };
   if (memory) delete env.CLAUDE_CODE_DISABLE_AUTO_MEMORY;
@@ -10451,7 +11145,7 @@ var init_start = __esm({
 });
 
 // src/opsbot-core/drift.ts
-import { readFileSync as readFileSync13, writeFileSync as writeFileSync8 } from "node:fs";
+import { readFileSync as readFileSync14, writeFileSync as writeFileSync9 } from "node:fs";
 function modelMatches(want, have) {
   const w = cls(want);
   const h = cls(have);
@@ -10478,19 +11172,19 @@ ${lines.join("\n")}
 `;
   let prev2 = "";
   try {
-    prev2 = readFileSync13(marker, "utf8");
+    prev2 = readFileSync14(marker, "utf8");
   } catch {
   }
   if (lines.length === 0) {
     if (prev2) try {
-      writeFileSync8(marker, "");
+      writeFileSync9(marker, "");
     } catch {
     }
     return [];
   }
   if (prev2 === sig) return [];
   try {
-    writeFileSync8(marker, sig);
+    writeFileSync9(marker, sig);
   } catch {
   }
   return [
@@ -10572,7 +11266,17 @@ var init_fast = __esm({
 });
 
 // src/opsbot-core/commands/cycle.ts
-import { existsSync as existsSync16, rmSync as rmSync8 } from "node:fs";
+function refusedPush(root, s, checkLine, pushed) {
+  setExit(20);
+  return {
+    cycle: `degraded \xB7 ${pushed.why} \xB7 ${checkLine}`,
+    failed: [{ input: "log push", error: pushed.why ?? "refused" }],
+    help: [
+      "Find the other host running this bot and stop one of them; the log's commits stay on this host's branch",
+      `Then \`${cliInvocation()} cycle end --records 0 --degraded\``
+    ]
+  };
+}
 function next2(root, s) {
   return delayLine(nextDelay(s, readCycleLog(root), nowMs()));
 }
@@ -10623,7 +11327,9 @@ function wait(root, s, who) {
 }
 function cycleBegin(forceFull) {
   const root = requireRoot();
-  const { settings, text } = loadSettings(root);
+  const writer = logWriter(root);
+  if ("notMigrated" in writer) throw notMigratedError(root, writer.notMigrated);
+  let { settings, text } = loadSettings(root);
   const blocked = blockedBy(root);
   if (blocked) return wait(root, settings, blocked);
   const verdict = judgeLock(root, settings.lock_max_minutes);
@@ -10654,7 +11360,7 @@ function cycleBegin(forceFull) {
   }
   if (slept) {
     clearSleep(root);
-    appendJsonl(paths(root).log, wakeLogLine(slept, nowMs()));
+    appendCycleLine(root, wakeLogLine(slept, nowMs()));
   }
   const files = wakeFiles(settings);
   const counts = wakeCounts(files);
@@ -10668,23 +11374,50 @@ function cycleBegin(forceFull) {
     watermark: readWatermark(root),
     now: nowMs()
   });
+  const core = [];
+  let unsynced = null;
+  if (settings.repo_sync === "pull" && !decision.fast) {
+    const sync = repoSync(root);
+    if (sync.item) core.push({ input: "repo-sync", items: [sync.item] });
+    unsynced = sync.why;
+    if (sync.moved) {
+      try {
+        forgetLogBranch();
+        logBranch(root);
+        ({ settings, text } = loadSettings(root));
+      } catch (e) {
+        releaseLock(root);
+        throw e;
+      }
+    }
+  }
   const configPath = configSnapshot(root, text);
   for (const s of discover(root, "cycle.begin").scripts) {
     if (decision.fast && !s.name.endsWith(".fast")) continue;
     const r2 = runScript(s, root, baseEnv(root, settings, configPath, "cycle.begin"));
     if (r2.code !== 0) {
       const error = `exit ${r2.code}: ${firstLine(r2.stderr) || firstLine(r2.stdout) || "no message"}`;
-      appendJsonl(paths(root).log, {
+      const failLine = {
         at: nowIso(),
         outcome: "degraded",
         inputs: {},
         new: 0,
         failed: [{ input: `cycle.d/begin/${s.name}`, error }],
         watermark: readWatermark(root)
-      });
+      };
+      const branch2 = logBranch(root);
+      let unwritten = "";
+      const w = commitStaged(root, branch2, { cycles: [failLine] }, { subject: `cycle: cycle.d/begin/${s.name} failed` }, trailers());
+      if (!w.ok) {
+        stage(root, { cycles: [failLine] });
+        unwritten = ` \xB7 not yet on the log branch: ${w.why}`;
+      } else {
+        const pushed = pushLog(root, branch2, nowMs());
+        if (pushed.why && pushed.why !== "no remote named origin") unwritten = ` \xB7 ${pushed.why}`;
+      }
       setExit(20);
       return {
-        cycle: `degraded \xB7 cycle.d/begin/${s.name} failed, so the check did not run \xB7 ${error}`,
+        cycle: `degraded \xB7 cycle.d/begin/${s.name} failed, so the check did not run \xB7 ${error}${unwritten}`,
         help: [`Fix what it reports, then run \`${cliInvocation()} cycle end --records 0 --degraded\` to release the checkout`]
       };
     }
@@ -10694,7 +11427,7 @@ function cycleBegin(forceFull) {
   process.env.OPSBOT_COMMIT_TRAILERS = trailers();
   let r;
   try {
-    r = runCheck(root, { commit: true, fast: decision.fast ? { inputs: decision.inputs, since: decision.since } : null, mode: decision.mode });
+    r = runCheck(root, { commit: true, fast: decision.fast ? { inputs: decision.inputs, since: decision.since } : null, mode: decision.mode, core });
   } catch (e) {
     setExit(20);
     return {
@@ -10706,22 +11439,18 @@ function cycleBegin(forceFull) {
     else process.env.OPSBOT_COMMIT_TRAILERS = prev2;
   }
   const fastLine = decision.fast ? `${decision.inputs.join(", ")}; full check due ${hhmm4(decision.fullDue)}` : null;
+  const branch = logBranch(root);
   if (r.code === 0) {
     let sleep = sleepDecision(root, settings, text, "cycle begin");
-    if (sleep) {
-      const p = paths(root);
-      const size = fileSize(p.log);
-      appendJsonl(p.log, sleepLogLine(sleep));
-      if (commitOnly(root, [p.log], "chore(cycle): sleep") === null) writeSleep(root, sleep);
-      else {
-        truncateTo(p.log, size);
-        sleep = null;
-      }
-    }
-    const why = pushCommits(root);
+    if (sleep && !commitStaged(root, branch, { cycles: [sleepLogLine(sleep)] }, { subject: "cycle: sleep" }, trailers()).ok) sleep = null;
+    if (sleep) writeSleep(root, sleep);
+    const pushed = pushLog(root, branch, nowMs());
+    if (pushed.refused) return refusedPush(root, settings, r.line, pushed);
+    const prog = r.program ? pushCommits(root) : null;
+    const why = [pushed.why, prog].filter(Boolean).join("; ") || null;
     releaseLock(root);
     setExit(0);
-    const out = { cycle: `${r.line}${why ? ` \xB7 not pushed: ${why}` : ""} \xB7 next ${next2(root, settings)}` };
+    const out = { cycle: `${r.line}${why ? ` \xB7 not pushed: ${why}` : ""}${unsynced ? ` \xB7 not pulled: ${unsynced}` : ""} \xB7 next ${next2(root, settings)}` };
     if (fastLine) out.fast = fastLine;
     const wake3 = sleep ? [] : wakeReport(root, settings, true);
     if (sleep) out.sleep = sleepFieldLines(settings, sleep);
@@ -10733,7 +11462,7 @@ function cycleBegin(forceFull) {
   setExit(r.code);
   const { check: checkLine, ...rest } = r.output;
   const held = {
-    check: checkLine,
+    check: unsynced ? `${String(checkLine)} \xB7 not pulled: ${unsynced}` : checkLine,
     ...fastLine ? { fast: fastLine } : {},
     ...rest,
     help: [
@@ -10755,10 +11484,10 @@ function cycleEnd(args) {
   const summary = typeof flags.summary === "string" ? flags.summary : void 0;
   const root = requireRoot();
   const { settings, text } = loadSettings(root);
-  const p = paths(root);
-  const refuse = (why2) => {
+  const branch = logBranch(root);
+  const refuse = (why) => {
     releaseLock(root);
-    throw new AxiError(`refused: ${why2}; nothing written, the checkout released`, "REFUSED", [
+    throw new AxiError(`refused: ${why}; nothing written, the checkout released`, "REFUSED", [
       `Run \`${cliInvocation()} cycle begin\` to start a cycle with a check`
     ]);
   };
@@ -10807,43 +11536,50 @@ function cycleEnd(args) {
     if (r.code !== 0) {
       notes.push(`cycle.d/end/${s.name} failed, exit ${r.code}: ${firstLine(r.stderr) || "no message"}`);
     }
-    for (const line2 of r.stdout.split("\n")) if (line2.trim()) notes.push(line2);
+    for (const line of r.stdout.split("\n")) if (line.trim()) notes.push(line);
   }
-  const logSize = fileSize(p.log);
-  if (!degraded && wm) writeWatermark(root, wm);
-  const line = {
-    at: nowIso(),
-    outcome: "finished",
-    records,
-    watermark: wm ?? null,
-    degraded
-  };
+  return cycleEndBranch(root, settings, text, branch, { records, degraded, summary, wm, holdAt, notes, checkKind: lastCheckKind(root, holdAt) });
+}
+function lastCheckKind(root, holdAt) {
+  let kind = "full";
+  for (const l of readCycleLog(root)) {
+    if (["new", "degraded", "nothing-new"].includes(l.outcome) && l.at >= holdAt) kind = l.fast === true ? "fast" : "full";
+  }
+  return kind;
+}
+function cycleEndBranch(root, settings, text, branch, o) {
+  const { records, degraded, summary, wm, holdAt, notes } = o;
+  const line = { at: nowIso(), outcome: "finished", records, degraded };
   if (summary !== void 0) line.summary = summary;
-  appendJsonl(p.log, line);
+  stage(root, { cycles: [line] });
   const arrived = arrivals(root, settings, holdAt);
   const sleep = arrived.length ? null : sleepDecision(root, settings, text, "cycle end");
-  if (sleep) appendJsonl(p.log, sleepLogLine(sleep));
-  const files = [p.log];
-  if (existsSync16(p.watermark)) files.push(p.watermark);
-  if (existsSync16(p.outages)) files.push(p.outages);
-  files.push(...changedCommitPaths(root, settings.commit_paths, files));
-  files.push(...changedMemoryFiles(root, settings, files));
-  files.push(...changedRunFiles(root, settings, files));
-  const why = commitOnly(root, files, `chore(cycle): finished, ${records} records`);
-  if (why) {
-    truncateTo(p.log, logSize);
-    if (oldWm) writeWatermark(root, oldWm);
-    else if (!degraded) rmSync8(p.watermark, { force: true });
-    throw new AxiError(`cannot commit the cycle log (${why}); nothing written, the checkout still held`, "CANNOT_COMMIT", [
-      "Fix the repo, then run cycle end again"
+  const w = commitStaged(root, branch, sleep ? { cycles: [sleepLogLine(sleep)] } : {}, { subject: `cycle: finished, ${records} records`, watermark: wm, check: o.checkKind }, trailers());
+  if (!w.ok) {
+    dropStaged(root, { cycles: [line] });
+    throw new AxiError(`cannot write the cycle to the log branch ${branch} (${w.why}); nothing written, the checkout still held`, "CANNOT_COMMIT", [
+      "Fix it, then run cycle end again"
     ]);
   }
   if (sleep) writeSleep(root, sleep);
-  const pushed = pushCommits(root);
+  const files = changedMemoryFiles(root, settings);
+  const progWhy = files.length ? commitOnly(root, files, "chore(bot): the files the cycle changed") : null;
+  const prog = files.length && !progWhy ? pushCommits(root) : null;
+  const pushed = pushLog(root, branch, nowMs());
   releaseLock(root);
+  const not = [pushed.refused ? null : pushed.why, progWhy ? `the program branch's files not committed: ${progWhy}` : null, prog].filter(Boolean);
   const out = {
-    cycle: `finished \xB7 ${records} records \xB7 watermark ${wm ?? "none"}${degraded ? " (held: degraded)" : ""}${pushed ? ` \xB7 not pushed: ${pushed}` : ""}`
+    cycle: `finished \xB7 ${records} records \xB7 watermark ${wm ?? "none"}${degraded ? " (held: degraded)" : ""}${not.length ? ` \xB7 not pushed: ${not.join("; ")}` : ""}`
   };
+  if (pushed.refused) {
+    setExit(20);
+    out.cycle = `${String(out.cycle)} \xB7 degraded: ${pushed.why}`;
+    out.failed = [{ input: "log push", error: pushed.why }];
+  }
+  return closing(root, settings, out, { notes, arrived, sleep });
+}
+function closing(root, settings, out, o) {
+  const { notes, arrived, sleep } = o;
   if (notes.length) out.notes = notes;
   const recall2 = cycleEndRecall(root, settings);
   if (recall2.length) out.recall = recall2;
@@ -10894,10 +11630,11 @@ var init_cycle = __esm({
     init_lifecycle();
     init_repo();
     init_settings();
+    init_log();
     init_state();
     init_check();
     init_memory();
-    init_routine_store();
+    init_sync();
     init_routines();
     init_coldstart();
     init_transcript();
@@ -10968,7 +11705,7 @@ var init_outage = __esm({
 });
 
 // src/opsbot-core/runtime.ts
-import { appendFileSync as appendFileSync3, readFileSync as readFileSync14 } from "node:fs";
+import { appendFileSync as appendFileSync2, readFileSync as readFileSync15 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
 import { join as join21 } from "node:path";
 function normStatus(s) {
@@ -10997,8 +11734,8 @@ function pickAgent(agents, agent, root) {
   };
   const byName = rows.find((a) => a.name === agent);
   if (byName) return hit(byName, "name");
-  const norm = (p) => String(p ?? "").replace(/\/+$/, "");
-  const byCwd = rows.filter((a) => norm(a.cwd) === norm(root));
+  const norm2 = (p) => String(p ?? "").replace(/\/+$/, "");
+  const byCwd = rows.filter((a) => norm2(a.cwd) === norm2(root));
   if (byCwd.length === 1) return hit(byCwd[0], "cwd");
   return null;
 }
@@ -11031,7 +11768,7 @@ ${r.stdout}`) };
 function fakeAdapter(file) {
   const state = () => {
     try {
-      return JSON.parse(readFileSync14(file, "utf8"));
+      return JSON.parse(readFileSync15(file, "utf8"));
     } catch {
       return {};
     }
@@ -11048,7 +11785,7 @@ function fakeAdapter(file) {
     prompt(_agent, text) {
       const e = state().prompt_error;
       if (e) return { ok: false, code: String(e.code ?? "error"), message: String(e.message ?? "") };
-      appendFileSync3(`${file}.prompts`, `${JSON.stringify(text)}
+      appendFileSync2(`${file}.prompts`, `${JSON.stringify(text)}
 `);
       return { ok: true };
     }
@@ -11090,7 +11827,7 @@ ${r.stdout}`) };
 });
 
 // src/opsbot-core/commands/liveness.ts
-import { existsSync as existsSync17, readFileSync as readFileSync15, rmSync as rmSync9, statSync as statSync7, writeFileSync as writeFileSync9 } from "node:fs";
+import { existsSync as existsSync16, readFileSync as readFileSync16, rmSync as rmSync8, statSync as statSync6, writeFileSync as writeFileSync10 } from "node:fs";
 function watchdogCommand(args) {
   const { flags } = parseArgs(args, { bool: ["dry-run"] }, "watchdog [--dry-run]");
   const dry = flags["dry-run"] === true;
@@ -11100,14 +11837,15 @@ function watchdogCommand(args) {
   const watch = settings.liveness.watchdog_minutes;
   const told = gitPath(root, "opsbot-watchdog");
   const blocked = blockedBy(root);
-  const lines = readCycleLog(root);
-  const last = lastCycleAt(lines);
+  const last = lastCycleTime(root);
+  let linesRead = null;
+  const lines = () => linesRead ??= readCycleLog(root);
   const open5 = openOutage(root);
   const asleep = activeSleep(root, settings);
   if (asleep) {
     const said = `asleep \xB7 ${sleepStatusLine(settings, asleep)}; the sleep timer watches`;
     if (open5 && last && last > open5 && !blocked && !dry) {
-      const resumed = lines.find((l) => CYCLE_OUTCOMES.includes(l.outcome) && l.at > open5)?.at ?? last;
+      const resumed = lines().find((l) => CYCLE_OUTCOMES.includes(l.outcome) && l.at > open5)?.at ?? last;
       recordOutageEnd(root, open5, resumed);
       return { watchdog: `${said} \xB7 outage from ${open5} ended ${resumed}` };
     }
@@ -11116,7 +11854,7 @@ function watchdogCommand(args) {
   const gap = last ? now - (parseIso(last) ?? now) : null;
   if (gap !== null && gap < watch * 6e4) {
     if (open5 && last > open5) {
-      const resumed = lines.find((l) => CYCLE_OUTCOMES.includes(l.outcome) && l.at > open5)?.at ?? last;
+      const resumed = lines().find((l) => CYCLE_OUTCOMES.includes(l.outcome) && l.at > open5)?.at ?? last;
       if (blocked) return { watchdog: `alive \xB7 last cycle ${last} \xB7 the outage from ${open5} ended at ${resumed}; not recorded while ${blocked}` };
       if (dry) return { watchdog: `alive \xB7 would record the end of the outage from ${open5} at ${resumed}` };
       recordOutageEnd(root, open5, resumed);
@@ -11125,7 +11863,7 @@ function watchdogCommand(args) {
     return { watchdog: `alive \xB7 last cycle ${last}, ${Math.floor(gap / 6e4)} min ago` };
   }
   const started = last ?? "never";
-  if (existsSync17(told) && readFileSync15(told, "utf8").split("\n")[0] === started) {
+  if (existsSync16(told) && readFileSync16(told, "utf8").split("\n")[0] === started) {
     return { watchdog: `stopped since ${started} \xB7 the operator already told` };
   }
   const seen = [];
@@ -11141,6 +11879,8 @@ function watchdogCommand(args) {
   } else if (found2.code === "agent_not_found") {
     seen.push(`The runtime has no agent named ${settings.runtime.agent}, so the session itself is not running.`);
   }
+  const hook = lastHookFailure(lines());
+  if (hook) seen.push(`The last cycle to begin stopped at its hook: ${hook}.`);
   if (seen.length === 0) seen.push("Nothing outside the session shows why.");
   const first = last ? `${settings.mark} ${settings.name} has logged no cycle since ${humanTime(parseIso(last), settings.timezone)}, over ${watch} minutes ago, so nothing is being read or answered.` : `${settings.mark} ${settings.name} has never logged a cycle in this checkout, so nothing is being read or answered.`;
   const message = [first, ...seen, "The watchdog will not repeat this for the same stop."].join("\n");
@@ -11158,7 +11898,7 @@ function watchdogCommand(args) {
     setExit(1);
     return { watchdog: `stopped since ${started} \xB7 cannot tell the operator: every escalation script failed`, escalations: results };
   }
-  writeFileSync9(told, `${started}
+  writeFileSync10(told, `${started}
 `);
   if (blocked) {
     return { watchdog: `stopped since ${started} \xB7 the operator told \xB7 outage not recorded while ${blocked}`, escalations: results };
@@ -11171,6 +11911,18 @@ function watchdogCommand(args) {
     });
   }
   return { watchdog: `stopped since ${started} \xB7 the operator told \xB7 outage recorded`, escalations: results };
+}
+function lastHookFailure(lines) {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i];
+    if (!["nothing-new", "new", "degraded"].includes(l.outcome)) continue;
+    const f = Array.isArray(l.failed) ? l.failed[0] : void 0;
+    if (l.outcome === "degraded" && f && typeof f.input === "string" && f.input.startsWith("cycle.d/begin/")) {
+      return `${f.input} at ${l.at}, ${String(f.error ?? "no message")}`;
+    }
+    return null;
+  }
+  return null;
 }
 function escalate(root, settings, text, message) {
   const scripts = discover(root, "escalate").scripts;
@@ -11213,13 +11965,13 @@ function claimMarker(marker) {
   const f = `${marker}.claim`;
   for (let i = 0; i < 2; i++) {
     try {
-      writeFileSync9(f, `${process.pid}
+      writeFileSync10(f, `${process.pid}
 `, { flag: "wx" });
-      return () => rmSync9(f, { force: true });
+      return () => rmSync8(f, { force: true });
     } catch {
       try {
-        if (Date.now() - statSync7(f).mtimeMs > 6e4) {
-          rmSync9(f, { force: true });
+        if (Date.now() - statSync6(f).mtimeMs > 6e4) {
+          rmSync8(f, { force: true });
           continue;
         }
       } catch {
@@ -11252,7 +12004,7 @@ function nudgeReply(args) {
   if (v.state === "held") return { nudge: `nothing \xB7 a cycle holds the checkout since ${v.hold.started}` };
   const blocked = blockedBy(root);
   if (blocked) return { nudge: `nothing \xB7 ${blocked}` };
-  const last = lastCycleAt(readCycleLog(root));
+  const last = lastCycleTime(root);
   if (!wake2 && last && now - (parseIso(last) ?? 0) < quiet * 6e4) {
     return { nudge: `nothing \xB7 last cycle ${last}` };
   }
@@ -11267,8 +12019,8 @@ function nudgeReply(args) {
 }
 function nudgeClaimed(root, settings, o) {
   const { wake: wake2, reason, dry, agent, line, now, cooldown, marker, asleep, firstWake } = o;
-  if (existsSync17(marker) && !firstWake) {
-    const [prev2, why] = readFileSync15(marker, "utf8").split("\n");
+  if (existsSync16(marker) && !firstWake) {
+    const [prev2, why] = readFileSync16(marker, "utf8").split("\n");
     if (prev2 && /^\d+$/.test(prev2) && now - Number(prev2) * 1e3 < cooldown * 6e4) {
       const ago = Math.floor((now - Number(prev2) * 1e3) / 6e4);
       return { nudge: wake2 ? `nothing \xB7 woke ${ago} min ago${why ? ` for: ${why}` : ""}` : `nothing \xB7 nudged ${ago} min ago and no cycle since`, outcome: "cooldown" };
@@ -11293,11 +12045,11 @@ ${reason}
     writeSleep(root, { ...asleep, woken: { at, reason: `nudge --now${reason ? `: ${reason}` : ""}`, event_at: at, sent: true } });
   }
   if (!r.ok) {
-    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") writeFileSync9(marker, stamp);
+    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") writeFileSync10(marker, stamp);
     setExit(1);
     return { nudge: `cannot \xB7 ${rt.name} prompt ${agent}: ${r.code}: ${r.message}` };
   }
-  writeFileSync9(marker, stamp);
+  writeFileSync10(marker, stamp);
   return { nudge: `${wake2 ? `woke ${agent}${reason ? ` for: ${reason}` : ""}` : `nudged ${agent}: ${line}`}${via}`, at: nowIso() };
 }
 var init_liveness = __esm({
@@ -11317,7 +12069,7 @@ var init_liveness = __esm({
 });
 
 // src/opsbot-core/commands/infra.ts
-import { existsSync as existsSync18, mkdirSync as mkdirSync6, readFileSync as readFileSync16, readdirSync as readdirSync6, rmSync as rmSync10, writeFileSync as writeFileSync10 } from "node:fs";
+import { existsSync as existsSync17, mkdirSync as mkdirSync5, readFileSync as readFileSync17, readdirSync as readdirSync6, rmSync as rmSync9, writeFileSync as writeFileSync11 } from "node:fs";
 import { homedir as homedir11 } from "node:os";
 import { join as join22 } from "node:path";
 function unitDir() {
@@ -11331,12 +12083,12 @@ function templatesDir() {
 }
 function template(name) {
   const p = join22(templatesDir(), name);
-  if (!existsSync18(p)) {
+  if (!existsSync17(p)) {
     throw new AxiError(`the unit template ${name} is missing from ${templatesDir()}`, "CANNOT_RUN", [
       "Reinstall the skill: npx skills add JarvusInnovations/opsbots --skill opsbot-core"
     ]);
   }
-  return readFileSync16(p, "utf8");
+  return readFileSync17(p, "utf8");
 }
 function fill(t, vars) {
   return t.replace(/@([A-Z_]+)@/g, (m, k) => k in vars ? vars[k] : m);
@@ -11401,7 +12153,7 @@ function systemctl(args) {
 }
 function installed(s) {
   const dir = unitDir();
-  if (!existsSync18(dir)) return [];
+  if (!existsSync17(dir)) return [];
   return readdirSync6(dir).filter((f) => f.startsWith(prefix(s))).sort();
 }
 function infraCommand(args) {
@@ -11419,7 +12171,7 @@ function infraCommand(args) {
     const want = new Set(units.map((u) => u.file));
     const rows = units.map((u) => {
       const p = join22(dir, u.file);
-      const state = !existsSync18(p) ? "missing" : samePathless(readFileSync16(p, "utf8"), u.content) ? "current" : "stale";
+      const state = !existsSync17(p) ? "missing" : samePathless(readFileSync17(p, "utf8"), u.content) ? "current" : "stale";
       let active = "-";
       if (u.enable && state !== "missing") {
         const r = systemctl(["is-active", u.file]);
@@ -11460,12 +12212,12 @@ function infraCommand(args) {
         units: units.map((u) => ({ unit: u.file, content: u.content }))
       };
     }
-    mkdirSync6(dir, { recursive: true });
+    mkdirSync5(dir, { recursive: true });
     if (stale.length) {
       systemctl(["disable", "--now", ...stale]);
-      for (const f of stale) rmSync10(join22(dir, f), { force: true });
+      for (const f of stale) rmSync9(join22(dir, f), { force: true });
     }
-    for (const u of units) writeFileSync10(join22(dir, u.file), u.content);
+    for (const u of units) writeFileSync11(join22(dir, u.file), u.content);
     const steps = [];
     const reload2 = systemctl(["daemon-reload"]);
     steps.push({ step: "daemon-reload", ok: reload2.ok, detail: firstLine(reload2.out) });
@@ -11482,7 +12234,7 @@ function infraCommand(args) {
   if (files.length === 0) return { infra: `no ${prefix(settings)}* units installed (no-op)` };
   if (dry) return { infra: `would disable and remove ${files.length} units from ${dir}`, units: files };
   const dis = systemctl(["disable", "--now", ...files]);
-  for (const f of files) rmSync10(join22(dir, f), { force: true });
+  for (const f of files) rmSync9(join22(dir, f), { force: true });
   const reload = systemctl(["daemon-reload"]);
   if (!reload.ok) setExit(1);
   return {
@@ -11510,9 +12262,9 @@ var init_infra = __esm({
 });
 
 // src/opsbot-core/commands/hook.ts
-import { existsSync as existsSync19, mkdirSync as mkdirSync7, readFileSync as readFileSync17, writeFileSync as writeFileSync11 } from "node:fs";
+import { existsSync as existsSync18, mkdirSync as mkdirSync6, readFileSync as readFileSync18, writeFileSync as writeFileSync12 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
-import { dirname as dirname11, join as join23, relative as relative4 } from "node:path";
+import { dirname as dirname10, join as join23, relative as relative4 } from "node:path";
 function settingsPath(scope, dir) {
   if (scope === "global") return join23(homedir12(), ".claude", "settings.json");
   return join23(dir, ".claude", "settings.json");
@@ -11520,22 +12272,22 @@ function settingsPath(scope, dir) {
 function hookBase(scope, dir) {
   const shim = shimPath();
   if (scope === "project" && dir) {
-    const rel2 = relative4(dir, shim);
-    if (!rel2.startsWith("..") && !rel2.startsWith("/")) return `"\${CLAUDE_PROJECT_DIR}/${rel2}"`;
+    const rel = relative4(dir, shim);
+    if (!rel.startsWith("..") && !rel.startsWith("/")) return `"\${CLAUDE_PROJECT_DIR}/${rel}"`;
   }
   return JSON.stringify(shim);
 }
 function readSettings(p) {
-  if (!existsSync19(p)) return {};
+  if (!existsSync18(p)) return {};
   try {
-    return JSON.parse(readFileSync17(p, "utf8"));
+    return JSON.parse(readFileSync18(p, "utf8"));
   } catch {
     throw new AxiError(`${p} is not valid JSON; not touching it`, "CANNOT_RUN", ["Fix the file by hand, then run hook install again"]);
   }
 }
 function writeSettings(p, s) {
-  mkdirSync7(dirname11(p), { recursive: true });
-  writeFileSync11(p, `${JSON.stringify(s, null, 2)}
+  mkdirSync6(dirname10(p), { recursive: true });
+  writeFileSync12(p, `${JSON.stringify(s, null, 2)}
 `);
 }
 function upsertPreTool(settings, command) {
@@ -11640,7 +12392,7 @@ var init_hook = __esm({
 });
 
 // src/opsbot-core/commands/sleep.ts
-import { statSync as statSync8 } from "node:fs";
+import { statSync as statSync7 } from "node:fs";
 import { basename as basename8 } from "node:path";
 function wakePrompt(s, reason) {
   return `${s.loop.prompt} (woken: ${reason})`;
@@ -11808,7 +12560,7 @@ var init_sleep2 = __esm({
     COMPACT = "/compact";
     mtime = (f) => {
       try {
-        return iso(statSync8(f).mtimeMs);
+        return iso(statSync7(f).mtimeMs);
       } catch {
         return null;
       }
@@ -11817,8 +12569,8 @@ var init_sleep2 = __esm({
 });
 
 // src/opsbot-core/commands/memory.ts
-import { copyFileSync, existsSync as existsSync20, mkdirSync as mkdirSync8, readdirSync as readdirSync7, readFileSync as readFileSync18, statSync as statSync9, writeFileSync as writeFileSync12 } from "node:fs";
-import { dirname as dirname12, join as join24, resolve as resolve9 } from "node:path";
+import { copyFileSync, existsSync as existsSync19, mkdirSync as mkdirSync7, readdirSync as readdirSync7, readFileSync as readFileSync19, statSync as statSync8, writeFileSync as writeFileSync13 } from "node:fs";
+import { dirname as dirname11, join as join24, resolve as resolve9 } from "node:path";
 function settingsFor(root) {
   try {
     return loadSettings(root).settings;
@@ -11867,11 +12619,11 @@ function protocolLines() {
   const dir = process.env.OPSBOT_PACK_DIR || join24(skillDir(), "references", "pack");
   const f = join24(dir, "50-memory.md");
   const alt = join24(skillDir(), PACK_SECTION);
-  const file = existsSync20(f) ? f : existsSync20(alt) ? alt : null;
+  const file = existsSync19(f) ? f : existsSync19(alt) ? alt : null;
   if (!file) return [`(the protocol is in ${join24(skillDir(), GUIDE)})`];
   const items = [];
   let cur = null;
-  const body = readFileSync18(file, "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "").replace(/^#\s+.+\n+/m, "");
+  const body = readFileSync19(file, "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "").replace(/^#\s+.+\n+/m, "");
   for (const line of body.split("\n")) {
     const t = line.trim();
     if (!t) {
@@ -11942,7 +12694,7 @@ ${counts}` : counts,
     checked: [],
     handed_to: null
   });
-  appendJsonl(paths(root).log, line);
+  appendCycleLine(root, line);
   clearSnapshot(root);
   const out = {
     review: `done \xB7 ${counts}`,
@@ -11964,18 +12716,18 @@ function planImport(src, dest) {
       continue;
     }
     const to = join24(dest, e.name);
-    if (!existsSync20(to)) plan.copy.push(e.name);
-    else if (statSync9(to).isFile() && readFileSync18(to).equals(readFileSync18(join24(src, e.name)))) plan.same.push(e.name);
+    if (!existsSync19(to)) plan.copy.push(e.name);
+    else if (statSync8(to).isFile() && readFileSync19(to).equals(readFileSync19(join24(src, e.name)))) plan.same.push(e.name);
     else plan.clashes.push(e.name);
   }
   const srcIdx = join24(src, MEMORY_INDEX);
-  if (existsSync20(srcIdx)) {
+  if (existsSync19(srcIdx)) {
     const destIdx = join24(dest, MEMORY_INDEX);
-    const have = existsSync20(destIdx) ? readFileSync18(destIdx, "utf8").split("\n") : [];
+    const have = existsSync19(destIdx) ? readFileSync19(destIdx, "utf8").split("\n") : [];
     const haveLines = new Set(have.map((l) => l.trim()).filter(Boolean));
     const haveTargets = new Set(have.map(indexTarget).filter((t) => t !== null));
     const clash = new Set(plan.clashes);
-    for (const raw of readFileSync18(srcIdx, "utf8").split("\n")) {
+    for (const raw of readFileSync19(srcIdx, "utf8").split("\n")) {
       const l = raw.trimEnd();
       if (!l.trim()) continue;
       const t = indexTarget(l);
@@ -11999,7 +12751,7 @@ function importCommand(args) {
   const s = settingsFor(root);
   const dest = requireMemory(root, s);
   const src = resolve9(positionals[0].replace(/^~(?=$|\/)/, process.env.HOME ?? "~"));
-  if (!existsSync20(src) || !statSync9(src).isDirectory()) {
+  if (!existsSync19(src) || !statSync8(src).isDirectory()) {
     setExit(1);
     throw new AxiError(`${src} is not a directory`, "REFUSED", ["Give the memory directory to import, such as ~/.claude/projects/<project>/memory"]);
   }
@@ -12010,13 +12762,13 @@ function importCommand(args) {
   const plan = planImport(src, dest);
   const dry = flags["dry-run"] === true;
   if (!dry) {
-    mkdirSync8(dest, { recursive: true });
+    mkdirSync7(dest, { recursive: true });
     for (const f of plan.copy) copyFileSync(join24(src, f), join24(dest, f));
     if (plan.indexAdd.length) {
       const destIdx = join24(dest, MEMORY_INDEX);
-      const cur = existsSync20(destIdx) ? readFileSync18(destIdx, "utf8") : "";
-      mkdirSync8(dirname12(destIdx), { recursive: true });
-      writeFileSync12(destIdx, `${cur}${cur && !cur.endsWith("\n") ? "\n" : ""}${plan.indexAdd.join("\n")}
+      const cur = existsSync19(destIdx) ? readFileSync19(destIdx, "utf8") : "";
+      mkdirSync7(dirname11(destIdx), { recursive: true });
+      writeFileSync13(destIdx, `${cur}${cur && !cur.endsWith("\n") ? "\n" : ""}${plan.indexAdd.join("\n")}
 `);
     }
   }
@@ -12207,7 +12959,7 @@ function history(args) {
     const gap = prev2 === null ? null : run2.atMs - prev2;
     let missed = "";
     if (gap !== null) {
-      if (d.intervalDays !== null && Math.floor(gap / DAY) > d.intervalDays) missed = "missed stretch";
+      if (d.intervalDays !== null && Math.floor(gap / DAY2) > d.intervalDays) missed = "missed stretch";
       else if (d.at) {
         const k = slotsBetween(st, prev2, run2.atMs, s.timezone) - 1;
         if (k > 0) missed = `${k} slot${k === 1 ? "" : "s"} missed`;
@@ -12217,13 +12969,13 @@ function history(args) {
     return {
       at: run2.at,
       outcome: run2.outcome,
-      gap_days: gap === null ? "-" : Math.floor(gap / DAY),
+      gap_days: gap === null ? "-" : Math.floor(gap / DAY2),
       missed,
       handed_to: run2.handed_to ?? "",
       notes: run2.notes.split("\n")[0].slice(0, 100)
     };
   });
-  const since = st.last ? `${Math.floor((now - st.last.atMs) / DAY)} days since the last run` : "never run";
+  const since = st.last ? `${Math.floor((now - st.last.atMs) / DAY2)} days since the last run` : "never run";
   return {
     routine: `${d.id} \xB7 ${d.schedule}${d.active ? "" : " \xB7 inactive"} \xB7 ${st.runs.length} run${st.runs.length === 1 ? "" : "s"}`,
     runs: rows.length ? rows : "none recorded",
@@ -12318,42 +13070,17 @@ var init_routines2 = __esm({
 });
 
 // src/opsbot-core/backstop.ts
-import { closeSync as closeSync2, openSync as openSync2, readFileSync as readFileSync19, readSync as readSync2, statSync as statSync10 } from "node:fs";
-import { join as join25 } from "node:path";
 function cycleBegunSince(root, t) {
-  let fd;
-  try {
-    const file = join25(root, "logs/cycle.jsonl");
-    const size = statSync10(file).size;
-    const n = Math.min(size, 65536);
-    const buf = Buffer.alloc(n);
-    fd = openSync2(file, "r");
-    readSync2(fd, buf, 0, n, size - n);
-    const lines = buf.toString("utf8").trim().split("\n");
-    for (let i = lines.length - 1; i >= 0; i--) {
-      let l;
-      try {
-        l = JSON.parse(lines[i]);
-      } catch {
-        continue;
-      }
-      if (!l || !["nothing-new", "new", "degraded"].includes(String(l.outcome))) continue;
-      const at = Date.parse(String(l.at));
-      return Number.isFinite(at) && at > t;
-    }
-    return false;
-  } catch {
-    return false;
-  } finally {
-    if (fd !== void 0) closeSync2(fd);
+  const lines = branchCycleLines(root, logBranch(root));
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!["nothing-new", "new", "degraded"].includes(String(lines[i].outcome))) continue;
+    const at = Date.parse(String(lines[i].at));
+    return Number.isFinite(at) && at > t;
   }
+  return false;
 }
 function keySeen(root, key) {
-  try {
-    return readFileSync19(join25(root, "logs/intake/seen"), "utf8").split("\n").includes(key);
-  } catch {
-    return false;
-  }
+  return branchSeen(root, logBranch(root)).has(key);
 }
 async function backstop(d) {
   const now = d.now ?? (() => Date.now());
@@ -12404,13 +13131,14 @@ var BACKSTOP_GRACE_S, BACKSTOP_LIMIT_MS;
 var init_backstop = __esm({
   "src/opsbot-core/backstop.ts"() {
     "use strict";
+    init_log();
     BACKSTOP_GRACE_S = 20;
     BACKSTOP_LIMIT_MS = 30 * 6e4;
   }
 });
 
 // src/opsbot-core/commands/wake.ts
-import { existsSync as existsSync22 } from "node:fs";
+import { existsSync as existsSync20 } from "node:fs";
 async function wakeCommand(args) {
   const [sub, ...rest] = args;
   if (sub === "backstop") return backstopCommand(rest);
@@ -12438,7 +13166,7 @@ async function wakeCommand(args) {
 async function backstopCommand(args) {
   const { flags } = parseArgs(args, { value: ["key", "at", "grace", "reason"] }, BACKSTOP_USAGE);
   const key = typeof flags.key === "string" ? flags.key : "";
-  if (!key) throw usageError("--key is required: the event's key, as the check records it in logs/intake/seen", BACKSTOP_USAGE);
+  if (!key) throw usageError("--key is required: the event's key, as the check records it as seen", BACKSTOP_USAGE);
   const at = typeof flags.at === "string" ? Date.parse(flags.at) : NaN;
   if (!Number.isFinite(at)) throw usageError("--at is required: the event's time, ISO 8601", BACKSTOP_USAGE);
   const reason = typeof flags.reason === "string" ? flags.reason : "";
@@ -12472,8 +13200,8 @@ async function backstopCommand(args) {
     },
     seen: () => keySeen(root, key),
     begunSince: (t) => cycleBegunSince(root, t),
-    cycleRunning: () => existsSync22(lockFile),
-    asleep: () => existsSync22(sleepFile2),
+    cycleRunning: () => existsSync20(lockFile),
+    asleep: () => existsSync20(sleepFile2),
     note: (l) => {
       try {
         process.stderr.write(`${l}
@@ -12564,9 +13292,882 @@ var init_record2 = __esm({
   }
 });
 
+// src/opsbot-core/commands/logbranch.ts
+import { createHash as createHash5 } from "node:crypto";
+import { existsSync as existsSync21, mkdirSync as mkdirSync8, readFileSync as readFileSync20, writeFileSync as writeFileSync14 } from "node:fs";
+import { isAbsolute, join as join25, resolve as resolve10 } from "node:path";
+function needBranch(root, _what) {
+  return logBranch(root);
+}
+function cycleHolds(root, maxMinutes) {
+  const { hold } = readLock(root);
+  if (!hold) return false;
+  if (hold.pid && pidAlive(hold.pid) === "no") return false;
+  const started = parseIso(hold.started);
+  if (started === null) return false;
+  return nowMs() - started < maxMinutes * 6e4;
+}
+function write(root, b, settings, records, subject) {
+  if (cycleHolds(root, settings.lock_max_minutes)) {
+    stage(root, records);
+    return "staged: rides this cycle's commit";
+  }
+  const r = commitStaged(root, b, records, { subject }, trailers());
+  if (!r.ok) throw new AxiError(`cannot write the log: ${r.why}`, "WRITE_FAILED", ["Nothing was written; run it again once the log branch can be written"]);
+  return `committed ${r.hash.slice(0, 12)} on ${b}`;
+}
+function readStdinRecords(what, usage) {
+  let text = "";
+  try {
+    text = readFileSync20(0, "utf8");
+  } catch {
+    text = "";
+  }
+  const t = text.trim();
+  if (!t) throw usageError(`no ${what} on stdin`, usage);
+  let vals;
+  try {
+    const v = JSON.parse(t);
+    vals = Array.isArray(v) ? v : [v];
+  } catch {
+    try {
+      vals = t.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
+    } catch {
+      throw usageError(`the ${what} on stdin is not JSON (one object, an array of objects, or one object per line)`, usage);
+    }
+  }
+  if (vals.length === 0) throw usageError(`no ${what} on stdin`, usage);
+  vals.forEach((v, i) => {
+    if (!v || typeof v !== "object" || Array.isArray(v)) throw usageError(`${what} ${i + 1} is not a JSON object`, usage);
+  });
+  return vals;
+}
+function recordAt(r, i, usage) {
+  if (r.at === void 0 || r.at === null) return nowIso();
+  if (typeof r.at !== "string" || !UTC_RE.test(r.at) || parseIso(r.at) === null) {
+    throw usageError(`record ${i + 1}: at must be an ISO time in UTC such as 2026-03-02T15:04:05Z (got ${JSON.stringify(r.at)})`, usage);
+  }
+  return r.at;
+}
+function missingFields(r, fields) {
+  return fields.filter((f) => r[f] === void 0 || r[f] === null);
+}
+function logAppend(args) {
+  const { positionals } = parseArgs(args, { maxPositionals: 1 }, APPEND_USAGE);
+  const target = positionals[0];
+  if (!target) throw usageError("log append needs a ledger name, or posts/<channel>", APPEND_USAGE);
+  const root = requireRoot();
+  const { settings } = loadSettings(root);
+  const b = needBranch(root, "log append");
+  const post = target.match(/^posts\/(.+)$/);
+  const name = post ? post[1] : target.replace(/^ledgers\//, "");
+  if (!LOG_NAME_RE.test(name)) throw usageError(`${JSON.stringify(name)} is not a ${post ? "channel" : "ledger"} name (lower-case letters, digits, - and _)`, APPEND_USAGE);
+  const declared = post ? [] : settings.log.ledgers[name];
+  if (!declared) {
+    const known = Object.keys(settings.log.ledgers);
+    throw new AxiError(`no ledger ${name} in log.ledgers`, "VALIDATION_ERROR", [
+      known.length ? `Declared ledgers: ${known.join(", ")}` : 'Declare it in opsbot.json: "log": {"ledgers": {"' + name + '": ["<field>", ...]}}'
+    ]);
+  }
+  const key = post ? "channel" : "ledger";
+  const input = readStdinRecords("record", APPEND_USAGE);
+  const records = input.map((r, i) => {
+    for (const f of post ? ["channel", "hash"] : LEDGER_RESERVED) {
+      if (r[f] !== void 0) throw usageError(`record ${i + 1}: ${f} is set by the log itself; name the field otherwise`, APPEND_USAGE);
+    }
+    const miss = missingFields(r, declared);
+    if (miss.length) throw usageError(`record ${i + 1} has no ${miss.join(", ")}: ledger ${name} requires ${declared.join(", ")}`, APPEND_USAGE);
+    const at = recordAt(r, i, APPEND_USAGE);
+    const body = clean({ ...r, at });
+    return { ...body, [key]: name, hash: recordHash(body) };
+  });
+  const sheet = post ? "posts" : "ledgers";
+  const said = write(root, b, settings, { [sheet]: records }, `log: ${records.length} ${post ? `post${records.length === 1 ? "" : "s"} to ${name}` : `${name} record${records.length === 1 ? "" : "s"}`}`);
+  return { appended: `${records.length} to ${sheet}/${name} \xB7 ${said}` };
+}
+function currentState(root, b, name) {
+  const staged = readPending(root).state.filter((r) => r.name === name).pop();
+  if (staged) return staged;
+  return sheetRecords(root, b, "state").find((r) => r.name === name) ?? null;
+}
+function logState(args) {
+  const [sub, ...rest] = args;
+  if (sub !== "get" && sub !== "set") throw usageError(sub ? `unknown log state subcommand ${sub}` : "log state needs get or set", STATE_USAGE);
+  const { positionals, flags } = parseArgs(rest, { value: sub === "get" ? ["json-out"] : [], maxPositionals: 1 }, STATE_USAGE);
+  const name = positionals[0];
+  if (!name) throw usageError(`log state ${sub} needs a name`, STATE_USAGE);
+  if (!LOG_NAME_RE.test(name)) throw usageError(`${JSON.stringify(name)} is not a state name (lower-case letters, digits, - and _)`, STATE_USAGE);
+  const root = requireRoot();
+  const { settings } = loadSettings(root);
+  const b = needBranch(root, `log state ${sub}`);
+  if (sub === "get") {
+    const cur2 = currentState(root, b, name);
+    if (typeof flags["json-out"] === "string") writeJsonOut(flags["json-out"], cur2 ? cur2.value ?? null : null);
+    if (!cur2) return { state: `${name} \xB7 not set` };
+    return { state: name, at: cur2.at ?? "", value: cur2.value ?? {} };
+  }
+  const declared = settings.log.state[name];
+  if (!declared) {
+    const known = Object.keys(settings.log.state);
+    throw new AxiError(`no state ${name} in log.state`, "VALIDATION_ERROR", [
+      known.length ? `Declared state: ${known.join(", ")}` : 'Declare it in opsbot.json: "log": {"state": {"' + name + '": ["<field>", ...]}}'
+    ]);
+  }
+  const vals = readStdinRecords("value", STATE_USAGE);
+  if (vals.length !== 1) throw usageError("log state set takes one JSON object", STATE_USAGE);
+  const value = clean(vals[0]);
+  const miss = missingFields(value, declared);
+  if (miss.length) throw usageError(`the value has no ${miss.join(", ")}: state ${name} requires ${declared.join(", ")}`, STATE_USAGE);
+  const cur = currentState(root, b, name);
+  if (cur && canonical(cur.value ?? {}) === canonical(value)) return { state: `${name} \xB7 unchanged` };
+  const said = write(root, b, settings, { state: [{ name, at: nowIso(), value }] }, `log: state ${name}`);
+  return { state: `${name} \xB7 set \xB7 ${said}` };
+}
+function clauseMatches(r, clause) {
+  let m = clause.match(/^\s*([^\s:=<>!~]+)\s+in\s+\((.*)\)\s*$/);
+  if (m) return m[2].split(",").map((x) => x.trim()).includes(scalar(r[m[1]]));
+  m = clause.match(/^([^:=<>!~]+):(present|empty)$/);
+  if (m) {
+    const v2 = r[m[1]];
+    const empty = v2 === void 0 || v2 === null || v2 === "" || Array.isArray(v2) && v2.length === 0;
+    return m[2] === "present" ? !empty : empty;
+  }
+  m = clause.match(/^([^:=<>!~]+)(!=|<=|>=|=|<|>|~)(.*)$/);
+  if (!m) return false;
+  const [, k, op, want] = m;
+  const v = r[k];
+  if (op === "~") {
+    try {
+      return new RegExp(want).test(scalar(v));
+    } catch {
+      return false;
+    }
+  }
+  const have = scalar(v);
+  if (op === "=") return v !== void 0 && have === want;
+  if (op === "!=") return have !== want;
+  if (v === void 0 || v === null) return false;
+  const a = Number(have);
+  const c = Number(want);
+  const cmp = Number.isFinite(a) && Number.isFinite(c) && have.trim() !== "" && want.trim() !== "" ? a - c : have < want ? -1 : have > want ? 1 : 0;
+  return op === "<" ? cmp < 0 : op === ">" ? cmp > 0 : op === "<=" ? cmp <= 0 : cmp >= 0;
+}
+function scalar(v) {
+  if (v === void 0 || v === null) return "";
+  return typeof v === "object" ? JSON.stringify(v) : String(v);
+}
+function writeJsonOut(path, v) {
+  const abs = isAbsolute(path) ? path : resolve10(process.cwd(), path);
+  writeFileSync14(abs, `${JSON.stringify(v)}
+`);
+}
+function parseSheet(name) {
+  if (name === "cycles" || name === "seen" || name === "outages" || name === "routines" || name === "posts" || name === "ledgers") return { sheet: name };
+  const m = name.match(/^(posts|ledgers)\/(.+)$/);
+  if (m && LOG_NAME_RE.test(m[2])) return { sheet: m[1], key: m[1] === "posts" ? "channel" : "ledger", value: m[2] };
+  if (name === "state" || name.startsWith("state/")) {
+    throw usageError("a baseline is read with log state get <name>", READ_USAGE);
+  }
+  throw usageError(`unknown sheet ${name}`, READ_USAGE, "sheets: cycles, seen, outages, routines, posts/<channel>, ledgers/<name>");
+}
+function fetchPeer(root, source, branch) {
+  const src = /^[a-z][a-z0-9+.-]*:\/\//i.test(source) || /^[^/]+@[^:]+:/.test(source) ? source : resolve10(process.cwd(), source);
+  const id = createHash5("sha256").update(src).digest("hex").slice(0, 16);
+  const dir = gitPath(root, join25("opsbot-peers", `${id}.git`));
+  if (!existsSync21(join25(dir, "HEAD"))) {
+    mkdirSync8(dir, { recursive: true });
+    const init = run("git", ["init", "-q", "--bare", dir], { timeoutMs: FETCH_TIMEOUT_MS2 });
+    if (init.code !== 0) throw new AxiError(`cannot make a place for ${source}'s log: ${init.stderr.trim().split("\n")[0] ?? ""}`, "CANNOT_RUN");
+  }
+  const f = run("git", ["-C", dir, "fetch", "-q", "--no-tags", src, `+refs/heads/${branch}:refs/heads/${branch}`], { timeoutMs: FETCH_TIMEOUT_MS2 });
+  if (f.code !== 0) {
+    throw new AxiError(`cannot fetch ${branch} from ${source}: ${(f.stderr.trim().split("\n").pop() ?? "").slice(0, 200)}`, "FETCH_FAILED", [
+      `Check that ${source} has a branch ${branch} (--branch names another)`
+    ]);
+  }
+  return dir;
+}
+function logRead(args) {
+  const filters = [];
+  const rest = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--filter") {
+      const v = args[++i];
+      if (v === void 0) throw usageError("--filter needs a clause", READ_USAGE);
+      filters.push(v);
+    } else if (a.startsWith("--filter=")) filters.push(a.slice("--filter=".length));
+    else rest.push(a);
+  }
+  const { positionals, flags } = parseArgs(rest, { value: ["since", "repo", "branch", "json-out"], maxPositionals: 1 }, READ_USAGE);
+  const name = positionals[0];
+  if (!name) throw usageError("log read needs a sheet", READ_USAGE);
+  const { sheet, key, value } = parseSheet(name);
+  let since = null;
+  if (typeof flags.since === "string") {
+    const ms = parseIso(flags.since);
+    if (ms === null) throw usageError(`--since must be an ISO time (got ${flags.since})`, READ_USAGE);
+    since = new Date(ms).toISOString().replace(".000Z", "Z");
+  }
+  const root = requireRoot();
+  const peer = typeof flags.repo === "string" ? flags.repo : null;
+  let where = root;
+  let b;
+  if (peer) {
+    b = typeof flags.branch === "string" ? flags.branch : DEFAULT_LOG_BRANCH;
+    where = fetchPeer(root, peer, b);
+  } else {
+    if (typeof flags.branch === "string") throw usageError("--branch names another repo's log branch; use it with --repo", READ_USAGE);
+    b = needBranch(root, "log read");
+  }
+  const clauses = [...key ? [`${key}=${value}`] : [], ...since ? [`at>=${since}`] : [], ...filters];
+  let records = [];
+  if (haveLocal(where, b) && git(where, ["cat-file", "-e", `refs/heads/${b}:.gitsheets/${sheet}.toml`]).code === 0) {
+    const q = queryRecords(where, b, sheet, clauses);
+    if ("error" in q) throw new AxiError(q.error, "READ_FAILED");
+    records = q.records;
+  }
+  if (sheet === "cycles") {
+    records.push(...quietRuns(where, b).flatMap(quietLines).filter((r) => clauses.every((c) => clauseMatches(r, c))));
+  }
+  if (!peer) records.push(...readPending(root)[sheet].filter((r) => clauses.every((c) => clauseMatches(r, c))));
+  records.sort(byAt2);
+  const shown = records.map((r) => {
+    const o = { ...r };
+    if (sheet === "posts" || sheet === "ledgers") {
+      delete o.hash;
+      if (key) delete o[key];
+    }
+    return o;
+  });
+  if (typeof flags["json-out"] === "string") writeJsonOut(flags["json-out"], shown);
+  const out = {
+    count: `${shown.length} record${shown.length === 1 ? "" : "s"} in ${name}${since ? ` since ${since}` : ""}${peer ? ` \xB7 ${peer} ${b}` : ""}`
+  };
+  if (shown.length) out.records = shown.slice(-PREVIEW);
+  if (shown.length > PREVIEW && typeof flags["json-out"] !== "string") {
+    out.help = [`The newest ${PREVIEW} are shown; add --json-out <path> for all ${shown.length}`];
+  }
+  return out;
+}
+function logSeen(args) {
+  const { positionals } = parseArgs(args, { maxPositionals: 1 }, SEEN_USAGE);
+  const key = positionals[0];
+  if (!key) throw usageError("log seen needs a key", SEEN_USAGE);
+  const root = requireRoot();
+  const seen = keySeen(root, key);
+  setExit(seen ? 0 : 1);
+  return { seen: seen ? "yes" : "no" };
+}
+function logUsageHelp() {
+  return [APPEND_USAGE, STATE_USAGE, READ_USAGE, SEEN_USAGE, "log tail [--n N]", MIGRATE_USAGE_TEXT].map((u) => `${cliInvocation()} ${u}`);
+}
+var APPEND_USAGE, STATE_USAGE, READ_USAGE, SEEN_USAGE, MIGRATE_USAGE_TEXT, UTC_RE, FETCH_TIMEOUT_MS2, PREVIEW, byAt2;
+var init_logbranch = __esm({
+  "src/opsbot-core/commands/logbranch.ts"() {
+    "use strict";
+    init_dist2();
+    init_args();
+    init_backstop();
+    init_invocation();
+    init_log();
+    init_repo();
+    init_settings();
+    init_state();
+    APPEND_USAGE = "log append <ledger> | log append posts/<channel>   (JSON on stdin: one object, an array, or one per line)";
+    STATE_USAGE = "log state get <name> [--json-out <path>] | log state set <name>   (a JSON object on stdin)";
+    READ_USAGE = "log read <sheet> [--since <ISO time>] [--filter <clause>]... [--repo <path or remote>] [--branch <name>] [--json-out <path>]";
+    SEEN_USAGE = "log seen <key>";
+    MIGRATE_USAGE_TEXT = "log migrate [--dry-run] [--assign <path>=ledger[:<name>]|state[:<name>]|ignore|keep]...";
+    UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+    FETCH_TIMEOUT_MS2 = 6e4;
+    PREVIEW = 20;
+    byAt2 = (a, b) => String(a.at ?? "") < String(b.at ?? "") ? -1 : String(a.at ?? "") > String(b.at ?? "") ? 1 : 0;
+  }
+});
+
+// src/opsbot-core/commands/migrate.ts
+import { copyFileSync as copyFileSync2, existsSync as existsSync22, mkdirSync as mkdirSync9, readdirSync as readdirSync8, readFileSync as readFileSync21, rmSync as rmSync10, statSync as statSync9, writeFileSync as writeFileSync15 } from "node:fs";
+import { basename as basename9, dirname as dirname12, extname, join as join26 } from "node:path";
+function nameFor(path) {
+  const stem = basename9(path).replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^[^a-z0-9]+/, "");
+  return (stem || "ledger").slice(0, 64);
+}
+function trackedFiles(root) {
+  const r = git(root, ["ls-files", "-z"]);
+  return r.code === 0 ? r.stdout.split("\0").filter(Boolean) : [];
+}
+function walkFiles(root, rel) {
+  const abs = join26(root, rel);
+  if (!existsSync22(abs)) return [];
+  if (!statSync9(abs).isDirectory()) return [rel];
+  const out = [];
+  for (const e of readdirSync8(abs, { withFileTypes: true })) {
+    const p = rel ? `${rel}/${e.name}` : e.name;
+    if (e.isDirectory()) out.push(...walkFiles(root, p));
+    else if (e.isFile()) out.push(p);
+  }
+  return out.sort();
+}
+function utc(v) {
+  if (typeof v !== "string") return null;
+  const ms = parseIso(v);
+  return ms === null ? null : iso(ms);
+}
+function lineTimes(root, path, nowIsoText) {
+  const r = run("git", ["-C", root, "blame", "--line-porcelain", "--", path], { timeoutMs: MIGRATE_TIMEOUT_MS });
+  if (r.code !== 0) return [];
+  const out = [];
+  let t = nowIsoText;
+  let committed2 = true;
+  for (const line of r.stdout.split("\n")) {
+    if (line.startsWith("	")) {
+      out.push(committed2 ? t : nowIsoText);
+      continue;
+    }
+    const m = line.match(/^author-time (\d+)$/);
+    if (m) t = iso(Number(m[1]) * 1e3);
+    if (/^[0-9a-f]{40} /.test(line)) committed2 = !/^0{40} /.test(line);
+  }
+  return out;
+}
+function parseAssigns(args) {
+  let dry = false;
+  const assigns = /* @__PURE__ */ new Map();
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--dry-run") dry = true;
+    else if (a === "--assign" || a.startsWith("--assign=")) {
+      const v = a === "--assign" ? args[++i] : a.slice("--assign=".length);
+      if (!v) throw usageError("--assign needs <path>=ledger[:<name>]|state[:<name>]|ignore|keep", MIGRATE_USAGE);
+      const eq = v.lastIndexOf("=");
+      if (eq <= 0) throw usageError(`--assign ${v}: expected <path>=ledger[:<name>]|state[:<name>]|ignore|keep`, MIGRATE_USAGE);
+      const path = norm(v.slice(0, eq));
+      const [kind, name] = v.slice(eq + 1).split(":");
+      if (kind !== "ledger" && kind !== "state" && kind !== "ignore" && kind !== "keep") {
+        throw usageError(`--assign ${v}: ${kind} is not ledger, state, ignore or keep`, MIGRATE_USAGE);
+      }
+      if (name !== void 0 && (kind === "ignore" || kind === "keep")) throw usageError(`--assign ${v}: ${kind} takes no name`, MIGRATE_USAGE);
+      if (name !== void 0 && !LOG_NAME_RE.test(name)) throw usageError(`--assign ${v}: ${name} is not a ${kind} name (lower-case letters, digits, - and _)`, MIGRATE_USAGE);
+      assigns.set(path, { kind, ...name ? { name } : {} });
+    } else if (a === "-h" || a === "--help") throw usageError("help", MIGRATE_USAGE);
+    else if (a.startsWith("--")) throw usageError(`unknown flag ${a.split("=")[0]}`, MIGRATE_USAGE, "valid flags here: --dry-run, --assign");
+    else throw usageError(`log migrate takes no argument (got ${a})`, MIGRATE_USAGE);
+  }
+  return { dry, assigns };
+}
+function postLogs(raw) {
+  const out = {};
+  const streams = isObj4(raw.streams) ? raw.streams : {};
+  for (const [ch, def] of Object.entries(OLD_POST_LOGS)) {
+    const s = streams[ch];
+    out[ch] = isObj4(s) && typeof s.post_log === "string" && s.post_log ? norm(s.post_log) : def;
+  }
+  return out;
+}
+function runsDir(raw) {
+  const r = isObj4(raw.routines) ? raw.routines : {};
+  return typeof r.runs_dir === "string" && r.runs_dir ? norm(r.runs_dir) : OLD_RUNS_DIR;
+}
+function inventory(root, raw, assigns) {
+  const tracked = new Set(trackedFiles(root));
+  const sources = [];
+  const seen = /* @__PURE__ */ new Set();
+  const absent = [];
+  const add = (path, kind, why, name) => {
+    if (seen.has(path)) return;
+    seen.add(path);
+    const a = assigns.get(path);
+    const exists = existsSync22(join26(root, path));
+    if (a && !OLD_KIT_FILES.includes(path)) sources.push({ path, kind: a.kind, name: a.name ?? (a.kind === "ledger" || a.kind === "state" ? nameFor(path) : void 0), why, tracked: tracked.has(path), exists });
+    else sources.push({ path, kind, ...name ? { name } : {}, why, tracked: tracked.has(path), exists });
+  };
+  const kitKind = { [OLD_CYCLE_LOG]: "cycles", [OLD_OUTAGES]: "outages", [OLD_SEEN]: "seen", [OLD_WATERMARK]: "watermark" };
+  for (const f of OLD_KIT_FILES) if (tracked.has(f) || existsSync22(join26(root, f))) add(f, kitKind[f], "the kit's log");
+  const posts = postLogs(raw);
+  const byPath = new Map(Object.entries(posts).map(([ch, p]) => [p, ch]));
+  const classify2 = (p, why) => {
+    const ch = byPath.get(p);
+    if (ch) return add(p, "posts", why, ch);
+    const ext = extname(p).toLowerCase();
+    if (ext === ".jsonl" || ext === ".ndjson") return add(p, "ledger", why, nameFor(p));
+    if (ext === ".json") return add(p, "state", why, nameFor(p));
+    return add(p, null, `${why}, but it is neither JSON lines nor one JSON object`);
+  };
+  const listed = Array.isArray(raw[OLD_PATHS_KEY]) ? raw[OLD_PATHS_KEY].filter((x) => typeof x === "string").map(norm) : [];
+  for (const entry of listed) {
+    const files = [.../* @__PURE__ */ new Set([...walkFiles(root, entry), ...[...tracked].filter((t) => t === entry || t.startsWith(`${entry}/`))])].sort();
+    if (files.length === 0) absent.push(entry);
+    for (const f of files) if (!OLD_KIT_FILES.includes(f)) classify2(f, `listed in ${OLD_PATHS_KEY}`);
+  }
+  for (const [ch, p] of Object.entries(posts)) if (tracked.has(p) || existsSync22(join26(root, p))) add(p, "posts", `the ${ch} post log`, ch);
+  const rd = runsDir(raw);
+  for (const f of [.../* @__PURE__ */ new Set([...walkFiles(root, rd), ...[...tracked].filter((t) => t.startsWith(`${rd}/`))])].sort()) {
+    if (f.endsWith(".md") && basename9(f) !== "README.md") add(f, "runs", "a routine run");
+  }
+  for (const f of [...tracked].sort()) if (f.startsWith("logs/") && !seen.has(f)) add(f, null, "tracked under logs/, named by no setting");
+  const hooks = [...tracked].filter((f) => f.startsWith("opsbot.d/"));
+  const hookText = hooks.map((h) => {
+    try {
+      return [h, readFileSync21(join26(root, h), "utf8")];
+    } catch {
+      return [h, ""];
+    }
+  });
+  const skip = (f) => f === "opsbot.json" || /^(opsbot\.d|\.claude|\.agents|\.gitsheets|skills|node_modules)\//.test(f) || f.startsWith(".git");
+  for (const f of [...tracked].sort()) {
+    if (seen.has(f) || skip(f) || !DATA_EXT.includes(extname(f).toLowerCase())) continue;
+    const by = hookText.find(([, t]) => t.includes(f));
+    if (by) add(f, null, `named by the hook ${by[0]}: a baseline it may read from the working tree`);
+  }
+  const unknownAssigns = [...assigns.keys()].filter((p) => !seen.has(p));
+  return { sources, absent, unknownAssigns };
+}
+function build2(root, sources, branch, now) {
+  const records = Object.fromEntries(SHEETS.map((s) => [s, []]));
+  const unparsed = [];
+  const tallies = [];
+  const ledgers = /* @__PURE__ */ new Set();
+  const states = /* @__PURE__ */ new Set();
+  const notes = [];
+  let watermark = null;
+  const placed = /* @__PURE__ */ new Map();
+  if (haveLocal(root, branch)) {
+    for (const s of SHEETS) for (const r of sheetRecords(root, branch, s)) placed.set(`${s}|${ident(s, r)}`, { rec: r, from: `${branch}` });
+  }
+  const outageKind = /* @__PURE__ */ new Map();
+  for (const src of sources) {
+    if (src.kind !== "cycles" && src.kind !== "outages") continue;
+    for (const l of readLines2(root, src.path)) {
+      try {
+        const v = JSON.parse(l);
+        if (isObj4(v) && v.outcome === "outage" && typeof v.started === "string" && typeof v.kind === "string") outageKind.set(v.started, v.kind);
+      } catch {
+      }
+    }
+  }
+  for (const src of sources) {
+    if (src.kind === null || src.kind === "keep" || src.kind === "ignore" || !src.exists) continue;
+    const tally = { path: src.path, lines: 0, to: {} };
+    tallies.push(tally);
+    const count2 = (k) => tally.to[k] = (tally.to[k] ?? 0) + 1;
+    const lost = (text, line, at, reason) => {
+      const body = clean({ at, file: src.path, line, text, reason });
+      unparsed.push({ ...body, ledger: UNPARSED, hash: recordHash(body) });
+      count2(UNPARSED);
+    };
+    const place = (sheet, rec, text, line, at) => {
+      const key = `${sheet}|${ident(sheet, rec)}`;
+      const had = placed.get(key);
+      if (had) {
+        if (canonical(had.rec) === canonical(rec)) {
+          count2(`${sheet} (already)`);
+          return;
+        }
+        return lost(text, line, at, `the same ${sheet} path as a different record`);
+      }
+      placed.set(key, { rec, from: `${src.path}:${line}` });
+      records[sheet].push(rec);
+      count2(sheet === "ledgers" ? `ledgers/${String(rec.ledger)}` : sheet === "posts" ? `posts/${String(rec.channel)}` : sheet);
+    };
+    if (src.kind === "runs") {
+      const text = readFileSync21(join26(root, src.path), "utf8");
+      tally.lines = 1;
+      const at0 = lineTimes(root, src.path, now)[0] ?? now;
+      try {
+        const { data, body } = parseRecord(text);
+        const at = utc(data.at);
+        if (typeof data.routine !== "string" || !LOG_NAME_RE.test(data.routine)) throw new FrontmatterError("no routine name");
+        if (!at) throw new FrontmatterError("no readable at");
+        const rec = clean({
+          id: typeof data.id === "string" ? data.id : basename9(src.path, ".md"),
+          routine: data.routine,
+          at,
+          outcome: typeof data.outcome === "string" ? data.outcome : "done",
+          by: typeof data.by === "string" ? data.by : void 0,
+          checked: Array.isArray(data.checked) ? data.checked.map(String) : [],
+          title: typeof data.title === "string" ? data.title : void 0,
+          notes: body.replace(/^#\s+[^\n]*\n*/, "").trim(),
+          handed_to: typeof data.handed_to === "string" ? data.handed_to : void 0
+        });
+        place("routines", routineRecord(rec), text, 1, at);
+      } catch (e) {
+        lost(text, 1, at0, `not a routine run: ${e.message}`);
+      }
+      continue;
+    }
+    if (src.kind === "state") {
+      const text = readFileSync21(join26(root, src.path), "utf8");
+      tally.lines = 1;
+      const times2 = lineTimes(root, src.path, now).sort();
+      const at = times2[times2.length - 1] ?? now;
+      let v;
+      try {
+        v = JSON.parse(text);
+      } catch (e) {
+        lost(text, 1, at, `not one JSON value: ${e.message}`);
+        continue;
+      }
+      const value = isObj4(v) ? clean(v) : { value: clean(v) };
+      if (!isObj4(v)) notes.push(`${src.path} holds a JSON ${Array.isArray(v) ? "array" : typeof v}, not an object: state ${src.name} keeps it under value.value`);
+      states.add(src.name);
+      place("state", { name: src.name, at, value }, text, 1, at);
+      continue;
+    }
+    const lines = readLines2(root, src.path, true);
+    const times = lineTimes(root, src.path, now);
+    lines.forEach((text, i) => {
+      if (!text.trim()) return;
+      tally.lines++;
+      const n = i + 1;
+      const lineAt = times[i] ?? now;
+      if (src.kind === "seen") {
+        place("seen", { at: lineAt, hash: seenHash(text), key: text }, text, n, lineAt);
+        return;
+      }
+      if (src.kind === "watermark") {
+        const w = utc(text.trim());
+        if (w && n === 1) {
+          watermark = w;
+          count2("watermark trailer");
+        } else lost(text, n, lineAt, "not one ISO-8601 time on the first line");
+        return;
+      }
+      let v;
+      try {
+        v = JSON.parse(text);
+      } catch (e) {
+        return lost(text, n, lineAt, `not JSON: ${e.message}`);
+      }
+      if (!isObj4(v)) return lost(text, n, lineAt, "not a JSON object");
+      const own = v.at === void 0 ? null : utc(v.at);
+      if (v.at !== void 0 && own === null) return lost(text, n, lineAt, "its at is not a time");
+      const at = own ?? lineAt;
+      const body = clean({ ...v, at, ...typeof v.at === "string" && v.at !== at ? { at_as_written: v.at } : {} });
+      if (src.kind === "cycles" || src.kind === "outages") {
+        const outcome = typeof v.outcome === "string" ? v.outcome : "";
+        if (!own) return lost(text, n, lineAt, "no at");
+        if (!/^[a-z0-9][a-z0-9_-]*$/.test(outcome)) return lost(text, n, lineAt, outcome ? `outcome ${outcome} cannot name a record` : "no outcome");
+        if (outcome === "outage" || outcome === "outage-end") {
+          const end = outcome === "outage-end";
+          const kind = end ? outageKind.get(String(v.started)) ?? "outage" : String(v.kind ?? "outage");
+          if (!/^[a-z0-9][a-z0-9_-]*$/.test(kind)) return lost(text, n, lineAt, `outage kind ${kind} cannot name a record`);
+          return place("outages", { ...body, kind, edge: end ? "end" : "start" }, text, n, at);
+        }
+        if (src.kind === "outages") return lost(text, n, lineAt, `outcome ${outcome} in the outages file`);
+        return place("cycles", body, text, n, at);
+      }
+      if (src.kind === "posts") {
+        for (const f of ["channel", "hash"]) if (v[f] !== void 0) return lost(text, n, lineAt, `it has a ${f} field, which the post log sets itself`);
+        return place("posts", { ...body, channel: src.name, hash: recordHash(body) }, text, n, at);
+      }
+      for (const f of ["ledger", "hash"]) if (v[f] !== void 0) return lost(text, n, lineAt, `it has a ${f} field, which the log sets itself`);
+      ledgers.add(src.name);
+      return place("ledgers", { ...body, ledger: src.name, hash: recordHash(body) }, text, n, at);
+    });
+  }
+  records.ledgers.push(...unparsed);
+  return { records, tallies, unparsed, watermark, ledgers, states, notes };
+}
+function readLines2(root, path, keepEmpty = false) {
+  let text;
+  try {
+    text = readFileSync21(join26(root, path), "utf8");
+  } catch {
+    return [];
+  }
+  const lines = text.split("\n");
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();
+  return keepEmpty ? lines : lines.filter((l) => l.trim());
+}
+function releaseProblem(root) {
+  const checks = [];
+  for (const l of readLines2(root, OLD_CYCLE_LOG)) {
+    try {
+      const v = JSON.parse(l);
+      if (isObj4(v) && CHECK_OUTCOMES2.includes(String(v.outcome))) checks.push(v);
+    } catch {
+    }
+  }
+  const recent = checks.slice(-PREVIEW2);
+  if (recent.length === 0 || recent.some((l) => typeof l.check === "string")) return null;
+  return `none of the newest ${recent.length} check lines in ${OLD_CYCLE_LOG} says which check it was (the \`check\` field every release since ${OLDEST_SHAPES} writes on a cycle's check), so this bot last ran an older release`;
+}
+function newSettings(raw, branch, ledgers, states) {
+  const json = JSON.parse(JSON.stringify(raw));
+  const changes = [];
+  if (json[OLD_PATHS_KEY] !== void 0) {
+    delete json[OLD_PATHS_KEY];
+    changes.push(`${OLD_PATHS_KEY} removed`);
+  }
+  if (isObj4(json.routines) && json.routines.runs_dir !== void 0) {
+    delete json.routines.runs_dir;
+    if (Object.keys(json.routines).filter((k) => k !== "//").length === 0) delete json.routines;
+    changes.push("routines.runs_dir removed");
+  }
+  if (json.repo_sync === "pull-on-clean" || json.repo_sync === "never-pull") {
+    const to = json.repo_sync === "never-pull" ? "never" : "pull";
+    changes.push(`repo_sync ${JSON.stringify(json.repo_sync)} is now ${JSON.stringify(to)}${to === "never" ? " (cycle begin then leaves the checkout alone; remove it to have each cycle fast-forward the checkout, which replaces a repo-sync hook)" : ""}`);
+    json.repo_sync = to;
+  }
+  const log = isObj4(json.log) ? json.log : {};
+  if (log.branch !== branch) changes.push(`log.branch set to ${JSON.stringify(branch)}`);
+  log.branch = branch;
+  for (const [k, names] of [["ledgers", ledgers], ["state", states]]) {
+    const cur = isObj4(log[k]) ? log[k] : {};
+    const added = [...names].filter((n) => cur[n] === void 0).sort();
+    for (const n of added) cur[n] = [];
+    if (added.length) {
+      log[k] = cur;
+      changes.push(`log.${k} declares ${added.join(", ")} (no required fields yet: add the fields each record must carry)`);
+    }
+  }
+  json.log = log;
+  return { json, changes };
+}
+function gitEnv(root, args, env, input) {
+  return run("git", ["-C", root, ...args], { env: { ...process.env, ...env }, input });
+}
+function prepare(root, o) {
+  const index = gitPath(root, "opsbot-migrate-index");
+  const env = { GIT_INDEX_FILE: index };
+  const fail = (what, r) => {
+    throw new AxiError(`cannot prepare ${MIGRATE_BRANCH}: ${what} failed: ${(r.stderr || r.stdout).trim().split("\n")[0] ?? `exit ${r.code}`}`, "CANNOT_RUN");
+  };
+  try {
+    let r = gitEnv(root, ["read-tree", "HEAD"], env);
+    if (r.code !== 0) fail("git read-tree", r);
+    const gone = [...o.remove, ...o.untrack];
+    if (gone.length) {
+      r = gitEnv(root, ["rm", "-q", "--cached", "--ignore-unmatch", "--", ...gone], env);
+      if (r.code !== 0) fail("git rm --cached", r);
+    }
+    const blob = (text) => {
+      const h = gitEnv(root, ["hash-object", "-w", "--stdin"], env, text);
+      if (h.code !== 0) fail("git hash-object", h);
+      return h.stdout.trim();
+    };
+    r = gitEnv(root, ["update-index", "--add", "--cacheinfo", `100644,${blob(`${JSON.stringify(o.settings, null, 2)}
+`)},opsbot.json`], env);
+    if (r.code !== 0) fail("git update-index opsbot.json", r);
+    const was = showHead(root, ".gitignore");
+    const named = new Set([...gone, ...o.ignore].flatMap((p) => [p, `/${p}`, `!${p}`, `!/${p}`]));
+    const kept = (was ?? "").split("\n").filter((l) => !named.has(l.trim()));
+    while (kept.length && kept[kept.length - 1] === "") kept.pop();
+    const add = o.ignore.map((p) => `/${p}`);
+    const next3 = [...kept, ...add.length ? ["# untracked by opsbot-core log migrate: written by the bot, read by no person", ...add] : []].join("\n");
+    if (was !== null || add.length) {
+      r = gitEnv(root, ["update-index", "--add", "--cacheinfo", `100644,${blob(next3 ? `${next3}
+` : "")},.gitignore`], env);
+      if (r.code !== 0) fail("git update-index .gitignore", r);
+    }
+    const tree = gitEnv(root, ["write-tree"], env);
+    if (tree.code !== 0) fail("git write-tree", tree);
+    const commit = gitEnv(root, ["commit-tree", tree.stdout.trim(), "-p", "HEAD", "-F", "-"], {}, o.message);
+    if (commit.code !== 0) fail("git commit-tree", commit);
+    const hash = commit.stdout.trim();
+    r = gitEnv(root, ["update-ref", `refs/heads/${MIGRATE_BRANCH}`, hash], {});
+    if (r.code !== 0) fail("git update-ref", r);
+    return hash;
+  } finally {
+    rmSync10(index, { force: true });
+  }
+}
+function fetchLog(root, branch) {
+  if (git(root, ["remote", "get-url", "origin"]).code !== 0) return;
+  run("git", ["-C", root, "fetch", "-q", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { timeoutMs: 6e4 });
+}
+function logMigrate(args) {
+  const { dry, assigns } = parseAssigns(args);
+  const root = requireRoot();
+  const cli = cliInvocation();
+  const why = oldSetup(root);
+  if (!why) {
+    return { migrate: "nothing to migrate \xB7 this checkout has none of the old log files' settings; the log is written to its branch" };
+  }
+  const headText = showHead(root, "opsbot.json");
+  if (headText === null) throw new AxiError("opsbot.json is not committed in this checkout", "CANNOT_RUN");
+  const wt = existsSync22(join26(root, "opsbot.json")) ? readFileSync21(join26(root, "opsbot.json"), "utf8") : null;
+  if (wt !== headText) {
+    throw new AxiError("opsbot.json has changes that are not committed; the prepared commit is made from the one at HEAD", "CANNOT_RUN", ["Commit or discard the change to opsbot.json, then run log migrate again"]);
+  }
+  let raw;
+  try {
+    raw = JSON.parse(headText);
+  } catch (e) {
+    throw new AxiError(`opsbot.json is not JSON: ${e.message}`, "CANNOT_RUN");
+  }
+  const blocked = blockedBy(root);
+  if (blocked) throw new AxiError(`cannot migrate: ${blocked}`, "CANNOT_RUN", ["Finish it, then run log migrate again"]);
+  if (cycleHolds(root, typeof raw.lock_max_minutes === "number" ? raw.lock_max_minutes : 60)) {
+    throw new AxiError("a cycle holds the checkout, so the log files may still be written to", "CANNOT_RUN", [
+      "Stop the bot's loop (the release before this one still writes the files), then run log migrate again"
+    ]);
+  }
+  const behind = releaseProblem(root);
+  if (behind) {
+    throw new AxiError(`cannot migrate from this bot's release: ${behind}`, "CANNOT_RUN", [
+      `Update the kit to ${PREVIOUS_RELEASE} first (\`npx skills add ${KIT}#${PREVIOUS_RELEASE}\`), let the loop run one full cycle on it, then update to this release and run \`${cli} log migrate --dry-run\` again`
+    ]);
+  }
+  const branch = isObj4(raw.log) && typeof raw.log.branch === "string" && raw.log.branch ? raw.log.branch : DEFAULT_LOG_BRANCH;
+  const { sources, absent, unknownAssigns } = inventory(root, raw, assigns);
+  if (unknownAssigns.length) {
+    throw usageError(`--assign names ${unknownAssigns.join(", ")}, which the migration does not read: only a file it lists may be assigned`, MIGRATE_USAGE);
+  }
+  const badKeep = sources.filter((s) => s.kind === "keep" && (s.path.startsWith("logs/") || !s.why.startsWith("named by the hook")));
+  if (badKeep.length) {
+    throw usageError(`keep is only for a file a hook names outside logs/ that a person edits: ${badKeep.map((s) => s.path).join(", ")}`, MIGRATE_USAGE);
+  }
+  const unassigned = sources.filter((s) => s.kind === null);
+  const now = nowIso();
+  fetchLog(root, branch);
+  const built = build2(root, sources, branch, now);
+  const { json: settings, changes } = newSettings(raw, branch, built.ledgers, built.states);
+  const problems = parseSettingsText(JSON.stringify(settings), "the migrated opsbot.json").problems;
+  const totals = {};
+  for (const s of SHEETS) {
+    if (s === "ledgers") {
+      for (const r of built.records.ledgers) totals[`ledgers/${String(r.ledger)}`] = (totals[`ledgers/${String(r.ledger)}`] ?? 0) + 1;
+    } else if (s === "posts") {
+      for (const r of built.records.posts) totals[`posts/${String(r.channel)}`] = (totals[`posts/${String(r.channel)}`] ?? 0) + 1;
+    } else if (built.records[s].length) totals[s] = built.records[s].length;
+  }
+  const out = {};
+  const files = built.tallies.map((t) => ({
+    file: t.path,
+    lines: t.lines,
+    to: Object.entries(t.to).map(([k, n]) => `${k} ${n}`).join(", ") || "nothing"
+  }));
+  const lineCount2 = built.tallies.reduce((n, t) => n + t.lines, 0);
+  const ignored = sources.filter((s) => s.kind === "ignore");
+  const keptFiles = sources.filter((s) => s.kind === "keep");
+  if (unassigned.length || problems.length) {
+    setExit(1);
+    out.migrate = `${dry ? "dry run \xB7 " : ""}stopped \xB7 nothing written${unassigned.length ? ` \xB7 ${unassigned.length} file${unassigned.length === 1 ? "" : "s"} to assign` : ""}${problems.length ? ` \xB7 ${problems.length} settings problem${problems.length === 1 ? "" : "s"}` : ""}`;
+    if (unassigned.length) {
+      out.unassigned = unassigned.map((s) => ({ file: s.path, why: s.why }));
+    }
+    if (problems.length) out.problems = problems;
+    out.files = files;
+    out.help = [
+      ...unassigned.length ? [
+        "Assign each file above and run it again, one --assign per file:",
+        ...unassigned.map((s) => `  --assign ${s.path}=${extname(s.path) === ".json" ? "state" : extname(s.path) === ".jsonl" ? "ledger" : "ignore"}`),
+        "  ledger[:<name>]: each line a record of that ledger \xB7 state[:<name>]: the file one baseline \xB7 ignore: untracked and ignored, its lines not moved \xB7 keep: a file outside logs/ a person edits, left as it is"
+      ] : [],
+      ...problems.length ? ["Fix the settings problems in opsbot.json (they are not the migration's), commit, then run it again"] : []
+    ];
+    return out;
+  }
+  const sheetLine = Object.entries(totals).map(([k, n]) => `${k} ${n}`).join(", ") || "no records";
+  const removeTracked = sources.filter((s) => s.tracked && s.kind !== "ignore" && s.kind !== "keep").map((s) => s.path);
+  const untrackedLeft = sources.filter((s) => !s.tracked && s.exists && s.kind !== "ignore" && s.kind !== "keep").map((s) => s.path);
+  if (dry) {
+    out.migrate = `dry run \xB7 ${lineCount2} lines from ${built.tallies.length} files would go to ${branch}: ${sheetLine}${built.watermark ? ` \xB7 watermark ${built.watermark}` : ""}`;
+    out.files = files;
+    if (built.unparsed.length) out.unparsed = built.unparsed.slice(0, PREVIEW2).map((u) => `${String(u.file)}:${String(u.line)} \xB7 ${String(u.reason)}`);
+    if (ignored.length) out.ignored = ignored.map((s) => s.path);
+    if (keptFiles.length) out.kept = keptFiles.map((s) => s.path);
+    if (absent.length) out.absent = absent.map((p) => `${p}: listed, not there; nothing to move`);
+    out.settings = changes;
+    if (built.notes.length) out.notes = built.notes;
+    out.help = [`Run \`${cli} log migrate${[...assigns].map(([p, a]) => ` --assign ${p}=${a.kind}${a.name ? `:${a.name}` : ""}`).join("")}\` to write them and prepare ${MIGRATE_BRANCH}`];
+    return out;
+  }
+  const v = gitsheetsVersion();
+  if (v === null || !versionAtLeast(v, MIN_GITSHEETS)) {
+    throw new AxiError(`the log branch needs gitsheets-axi ${MIN_GITSHEETS} or later (${v ? `found ${v}` : "it does not run here"})`, "CANNOT_RUN", ["`opsbot-host bootstrap` installs it"]);
+  }
+  const ensured = ensureBranch(root, branch);
+  if (ensured) throw new AxiError(`cannot make the log branch ${branch}: ${ensured}`, "CANNOT_RUN");
+  const head2 = git(root, ["rev-parse", "HEAD"]).stdout.trim();
+  const records = {};
+  for (const s of SHEETS) if (built.records[s].length) records[s] = built.records[s];
+  const w = Object.keys(records).length === 0 ? { ok: true, hash: readTip(root, branch)?.hash ?? "" } : writeLog(
+    root,
+    branch,
+    { records, subject: `log: migrated from the log files at ${head2.slice(0, 12)}`, watermark: built.watermark, check: "full", timeoutMs: MIGRATE_TIMEOUT_MS },
+    [`Migrated-From: ${head2}`, trailers()].filter(Boolean).join("\n")
+  );
+  if (!w.ok) throw new AxiError(`cannot write the log branch ${branch}: ${w.why}; nothing was prepared`, "WRITE_FAILED", ["Fix it and run log migrate again: what was written is written once"]);
+  const logTip = readTip(root, branch)?.hash ?? w.hash;
+  const backup = gitPath(root, "opsbot-migrate");
+  for (const s of ignored) {
+    if (!s.exists) continue;
+    const dst = join26(backup, s.path);
+    mkdirSync9(dirname12(dst), { recursive: true });
+    copyFileSync2(join26(root, s.path), dst);
+  }
+  const cur = git(root, ["symbolic-ref", "--short", "-q", "HEAD"]).stdout.trim() || "main";
+  const body = [
+    `The loop's log moves to the branch ${branch} (${logTip.slice(0, 12)}), and this commit removes the files it was kept in.`,
+    "",
+    `- On ${branch}: ${lineCount2} lines from ${built.tallies.length} files: ${sheetLine}${built.watermark ? `; watermark ${built.watermark}` : ""}.`,
+    ...built.unparsed.length ? [`- ${built.unparsed.length} lines could not be placed and are kept as ledger ${UNPARSED} records (\`${cli} log read ledgers/${UNPARSED}\`).`] : [],
+    `- Removed: ${removeTracked.length ? removeTracked.join(", ") : "nothing tracked"}.`,
+    ...ignored.length ? [`- Untracked and ignored: ${ignored.map((s) => s.path).join(", ")}.`] : [],
+    `- opsbot.json: ${changes.join("; ")}.`,
+    "",
+    `Until this is merged and pulled into the bot's checkout, the loop refuses to run: nothing is written to both places.`,
+    "",
+    `Prepared by \`opsbot-core log migrate\`.`
+  ].join("\n");
+  const message = `chore(bot): the loop's log moves to ${branch}
+
+${body}
+`;
+  const prepared = prepare(root, { remove: removeTracked, untrack: ignored.filter((s) => s.tracked).map((s) => s.path), ignore: ignored.map((s) => s.path), settings, message });
+  const prBody = gitPath(root, "opsbot-log-migrate.md");
+  writeFileSync15(prBody, `${body}
+`);
+  const discard = [...removeTracked, ...ignored.filter((s) => s.tracked).map((s) => s.path)];
+  out.migrate = `done \xB7 ${lineCount2} lines from ${built.tallies.length} files on ${branch} at ${logTip.slice(0, 12)}: ${sheetLine} \xB7 prepared ${MIGRATE_BRANCH} at ${prepared.slice(0, 12)} \xB7 nothing changed on ${cur}`;
+  out.files = files;
+  if (built.unparsed.length) out.unparsed = built.unparsed.slice(0, PREVIEW2).map((u) => `${String(u.file)}:${String(u.line)} \xB7 ${String(u.reason)}`);
+  out.settings = changes;
+  if (built.notes.length) out.notes = built.notes;
+  out.next = [
+    `1. Push both branches: git push origin ${branch} ${MIGRATE_BRANCH}`,
+    `2. Open the pull request and merge it: gh pr create --base ${cur} --head ${MIGRATE_BRANCH} --title "chore(bot): the loop's log moves to ${branch}" --body-file ${prBody}`,
+    `3. Then, in this checkout: git checkout HEAD -- ${discard.length ? discard.join(" ") : "."} && git pull --ff-only   (the files' lines are on ${branch}; the pull removes the files)`,
+    ...untrackedLeft.length ? [`4. Delete the untracked files whose lines moved: rm ${untrackedLeft.join(" ")}`] : [],
+    `${untrackedLeft.length ? 5 : 4}. Start the loop again: \`${cli} cycle begin\` writes to ${branch} from here on. Until step 3 it refuses to run.`,
+    ...built.ledgers.size || built.states.size ? [`${untrackedLeft.length ? 6 : 5}. Change the hooks that wrote ${[...built.ledgers].map((n) => `ledger ${n}`).concat([...built.states].map((n) => `state ${n}`)).join(", ")} to \`${cli} log append <ledger>\` and \`${cli} log state set <name>\`, and delete any repo-sync hook of the bot's own: cycle begin fast-forwards the checkout itself`] : [`${untrackedLeft.length ? 6 : 5}. Delete any repo-sync hook of the bot's own: cycle begin fast-forwards the checkout itself`]
+  ];
+  if (ignored.length) out.ignored = ignored.map((s) => `${s.path}: untracked and ignored by ${MIGRATE_BRANCH}; the pull removes it from this checkout, a copy is at ${join26(backup, s.path)}`);
+  return out;
+}
+var MIGRATE_USAGE, PREVIOUS_RELEASE, OLDEST_SHAPES, KIT, UNPARSED, MIGRATE_TIMEOUT_MS, DATA_EXT, CHECK_OUTCOMES2, PREVIEW2, isObj4, norm;
+var init_migrate = __esm({
+  "src/opsbot-core/commands/migrate.ts"() {
+    "use strict";
+    init_dist2();
+    init_args();
+    init_frontmatter();
+    init_invocation();
+    init_legacy();
+    init_log();
+    init_repo();
+    init_settings();
+    init_logbranch();
+    MIGRATE_USAGE = "log migrate [--dry-run] [--assign <path>=ledger[:<name>]|state[:<name>]|ignore|keep]...";
+    PREVIOUS_RELEASE = "v0.16.0";
+    OLDEST_SHAPES = "v0.15.0";
+    KIT = "JarvusInnovations/opsbots";
+    UNPARSED = "unparsed";
+    MIGRATE_TIMEOUT_MS = 30 * 6e4;
+    DATA_EXT = [".json", ".jsonl", ".ndjson", ".log", ".txt", ".csv", ".tsv"];
+    CHECK_OUTCOMES2 = ["nothing-new", "new", "degraded"];
+    PREVIEW2 = 20;
+    isObj4 = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+    norm = (p) => p.replace(/^\.\/+/, "").replace(/\/+$/, "");
+  }
+});
+
 // src/opsbot-core/commands/simple.ts
-import { existsSync as existsSync23, readFileSync as readFileSync20 } from "node:fs";
-import { join as join26 } from "node:path";
+import { existsSync as existsSync23, readFileSync as readFileSync22 } from "node:fs";
+import { join as join27 } from "node:path";
 function nextDelayCommand(args) {
   parseArgs(args, {}, "next-delay");
   const root = requireRoot();
@@ -12639,10 +14240,13 @@ function detail2(l) {
 }
 function logCommand(args) {
   const [sub, ...rest] = args;
+  if (sub === "append") return logAppend(rest);
+  if (sub === "state") return logState(rest);
+  if (sub === "read") return logRead(rest);
+  if (sub === "seen") return logSeen(rest);
+  if (sub === "migrate") return logMigrate(rest);
   if (sub !== "tail") {
-    throw new AxiError(sub ? `unknown log subcommand ${sub}` : "log needs a subcommand", "VALIDATION_ERROR", [
-      `${cliInvocation()} log tail [--n N]`
-    ]);
+    throw new AxiError(sub ? `unknown log subcommand ${sub}` : "log needs a subcommand", "VALIDATION_ERROR", logUsageHelp());
   }
   const usage = "log tail [--n N]";
   const { flags } = parseArgs(rest, { value: ["n"] }, usage);
@@ -12699,8 +14303,8 @@ function settingsCommand(args) {
     text = showHead(root, SETTINGS_FILE);
     where = `${SETTINGS_FILE} at HEAD`;
   } else {
-    const p = join26(root, SETTINGS_FILE);
-    text = existsSync23(p) ? readFileSync20(p, "utf8") : null;
+    const p = join27(root, SETTINGS_FILE);
+    text = existsSync23(p) ? readFileSync22(p, "utf8") : null;
     where = SETTINGS_FILE;
   }
   if (text === null) {
@@ -12709,10 +14313,10 @@ function settingsCommand(args) {
     ]);
   }
   const { raw, problems } = parseSettingsText(text, where);
-  const claude = join26(root, ".claude", "settings.json");
+  const claude = join27(root, ".claude", "settings.json");
   if (raw && existsSync23(claude)) {
     try {
-      const cs = JSON.parse(readFileSync20(claude, "utf8"));
+      const cs = JSON.parse(readFileSync22(claude, "utf8"));
       const loop = raw.loop ?? {};
       for (const k of ["autoMemoryEnabled", "autoMemoryDirectory"]) {
         if (cs && cs[k] !== void 0) {
@@ -12739,11 +14343,23 @@ function settingsCommand(args) {
       });
     }
   }
+  if (raw) {
+    const branch = isLogObj(raw.log) && typeof raw.log.branch === "string" && raw.log.branch ? raw.log.branch : DEFAULT_LOG_BRANCH;
+    const v = gitsheetsVersion();
+    if (v === null || !versionAtLeast(v, MIN_GITSHEETS)) {
+      problems.push(`the log branch needs gitsheets-axi ${MIN_GITSHEETS} or later (${v ? `found ${v}` : "it does not run here"}); \`opsbot-host bootstrap\` installs it`);
+    }
+    const cur = git(root, ["symbolic-ref", "--short", "-q", "HEAD"]).stdout.trim();
+    if (cur && cur === branch) problems.push(`the log branch ${JSON.stringify(branch)} is the branch checked out here; the log's branch is never checked out`);
+  }
   if (problems.length) {
     setExit(1);
     return { settings: `invalid \xB7 ${where} \xB7 ${problems.length} problem${problems.length === 1 ? "" : "s"}`, problems };
   }
   return { settings: `valid \xB7 ${where}` };
+}
+function isLogObj(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 var LOCK_USAGE;
 var init_simple = __esm({
@@ -12755,6 +14371,9 @@ var init_simple = __esm({
     init_invocation();
     init_lifecycle();
     init_repo();
+    init_log();
+    init_logbranch();
+    init_migrate();
     init_settings();
     init_routines2();
     init_record();

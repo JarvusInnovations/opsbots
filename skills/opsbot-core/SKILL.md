@@ -2,13 +2,13 @@
 name: opsbot-core
 description: >-
   The loop for an ops bot: run one cycle at a time (cycle begin → act → cycle end), check every
-  stream without the model, keep the cycle log, watermark and seen keys in git, account for
+  stream without the model, keep the cycle log, watermark and seen keys on a log branch, account for
   outages, pace the next wake, reground after a start or compaction behind a read-gate, and keep
   the loop alive with a watchdog and a nudge. Use when running, starting, debugging or setting up
   an ops bot's cycle; when a session starts or compacts in a bot repo; when the loop has stopped,
   a lock is stuck, a check is degraded, or the timers need installing. Triggers: "cycle begin",
   "run a cycle", "the loop stopped", "cold start", "reground", "next wake", "watchdog", "nudge",
-  "opsbot.json", "opsbot.d", "heartbeat script".
+  "opsbot.json", "opsbot.d", "heartbeat script", "log migrate", "log branch".
 ---
 
 # opsbot-core: the loop
@@ -27,12 +27,14 @@ the CLI is not on PATH.
 1. **`scripts/opsbot-core cycle begin`.** It refuses while another writer holds the checkout
    (a rebase, merge, cherry-pick, revert or bisect in progress, `index.lock`, or another
    live cycle's lock) and prints `wait · <who> · next <seconds> <reason>`, exit 30: schedule
-   the next wake for those seconds and stop. Otherwise it takes the lock, records an outage
-   if the last one was abandoned or the loop was stopped, runs `opsbot.d/cycle.d/begin/`,
-   and runs the check. A wake from a wake file that names its inputs runs a **fast check**
+   the next wake for those seconds and stop. A checkout still set up for the old log files
+   is refused, exit 2, naming `log migrate` (see *Moving a bot to the log branch*). Otherwise
+   it takes the lock, fast-forwards a clean checkout that is behind its remote
+   (`repo_sync`), records an outage if the last one was abandoned or the loop was stopped,
+   runs `opsbot.d/cycle.d/begin/`, and runs the check. A wake from a wake file that names its inputs runs a **fast check**
    (see *A fast cycle* below); `cycle begin --full` forces the full one.
    - **Exit 0, nothing new.** One line ending `next <seconds> <reason>`. The check already
-     logged, committed and advanced the watermark; the lock is released. Schedule the wake
+     logged it to the log branch and advanced the watermark; the lock is released. Schedule the wake
      and stop.
    - **Exit 10, new.** The digest: every item whole, tagged with its conversation and
      `GROUP` or `DM`. A `gate_word: present` line flags the configured word; it is never
@@ -46,7 +48,7 @@ the CLI is not on PATH.
    It pins the watermark to the time of this cycle's check, never to now, so anything that
    arrived mid-cycle is read next time. It refuses a future time, a backwards move, or a
    cycle with no check since the lock was taken. It runs `opsbot.d/cycle.d/end/`, logs
-   `finished`, commits the log and watermark with `--only`, pushes, releases the lock, and
+   `finished`, writes the cycle to the log branch as one commit, pushes it, releases the lock, and
    prints the closing line, what the end scripts printed (due promises, fixes not yet told),
    and `next <seconds> <reason>`. When a wake file gained lines while you worked it prints
    `arrived: <n> on <file>` and `next 0 arrived` and no `wake` field: run `cycle begin`
@@ -160,16 +162,39 @@ never sleeps and nothing below about sleep applies. It is a trial setting: it ha
 test bot, not yet for a week on a working one, so turn it on for one bot and read its log
 before relying on it.
 
-`commit_paths` (optional) lists repo-relative files the check's commit and the `cycle end`
-commit also take when they exist and have changes: a baseline an adapter updates, an
-append-only log a helper script writes between cycles. Nothing else is added to those
-commits. It refuses an absolute path, a `..` segment, and a path under `.git/` or `.claude/`.
+`repo_sync` (optional) is `pull` (the default) or `never`. With `pull`, each full cycle's
+`cycle begin` fetches the checkout's branch and fast-forwards it when the working tree is
+clean and the branch is behind, so a bot needs no repo-sync hook of its own. A checkout that
+cannot fast-forward (uncommitted changes, a person's unpushed commit, a diverged branch) is one
+heartbeat item naming both commits, said once per remote head, and the cycle goes on with the
+program it has. A fast cycle leaves it for the next full one.
+
+`log` (optional) is `{branch, ledgers, state}`. The loop's own log is written to its own
+branch, `log.branch` (default `"opsbot/log"`), through `gitsheets-axi` (2.15.0 or later), and
+never to the working tree: each cycle that found or did something is one commit there with
+`Program`, `Watermark` and `Check` trailers, a run of quiet cycles is one commit amended until
+the hour turns, and the branch is pushed at `cycle end` up to its newest sealed commit. The
+program branch gets a commit only for the memory files a cycle changed. A refused push of the
+log is a failed check: another host is running the same bot.
+
+A bot's scripts keep what they did and what they compare against on the branch too, never in a
+file of their own. `log.ledgers` and `log.state` each map a name to the fields its record must
+carry: `{"ledgers": {"labels": ["thread", "label"]}, "state": {"inbox": ["cursor"]}}`. A script
+appends with `opsbot-core log append <ledger>` (a JSON record on stdin; `at`, an ISO time in
+UTC, defaults to now; `ledger` and `hash` are the log's own fields), reads with `opsbot-core
+log read ledgers/<ledger> [--since <time>] [--filter <clause>] [--json-out <path>]`, and keeps
+a baseline with `opsbot-core log state set|get <name>`. A write made while a cycle holds the
+checkout rides that cycle's commit; one made outside a cycle is its own commit. A ledger is
+append-only: something a script edits later is a record on the program branch. `log read ...
+--repo <path or remote>` reads another bot's log from its branch. The listeners ask
+`opsbot-core log seen <key>`, and the post commands of opsbot-slack and opsbot-whatsapp write
+their decision log to `posts/<channel>`.
 
 `memory` (optional) is `{dir, review_days}`, defaults `memory` and `7`, or `false`. See
 *Auto memory* below.
 
-`routines` (optional) is `{dir, runs_dir}`, defaults `routines` and `records/routine-runs`.
-See *Routines* below.
+`routines` (optional) is `{dir}`, default `routines`. Each run is a record of the log branch's
+`routines` sheet. See *Routines* below.
 
 `record` (optional) is `{recall: [...]}`: the recalls that put a record sheet's rows back in
 front of the session. See *The console, and the record* below.
@@ -178,15 +203,36 @@ front of the session. See *The console, and the record* below.
 
 | Path | What |
 | --- | --- |
-| `logs/cycle.jsonl` | one line per cycle: `{at, outcome, inputs, new, failed, watermark}`, or `{at, outcome: "finished", records, watermark, degraded}` |
-| `logs/intake/seen`, `logs/intake/watermark` | typed seen keys; one UTC time |
-| `logs/outages.jsonl` | outages and their ends |
+| the log branch (`opsbot/log`) | never checked out: `cycles` (one record per line the loop logs: a check that found something `{at, outcome, inputs, new, failed}`, a finish `{at, outcome: "finished", records, degraded}`, a sleep, a wake), `seen`, `outages`, `routines`, `posts/<channel>`, `ledgers/<name>` and `state/<name>`; a quiet run is a commit's trailers, not records; the watermark is the tip's `Watermark` trailer. `opsbot-core log read` and `log tail` read it |
+| `.git/opsbot-log-pending.json`, `.git/opsbot-log-cache.json` | what waits for the next log commit, and the records already read; never committed |
 | `.git/opsbot-cycle.lock` | the writer lock `{pid, session, started}`, never committed |
 | `memory/` (`memory.dir`) | the session's auto memory: `MEMORY.md` and one file per memory; committed with the cycles |
 | `.git/opsbot-memory-review.json` | the snapshot a memory review diffs against; never committed |
 | `routines/` (`routines.dir`) | the routine definitions, one markdown file each; read at `HEAD`; changed only through review |
-| `records/routine-runs/` (`routines.runs_dir`) | one record per run, under `YYYY/MM/`; committed with the cycles |
 | `.git/opsbot-sleep` | while going down, asleep, or woken and not yet answered; removed by `cycle begin`; never committed. The log gets `sleep` and `wake` lines, and its readers treat the span between them as intended silence |
+
+## Moving a bot to the log branch
+
+A bot that kept its log in files (the kit's `logs/` files, and its own files listed in the old
+`commit_paths` setting) moves once, with `scripts/opsbot-core log migrate`. Until the commit it
+prepares is merged into the bot's checkout, this release refuses to run the loop (exit 2, naming
+the command), so nothing is ever written to both places.
+
+1. Update the kit (`npx skills update`). A bot more than one release behind is refused with the
+   release to update to first: update to it, let one full cycle run, then update to this one.
+2. `scripts/opsbot-core log migrate --dry-run`. It prints, per file, its lines and where they go.
+   It stops (exit 1) until every tracked file under `logs/` that no setting names, and every data
+   file a hook names, is assigned with `--assign <path>=ledger[:<name>]|state[:<name>]|ignore|keep`.
+3. `scripts/opsbot-core log migrate` (with the same `--assign` flags). It writes every line to the
+   log branch (a line it cannot place is a record of ledger `unparsed`, with its file, line and
+   why), and prepares `opsbot/log-migrate` from HEAD: one commit that removes the files and the
+   settings only they needed, sets `log.branch`, and declares the ledgers and baselines it moved.
+   Nothing changes on the current branch. Run again, it writes nothing twice.
+4. Do what it prints: push both branches, open and merge the pull request, then in the bot's
+   checkout discard the log files' local changes (their lines are on the branch) and
+   `git pull --ff-only`. The next `cycle begin` writes to the log branch.
+5. Change the bot's hooks that wrote files to `log append` and `log state set`, and delete any
+   repo-sync hook of its own.
 
 ## Staying alive
 
@@ -326,14 +372,14 @@ record.** They live apart.
   slot. A bot with no definitions reads exactly as before.
 - Do the work as the body says (`routines view <id>`), then record it:
   `routines done <id> --notes "…" [--outcome partial|skipped|blocked] [--checked ITEM]...
-  [--handed-to WHO]`. The run record lands in `records/routine-runs/YYYY/MM/` and rides the
-  next cycle's commit. `routines history <id>` shows the runs and the missed stretches.
+  [--handed-to WHO]`. The run is a record of the log branch's `routines` sheet and rides the
+  next log commit. `routines history <id>` shows the runs and the missed stretches.
 - **Definitions are governed.** A change to `routines/` changes what the bot does, so it goes
   through the same review as the rule card. The core reads definitions at `HEAD` and never
   writes to `routines/`; the bot never edits them on its own.
-- The files are gitsheets markdown records. `templates/gitsheets/routines.toml` and
-  `routine-runs.toml` are optional sheet configs to install under `.gitsheets/` for querying
-  with gitsheets; the core needs no other tool.
+- The definitions are gitsheets markdown records. `templates/gitsheets/routines.toml` is an
+  optional sheet config to install under `.gitsheets/` for querying them with gitsheets; the
+  runs are read with `opsbot-core log read routines`.
 - **Built in:** `memory-review` (every `memory.review_days`, instructions
   `references/memory-review.md`) exists while memory is on. A `routines/memory-review.md`
   overrides it.
@@ -347,7 +393,7 @@ record.** They live apart.
 - `scripts/opsbot-core cycle end --records N [--degraded] [--summary TEXT]` — Pin the watermark to this cycle's check time (refuses a future time, a backwards move, or no check since the lock); run `cycle.d/end/`; log `finished`; commit, push, release; print `next <s> <reason>` (or, when a wake file gained lines since this cycle's check, `arrived: <n> on <file>` and `next 0 arrived` with no `wake` field: run `cycle begin` again at once) and, with `wake.files` set, the `wake` field with the monitor's deadline bounded by that next wake. With `loop.schedule: monitor`, the `wake` field holds the one schedule Monitor call (exits on a wake-file line or `cycle due`), and nothing else schedules the next cycle. With `sleep` set, a `sleep` field may replace `wake`, as at `cycle begin`. Each `cycle-end` recall with rows prints them in a `recall` field (a recall that cannot run is one line there). When the memory review is due, one `memory` line says so with the command to run, and a `routines` field names each other due routine; neither blocks the cycle.
 - `scripts/opsbot-core check --peek` — Run every heartbeat script and the `routines` input as a check does (each script also gets `OPSBOT_PEEK=1`) and print the count of new items per input. Records, logs and commits nothing; the watermark and seen keys are untouched, so the next check sees the same items. Exit 0 · 10 · 20 · 2 as `check`.
 - `scripts/opsbot-core wake wait --until <epoch seconds>` — The schedule monitor's poller, run by the one `Monitor` call `cycle begin` and `cycle end` print and by nothing else. From the line counts the last check recorded, polls every 2 s; prints the new lines of any wake file (each prefixed with the file's basename, cut to 300 characters, at most 20) or `cycle due` when the time passes, and exits 0. Refuses a time more than 1800 s ahead (exit 2).
-- `scripts/opsbot-core wake backstop --key <key> --at <ISO time> [--grace <seconds>] --reason <text>` — The listeners' one wake routine, so no listener carries its own; a listener runs it detached, one at a time, and logs its line. Waits `--grace` (default 20 s) for a check begun after `--at` or the key in `logs/intake/seen`; waits out a cycle already running and looks again; skips the wait while the bot is asleep; then runs `nudge --now`, again every 10 s, until its outcome is `woke` or `cooldown`, a newer check begins, the key is seen, or 30 minutes pass. Prints one line, `backstop:` with `woken by monitor`, `nudged after <n>s`, `nudged after cycle`, `already woken`, `asleep: nudged` or `gave up`, and exits 0; its progress notes go to stderr. Exit 2 on a missing key, time or reason.
+- `scripts/opsbot-core wake backstop --key <key> --at <ISO time> [--grace <seconds>] --reason <text>` — The listeners' one wake routine, so no listener carries its own; a listener runs it detached, one at a time, and logs its line. Waits `--grace` (default 20 s) for a check begun after `--at` or the key seen on the log branch; waits out a cycle already running and looks again; skips the wait while the bot is asleep; then runs `nudge --now`, again every 10 s, until its outcome is `woke` or `cooldown`, a newer check begins, the key is seen, or 30 minutes pass. Prints one line, `backstop:` with `woken by monitor`, `nudged after <n>s`, `nudged after cycle`, `already woken`, `asleep: nudged` or `gave up`, and exits 0; its progress notes go to stderr. Exit 2 on a missing key, time or reason.
 - `scripts/opsbot-core next-delay` — Seconds until the next cycle and why, from the cycle log and the cadence table. With `loop.schedule: monitor`, never over 1740 (29 min), and the reason says when that cap applied.
 
 ### Cold start
@@ -361,6 +407,11 @@ record.** They live apart.
 - `scripts/opsbot-core lock status | lock release [--abandon]` — Show the writer lock, or release it (another live process's only with `--abandon`).
 - `scripts/opsbot-core outage record <kind> [--note TEXT] [--started ISO] [--ended ISO] | outage end | outage list` — Record, close or list outages: failed-turn, refused, plan-limit, session-ended, stopped.
 - `scripts/opsbot-core log tail [--n N]` — The last N cycle-log lines (default 10).
+- `scripts/opsbot-core log append <ledger> | posts/<channel>` — Append the JSON record(s) on stdin to a ledger declared in `log.ledgers` (each must carry its declared fields) or to a channel's post log. Inside a cycle it rides the cycle's commit; outside, it is its own commit. Never the working tree.
+- `scripts/opsbot-core log state get <name> [--json-out PATH] | log state set <name>` — Read a baseline, or replace it with the JSON object on stdin (a name declared in `log.state`, carrying its declared fields). An unchanged value writes nothing.
+- `scripts/opsbot-core log read <sheet> [--since ISO] [--filter CLAUSE]... [--repo PATH|REMOTE] [--branch NAME] [--json-out PATH]` — Records of `cycles`, `seen`, `outages`, `routines`, `posts/<channel>` or `ledgers/<name>`, oldest first, staged ones included; `--since` walks only the days from then on; `--repo` fetches another bot's log branch (`opsbot/log`, or `--branch`) into a private copy under the git directory and reads it.
+- `scripts/opsbot-core log seen <key>` — Exit 0 when the key was reported to the session (from the log branch and what is staged for it), 1 when not: the listeners ask this.
+- `scripts/opsbot-core log migrate [--dry-run] [--assign PATH=ledger[:NAME]|state[:NAME]|ignore|keep]...` — Move a bot from the old log files to the log branch, once: every line of the kit's log files, the files the old settings listed, the post logs and the routine runs become records of the branch in one commit (each keeping its own time; a line it cannot place is a record of ledger `unparsed`), and `opsbot/log-migrate` is prepared from HEAD with one commit that removes those files and the settings only they needed and sets `log.branch`. Nothing on the current branch or in the working tree changes; it prints what to push and the pull request to open. `--dry-run` prints the counts per file and sheet and writes nothing. Stops (exit 1, nothing written) until every tracked file under `logs/` no setting names, and every data file a hook names, is assigned with `--assign`. Refuses (exit 2) a bot whose cycle log shows a release older than the one before this, naming the release to update to first.
 
 ### The record
 
@@ -377,7 +428,7 @@ record.** They live apart.
 - `scripts/opsbot-core routines [due [--all]]` — The routines due now (definitions in `routines.dir` at HEAD, plus the built-in `memory-review` while memory is on): id, title, schedule, since when, last run. `--all` lists every routine with its state, last run, next due time and source. Exit 1 when a definition or run record is invalid (named).
 - `scripts/opsbot-core routines view <id>` — One routine: schedule, source (a file at HEAD, or built in), state, last run, and its instructions, the definition's body.
 - `scripts/opsbot-core routines history <id>` — The routine's runs in order with outcome, days since the one before and any missed stretch or slots; then the time since the last and whether it is due.
-- `scripts/opsbot-core routines done <id> --notes TEXT [--outcome done|partial|skipped|blocked] [--checked ITEM]... [--handed-to WHO] [--at ISO]` — Record one run under `routines.runs_dir` (`YYYY/MM/<id>.md`), committed with the next cycle; prints when the routine is next due. Refuses an unknown or inactive routine, empty notes, an unknown outcome or a future `--at`. Never touches the definitions.
+- `scripts/opsbot-core routines done <id> --notes TEXT [--outcome done|partial|skipped|blocked] [--checked ITEM]... [--handed-to WHO] [--at ISO]` — Record one run on the log branch's `routines` sheet (`routines/<routine>/YYYY/MM/DD/<hhmmss>-<hash>`), committed with the next log commit; prints when the routine is next due. Refuses an unknown or inactive routine, empty notes, an unknown outcome or a future `--at`. Never touches the definitions.
 - `scripts/opsbot-core routines validate [--head]` — Parse every definition (working tree, or HEAD) and run record and name each problem: unparseable file, unknown key, bad or mismatched id, duplicate id, bad cadence, both or neither of interval and slot, a slot without days, bad time, day or `since`.
 
 ### Liveness (run by system timers)
@@ -391,6 +442,6 @@ record.** They live apart.
 
 - `scripts/opsbot-core hook install|uninstall|status [--scope project|global] [--dir PATH]` — Register the SessionStart (`cold-start --write`) and PreToolUse (`gate check`) hooks; project scope by default.
 - `scripts/opsbot-core hooks list [--point P]` — Every script that will run at each lifecycle point, in order, with its source.
-- `scripts/opsbot-core settings validate [--head]` — Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails.
+- `scripts/opsbot-core settings validate [--head]` — Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails; and a log branch (`log.branch`, default `opsbot/log`) that names the branch checked out, or no `gitsheets-axi` 2.15.0 or later to write it; `log.ledgers` or `log.state` that is not names with lists of field names; and, naming `log migrate`, every setting only the old log files needed (the list of files each cycle committed, `routines.runs_dir`, and `repo_sync` `pull-on-clean` or `never-pull`).
 
 <!-- END GENERATED: command-reference -->

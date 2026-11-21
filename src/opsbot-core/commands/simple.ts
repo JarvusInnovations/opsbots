@@ -9,7 +9,10 @@ import { intFlag, parseArgs, setExit, usageError } from "../args.js";
 import { delayLine, nextDelay } from "../cadence.js";
 import { cliInvocation } from "../invocation.js";
 import { POINTS, POINT_DIRS, discover, parsePoint, type Point } from "../lifecycle.js";
-import { nowMs, parseIso, requireRoot, showHead } from "../repo.js";
+import { git, nowMs, parseIso, requireRoot, showHead } from "../repo.js";
+import { DEFAULT_LOG_BRANCH, MIN_GITSHEETS, gitsheetsVersion, versionAtLeast } from "../log.js";
+import { logAppend, logRead, logSeen, logState, logUsageHelp } from "./logbranch.js";
+import { logMigrate } from "./migrate.js";
 import { SETTINGS_FILE, loadSettings, parseSettingsText, withDefaults } from "../settings.js";
 import { routineProblems } from "./routines.js";
 import { queryRecall, recallSheetProblems } from "../record.js";
@@ -98,10 +101,13 @@ export function detail(l: LogLine): string {
 
 export function logCommand(args: string[]): Record<string, unknown> {
   const [sub, ...rest] = args;
+  if (sub === "append") return logAppend(rest);
+  if (sub === "state") return logState(rest);
+  if (sub === "read") return logRead(rest);
+  if (sub === "seen") return logSeen(rest);
+  if (sub === "migrate") return logMigrate(rest);
   if (sub !== "tail") {
-    throw new AxiError(sub ? `unknown log subcommand ${sub}` : "log needs a subcommand", "VALIDATION_ERROR", [
-      `${cliInvocation()} log tail [--n N]`,
-    ]);
+    throw new AxiError(sub ? `unknown log subcommand ${sub}` : "log needs a subcommand", "VALIDATION_ERROR", logUsageHelp());
   }
   const usage = "log tail [--n N]";
   const { flags } = parseArgs(rest, { value: ["n"] }, usage);
@@ -210,9 +216,23 @@ export function settingsCommand(args: string[]): Record<string, unknown> {
       });
     }
   }
+  // the log branch needs gitsheets-axi with its commit options, and is never the program's branch
+  if (raw) {
+    const branch = isLogObj(raw.log) && typeof raw.log.branch === "string" && raw.log.branch ? raw.log.branch : DEFAULT_LOG_BRANCH;
+    const v = gitsheetsVersion();
+    if (v === null || !versionAtLeast(v, MIN_GITSHEETS)) {
+      problems.push(`the log branch needs gitsheets-axi ${MIN_GITSHEETS} or later (${v ? `found ${v}` : "it does not run here"}); \`opsbot-host bootstrap\` installs it`);
+    }
+    const cur = git(root, ["symbolic-ref", "--short", "-q", "HEAD"]).stdout.trim();
+    if (cur && cur === branch) problems.push(`the log branch ${JSON.stringify(branch)} is the branch checked out here; the log's branch is never checked out`);
+  }
   if (problems.length) {
     setExit(1);
     return { settings: `invalid · ${where} · ${problems.length} problem${problems.length === 1 ? "" : "s"}`, problems };
   }
   return { settings: `valid · ${where}` };
+}
+
+function isLogObj(v: unknown): v is { branch?: unknown } {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
 }

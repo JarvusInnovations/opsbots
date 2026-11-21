@@ -28,6 +28,12 @@
 // of each command's answer is in one small function below (the `*Of` functions), so a change in
 // whatsapp-axi's output is fixed in one place.
 // OPSBOT_WHATSAPP_AXI names another whatsapp-axi binary (a pinned copy, a test double).
+//
+// The decision log is not a file: each line is a record of the log branch's posts/whatsapp sheet, written with `opsbot-core log append posts/whatsapp` and read
+// with `opsbot-core log read` (OPSBOT_CORE names the core; default the installed skill's). A line
+// that cannot be written after the send is a warning on stderr and the post still succeeds: the
+// message went out, and a retry with its send id still cannot send it twice (whatsapp-axi's
+// --id holds that, not the log).
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { accessSync, appendFileSync, chmodSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -313,19 +319,13 @@ function senderKind(m) {
   return peer ? `p:${peer.name}` : "h";
 }
 
-/** This bot's posts to this chat in the last hour, from the decision log. */
+/** This bot's posts to this chat in the last hour, from the decision log; null when the log
+ * branch cannot be read (the guard then refuses: more guard, never less). */
 function postsLastHour(chat) {
-  const p = inRepo(wa.post_log || "logs/whatsapp-posts.jsonl");
-  if (!p) return 0;
-  let text = "";
-  try { text = readFileSync(p, "utf8"); } catch { return 0; }
   const since = Date.now() - 3600000;
-  let n = 0;
-  for (const line of text.split("\n")) {
-    if (!line.includes('"posted":true') && !line.includes('"posted":"unknown"')) continue;
-    try { const l = JSON.parse(line); if (l.chat === chat && (l.posted === true || l.posted === "unknown") && Date.parse(l.at) > since) n++; } catch { /* skip */ }
-  }
-  return n;
+  const lines = branchPostLines(since);
+  if (lines === null) return null;
+  return lines.filter((l) => l.chat === chat && (l.posted === true || l.posted === "unknown") && Date.parse(l.at) > since).length;
 }
 
 /**
@@ -362,6 +362,7 @@ function peerGuard(chat, text) {
     } };
   }
   const n = postsLastHour(chat);
+  if (n === null) return { refuse: { peer_guard: "hourly", peer, error: `the post log on the log branch cannot be read, so the posts to ${chat} in the last hour cannot be counted; ask the operator`, next: "run opsbot-core log read posts/whatsapp to see why, or ask the operator" } };
   if (n >= peerPerHour) return { refuse: { peer_guard: "hourly", peer, error: `${n} posts to ${chat} in the last hour; ask the operator`, next: "wait, or ask the operator" } };
   return { peer };
 }
@@ -464,13 +465,36 @@ const newSendId = () => randomBytes(16).toString("hex").toUpperCase();
 const SEND_ID_RE = /^[0-9A-F]{16,48}$/;
 const shellQuote = (s) => (/^[\w@%+=:,./-]+$/.test(s) ? s : `'${String(s).replace(/'/g, `'\\''`)}'`);
 
-function logDecision(line) {
-  const p = inRepo(wa.post_log || "logs/whatsapp-posts.jsonl");
-  if (!p) { console.error(`warning: streams.whatsapp.post_log must be inside the repo: ${wa.post_log}; nothing logged`); return; }
+// ------------------------------------------------------------------------------- the log branch
+
+const coreBin = process.env.OPSBOT_CORE || join(root, ".agents/skills/opsbot-core/scripts/opsbot-core");
+
+function core(args, input) {
+  const r = spawnSync(coreBin, args, { cwd: root, encoding: "utf8", input: input ?? "", timeout: 120000, maxBuffer: 16 << 20, env: { ...process.env, OPSBOT_ROOT: root } });
+  const why = r.error ? r.error.message.split("\n")[0] : ((r.stdout || "").match(/^error: (.*)$/m)?.[1] || (r.stderr || "").trim().split("\n")[0] || `exit ${r.status}`);
+  return { ok: !r.error && r.status === 0, why };
+}
+
+/** The post log's records since `sinceMs`, from the log branch; null when it cannot be read. */
+function branchPostLines(sinceMs) {
+  const dir = mkdtempSync(join(tmpdir(), "opsbot-posts-"));
   try {
-    mkdirSync(dirname(p), { recursive: true });
-    appendFileSync(p, `${JSON.stringify(line)}\n`);
-  } catch (e) { console.error(`warning: could not write ${p}: ${e.message.split("\n")[0]}`); }
+    const f = join(dir, "rows.json");
+    const r = core(["log", "read", "posts/whatsapp", "--since", new Date(sinceMs).toISOString(), `--json-out=${f}`]);
+    if (!r.ok) { console.error(`warning: cannot read the post log on the log branch: ${r.why}`); return null; }
+    const v = JSON.parse(readFileSync(f, "utf8"));
+    return Array.isArray(v) ? v : null;
+  } catch (e) {
+    console.error(`warning: cannot read the post log on the log branch: ${e.message.split("\n")[0]}`);
+    return null;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function logDecision(line) {
+  const r = core(["log", "append", "posts/whatsapp"], JSON.stringify(line));
+  if (!r.ok) console.error(`warning: could not write the post log on the log branch: ${r.why}`);
 }
 
 // ------------------------------------------------------------------------------- commands

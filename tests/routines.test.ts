@@ -1,11 +1,15 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BASE_SETTINGS, cli, git, makeBot, readLines, setSettings, writeStream, type Bot } from "./helpers";
+import { commitStaged, forgetLogBranch, routineRecord, sheetRecords } from "../src/opsbot-core/log";
+import { BASE_SETTINGS, cli, git, logOf, makeBot, setSettings, stageLog, stagedOf, writeStream, type Bot } from "./helpers";
 import { parseRecord, serializeRecord, FrontmatterError } from "../src/opsbot-core/frontmatter";
 import { computeState, parseDefinition, type Definition, type Run } from "../src/opsbot-core/routine-store";
 import { dueTimes } from "../src/opsbot-core/sleep";
 import { validateSettings, withDefaults } from "../src/opsbot-core/settings";
+
+// every cycle writes through gitsheets-axi (the log branch): a test of several takes seconds
+setDefaultTimeout(120_000);
 
 let bot: Bot;
 afterEach(() => bot?.cleanup());
@@ -147,12 +151,14 @@ describe("the file formats", () => {
     expect(parseDefinition("routines/x-y.md", "no frontmatter\n").problems[0]).toContain("routines/x-y.md: no frontmatter");
   });
 
-  test("settings: routines.{dir, runs_dir} with defaults, refused outside the repo", () => {
+  test("settings: routines.dir with its default, refused outside the repo; runs_dir names log migrate", () => {
     const base = { name: "x", mark: "m", loop: { prompt: "p" }, runtime: { agent: "x" } };
-    expect(withDefaults(base).routines).toEqual({ dir: "routines", runs_dir: "records/routine-runs" });
-    expect(withDefaults({ ...base, routines: { dir: "./ops/routines/", runs_dir: "log/runs" } }).routines).toEqual({ dir: "ops/routines", runs_dir: "log/runs" });
+    expect(withDefaults(base).routines).toEqual({ dir: "routines" });
+    expect(withDefaults({ ...base, routines: { dir: "./ops/routines/" } }).routines).toEqual({ dir: "ops/routines" });
     expect(validateSettings({ ...base, routines: { dir: "../x" } }).join()).toContain("routines.dir");
-    expect(validateSettings({ ...base, routines: { runs_dir: ".git/runs" } }).join()).toContain("routines.runs_dir");
+    // the runs are records of the log branch now
+    expect(validateSettings({ ...base, routines: { runs_dir: "log/runs" } }).join()).toContain("routines.runs_dir is gone");
+    expect(validateSettings({ ...base, routines: { runs_dir: "log/runs" } }).join()).toContain("log migrate");
     expect(validateSettings({ ...base, routines: { other: 1 } }).join()).toContain("unknown key routines.other");
   });
 });
@@ -171,6 +177,24 @@ function routineFile(b: Bot, id: string, fm: string, body = "Do the thing.\n", c
 const NO_MEMORY = { ...BASE_SETTINGS, memory: false };
 
 describe("routines done, history and validate", () => {
+
+  test("two runs of one routine in the same second are two files; the same run written again is one", () => {
+    bot = makeBot({ settings: NO_MEMORY });
+    routineFile(bot, "weekly-backup-check", 'cadence = "weekly"\nsince = "2026-01-05"');
+    const now = "2026-03-02T15:00:00Z";
+    for (const n of ["first", "second"]) expect(cli(bot, ["routines", "done", "weekly-backup-check", "--notes", n, "--at", "2026-03-02T14:00:00Z"], { now }).code).toBe(0);
+    expect(cli(bot, ["check"], { now }).code).toBe(0);
+    const files = () => git(bot.root, "ls-tree", "-r", "--name-only", "opsbot/log", "routines").trim().split("\n").filter(Boolean);
+    expect(files()).toHaveLength(2);
+    for (const f of files()) expect(f).toMatch(/^routines\/weekly-backup-check\/2026\/03\/02\/140000-[0-9a-f]{12}\.toml$/);
+    // the same record again, in a commit of its own: still one file for it
+    forgetLogBranch();
+    const run = sheetRecords(bot.root, "opsbot/log", "routines")[0]!;
+    const w = commitStaged(bot.root, "opsbot/log", { routines: [routineRecord(run)] }, { subject: "again" });
+    expect(w.ok).toBe(true);
+    expect(files()).toHaveLength(2);
+    expect(cli(bot, ["routines", "history", "weekly-backup-check"], { now }).out).toContain("2 runs");
+  }, SLOW);
   test("done writes one run record, clears due, and history shows the gaps", () => {
     bot = makeBot({ settings: NO_MEMORY });
     routineFile(bot, "weekly-backup-check", 'cadence = "weekly"\nsince = "2026-01-05"', "Check every nightly job.\n\n- each night accounted for\n");
@@ -181,11 +205,21 @@ describe("routines done, history and validate", () => {
     expect(cli(bot, ["routines", "done", "weekly-backup-check", "--notes", "all seven nights fine", "--at", "2026-01-12T09:00:00Z"], { now }).code).toBe(0);
     const r = cli(bot, ["routines", "done", "weekly-backup-check", "--notes", "two nights failed", "--outcome", "partial", "--checked", "jobs listed", "--checked", "newest backup, opened", "--handed-to", "the operator", "--at", "2026-02-16T09:00:00Z"], { now });
     expect(r.code).toBe(0);
-    expect(r.out).toContain("records/routine-runs/2026/02/weekly-backup-check-2026-02-16-0900.md");
-    const file = join(bot.root, "records", "routine-runs", "2026", "02", "weekly-backup-check-2026-02-16-0900.md");
-    expect(readFileSync(file, "utf8")).toBe(
-      '+++\nat = "2026-02-16T09:00:00Z"\nby = "testbot"\nchecked = ["jobs listed", "newest backup, opened"]\nhanded_to = "the operator"\nid = "weekly-backup-check-2026-02-16-0900"\noutcome = "partial"\nroutine = "weekly-backup-check"\ntitle = "weekly-backup-check title: partial 2026-02-16"\n+++\n\n# weekly-backup-check title: partial 2026-02-16\n\ntwo nights failed\n',
-    );
+    expect(r.out).toContain("opsbot/log:routines/weekly-backup-check/2026/02/16/090000");
+    // staged for the next log commit, never a file in the working tree
+    expect(stagedOf(bot).routines!.find((x) => x.id === "weekly-backup-check-2026-02-16-0900")).toEqual({
+      id: "weekly-backup-check-2026-02-16-0900",
+      routine: "weekly-backup-check",
+      at: "2026-02-16T09:00:00Z",
+      outcome: "partial",
+      by: "testbot",
+      checked: ["jobs listed", "newest backup, opened"],
+      title: "weekly-backup-check title: partial 2026-02-16",
+      notes: "two nights failed",
+      handed_to: "the operator",
+      hash: expect.stringMatching(/^[0-9a-f]{12}$/),
+    });
+    expect(git(bot.root, "status", "--porcelain")).toBe("");
     // still due (the newest run is over a week old); a run now clears it
     expect(cli(bot, ["routines", "due"], { now }).out).toContain("weekly-backup-check");
     const d = cli(bot, ["routines", "done", "weekly-backup-check", "--notes", "fine"], { now });
@@ -269,7 +303,7 @@ describe("a due routine surfaces once per occurrence", () => {
     // a run clears it; the run is committed by the next check, and the next slot is the due time
     expect(cli(bot, ["routines", "done", "morning-summary", "--notes", "sent"], { now }).code).toBe(0);
     expect(cli(bot, ["check"], { now }).code).toBe(0);
-    expect(git(bot.root, "show", "--name-only", "--format=", "HEAD")).toContain("records/routine-runs/2026/03/morning-summary-2026-03-02-1410.md");
+    expect(git(bot.root, "show", "--name-only", "--format=", "opsbot/log")).toMatch(/routines\/morning-summary\/2026\/03\/02\/141000-[0-9a-f]{12}\.toml/);
     expect(git(bot.root, "status", "--porcelain")).toBe("");
     expect(dueTimes(bot.root, s, "{}", T(now)).due[0]!.at).toBe("2026-03-03T13:30:00Z");
     // the next slot is a new occurrence: one new item
@@ -303,7 +337,7 @@ describe("a due routine surfaces once per occurrence", () => {
     const pack = cli(bot, ["cold-start"], { now }).out;
     expect(pack).not.toContain("Routines");
     expect(pack).not.toContain("routines due");
-    const log = readLines(join(bot.root, "logs", "cycle.jsonl"));
+    const log = logOf(bot);
     expect(Object.keys(log[0]!.inputs as object)).toEqual(["10-file-stream", "20-quiet-stream"]);
     expect(dueTimes(bot.root, withDefaults(BASE_SETTINGS), "{}", T(now))).toEqual({ due: [], problem: null });
   }, SLOW);
@@ -344,9 +378,9 @@ describe("memory-review, the first built-in routine", () => {
     expect(cli(bot, ["memory", "status"], { now }).out).toContain("not due: next review in 7 days");
     expect(cli(bot, ["routines", "due"], { now }).out).toContain("nothing due");
     // the cycle-log line is still written, and the run record rides the next commit
-    expect(readLines(join(bot.root, "logs", "cycle.jsonl")).pop()!.outcome).toBe("memory-review");
+    expect(logOf(bot).pop()!.outcome).toBe("memory-review");
     expect(cli(bot, ["check"], { now }).code).toBe(0);
-    expect(git(bot.root, "show", "--name-only", "--format=", "HEAD")).toContain("records/routine-runs/");
+    expect(git(bot.root, "show", "--name-only", "--format=", "opsbot/log")).toContain("routines/memory-review/");
     // due again a week later, a new occurrence keyed by the run
     const again = cli(bot, ["check"], { now: after(16) });
     expect(again.code).toBe(10);
@@ -356,8 +390,7 @@ describe("memory-review, the first built-in routine", () => {
   test("a cycle-log review line from before the routine counts as a run", () => {
     bot = makeBot();
     mem(bot, "a.md", "a\n");
-    mkdirSync(join(bot.root, "logs"), { recursive: true });
-    writeFileSync(join(bot.root, "logs", "cycle.jsonl"), `${JSON.stringify({ at: after(8), outcome: "memory-review", files: 1, kept: 1, updated: 0, removed: 0, added: 0, note: "old review" })}\n`);
+    stageLog(bot, { cycles: [{ at: after(8), outcome: "memory-review", files: 1, kept: 1, updated: 0, removed: 0, added: 0, note: "old review" }] });
     expect(cli(bot, ["memory", "status"], { now: after(9) }).out).toContain("not due: next review in");
     expect(cli(bot, ["routines", "history", "memory-review"], { now: after(9) }).out).toContain("old review");
   }, SLOW);

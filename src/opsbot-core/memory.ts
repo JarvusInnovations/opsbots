@@ -155,7 +155,7 @@ export function memoryRuns(root: string, s: Settings, runs?: Run[]): Run[] {
       checked: [],
       handed_to: null,
       notes: typeof l.note === "string" ? l.note : `kept ${l.kept ?? 0}, updated ${l.updated ?? 0}, removed ${l.removed ?? 0}, added ${l.added ?? 0}`,
-      file: "logs/cycle.jsonl",
+      file: "the cycle log",
     });
   }
   return [...recorded, ...legacy].sort(byTime);

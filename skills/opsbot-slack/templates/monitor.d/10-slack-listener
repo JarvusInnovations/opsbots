@@ -11,9 +11,9 @@
 //      one is pending join it): the core's one wake routine, which gives the session's own monitor
 //      wake_grace_seconds (20) to start a cycle and runs `nudge --now`, the backstop that survives
 //      the session, only when it did not. Its notes and its one line go to the journal;
-//   4. reacts with ack_emoji (default gear) only when the item's key appears in
-//      logs/intake/seen, which the core writes when the check reports the item to the model.
-//      So the second reaction means "read", by construction, not by promise.
+//   4. reacts with ack_emoji (default gear) only when `$OPSBOT_CORE log seen <key>` says the
+//      item's key is seen (the keys are on the log branch, never in the working tree), which the
+//      core records when the check reports the item to the model. So the second reaction means "read", by construction, not by promise.
 // The bot's own messages are never items. Its own top-level posts in a channel are remembered
 // as thread roots in slack-own-threads.jsonl beside the events file (the last 90 days), so a
 // later reply under one is kept without a mention. A thread it only replied in counts only
@@ -543,7 +543,6 @@ function main() {
   const s = settings(cfg);
   const filesDir = resolve(root, s.files.dir);
   const { rules, problems: ruleProblems } = interceptRules(s.intercept, root);
-  const seenFile = join(root, "logs/intake/seen");
   const core = process.env.OPSBOT_CORE || join(root, ".agents/skills/opsbot-core/scripts/opsbot-core");
   const teamArgs = s.team ? ["--team", s.team] : [];
   const axi = process.env.OPSBOT_SLACK_AXI || "slack-axi";
@@ -636,7 +635,8 @@ function main() {
     child.stdin.end(JSON.stringify(payload));
   });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const isSeen = (key) => { try { return readFileSync(seenFile, "utf8").split("\n").includes(key); } catch { return false; } };
+  // the core's `log seen` (exit 0 seen; anything else, an error included, is not yet)
+  const isSeen = (key) => new Promise((done) => execFile(core, ["log", "seen", key], { cwd: root, timeout: 60000, env: { ...process.env, OPSBOT_ROOT: root } }, (e) => done(!e)));
   const readEvents = () => { try { return readFileSync(s.eventsFile, "utf8"); } catch (e) { log("!", "events file:", e.message); return ""; } };
   const readRoots = () => { try { return readFileSync(s.ownThreadsFile, "utf8"); } catch { return ""; } };
   function rememberRoot(root) {
@@ -655,7 +655,7 @@ function main() {
   async function ackWhenSeen(conv, ts, key) {
     const until = Date.now() + s.ackTimeoutMs;
     while (Date.now() < until) {
-      if (isSeen(key)) { await run(axi, ["react", conv, ts, `:${s.ackEmoji}:`, ...teamArgs]); log("read:", key); return; }
+      if (await isSeen(key)) { await run(axi, ["react", conv, ts, `:${s.ackEmoji}:`, ...teamArgs]); log("read:", key); return; }
       await sleep(2 * tick);
     }
     log("!", "never seen within the timeout:", key);
@@ -741,7 +741,7 @@ function main() {
     ws.onclose = () => { log(`closed; reconnecting in ${backoff}s`); retry(); };
   }
 
-  log(`listening for ${cfg.name}; events to ${s.eventsFile}; receipt :${s.receiptEmoji}:, read :${s.ackEmoji}: once in ${seenFile}`);
+  log(`listening for ${cfg.name}; events to ${s.eventsFile}; receipt :${s.receiptEmoji}:, read :${s.ackEmoji}: once seen on the log branch`);
   connect();
 }
 

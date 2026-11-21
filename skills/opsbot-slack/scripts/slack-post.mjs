@@ -35,8 +35,8 @@
 // OPSBOT_SLACK_AXI names another slack-axi binary (a pinned copy, a test double).
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { accessSync, appendFileSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 const EXIT = { ok: 0, slack: 1, usage: 2, blocked: 3, screenFailed: 4, identity: 5, peerGuard: 6 };
@@ -443,19 +443,13 @@ function rememberOwnPost(conv, ts, kind) {
   saveCache(cache);
 }
 
-/** This bot's posts that involved a peer, in this channel, in the last hour, from the decision log. */
+/** This bot's posts that involved a peer, in this channel, in the last hour, from the decision log;
+ * null when the log branch cannot be read (the guard then refuses: more guard, never less). */
 function peerPostsLastHour(conv) {
-  const p = inRepo(slack.post_log || "logs/slack-posts.jsonl");
-  if (!p) return 0;
-  let text = "";
-  try { text = readFileSync(p, "utf8"); } catch { return 0; }
   const since = Date.now() - 3600000;
-  let n = 0;
-  for (const line of text.split("\n")) {
-    if (!line.includes('"peer"')) continue;
-    try { const l = JSON.parse(line); if (l.conv === conv && l.posted === true && l.peer && Date.parse(l.at) > since) n++; } catch { /* skip */ }
-  }
-  return n;
+  const lines = branchPostLines(since);
+  if (lines === null) return null;
+  return lines.filter((l) => l.conv === conv && l.posted === true && l.peer && Date.parse(l.at) > since).length;
 }
 
 /**
@@ -495,6 +489,9 @@ async function peerGuard(conv, reply, text) {
     } };
   }
   const n = peerPostsLastHour(conv);
+  if (n === null) {
+    return { refuse: { peer_guard: "hourly", peer, error: `the post log on the log branch cannot be read, so the posts to peers in ${conv} in the last hour cannot be counted; ask the operator`, next: "run opsbot-core log read posts/slack to see why, or ask the operator" } };
+  }
   if (n >= peerPerHour) {
     return { refuse: { peer_guard: "hourly", peer, error: `${n} posts to peers in ${conv} in the last hour; ask the operator`, next: "wait, or ask the operator" } };
   }
@@ -597,13 +594,40 @@ function postToSlack(conv, reply, text) {
   return { ts: ((send.out.match(/^ts: "?([0-9.]+)"?/m) || [])[1]) || null };
 }
 
-function logDecision(line) {
-  const p = inRepo(slack.post_log || "logs/slack-posts.jsonl");
-  if (!p) { console.error(`warning: streams.slack.post_log must be inside the repo: ${slack.post_log}; nothing logged`); return; }
+// ------------------------------------------------------------------------------- the log branch
+
+// The decision log is the log branch's posts/slack sheet, written and read
+// through the core (OPSBOT_CORE names it; default the installed skill's), never a file.
+const coreBin = process.env.OPSBOT_CORE || join(root, ".agents/skills/opsbot-core/scripts/opsbot-core");
+
+function core(args, input) {
+  const r = spawnSync(coreBin, args, { cwd: root, encoding: "utf8", input: input ?? "", timeout: 120000, maxBuffer: 16 << 20, env: { ...process.env, OPSBOT_ROOT: root } });
+  const why = r.error ? r.error.message.split("\n")[0] : ((r.stdout || "").match(/^error: (.*)$/m)?.[1] || (r.stderr || "").trim().split("\n")[0] || `exit ${r.status}`);
+  return { ok: !r.error && r.status === 0, why };
+}
+
+/** The post log's records since `sinceMs`, from the log branch; null when it cannot be read. */
+function branchPostLines(sinceMs) {
+  const dir = mkdtempSync(join(tmpdir(), "opsbot-posts-"));
   try {
-    mkdirSync(dirname(p), { recursive: true });
-    appendFileSync(p, `${JSON.stringify(line)}\n`);
-  } catch (e) { console.error(`warning: could not write ${p}: ${e.message.split("\n")[0]}`); }
+    const f = join(dir, "rows.json");
+    const r = core(["log", "read", "posts/slack", "--since", new Date(sinceMs).toISOString(), `--json-out=${f}`]);
+    if (!r.ok) { console.error(`warning: cannot read the post log on the log branch: ${r.why}`); return null; }
+    const v = JSON.parse(readFileSync(f, "utf8"));
+    return Array.isArray(v) ? v : null;
+  } catch (e) {
+    console.error(`warning: cannot read the post log on the log branch: ${e.message.split("\n")[0]}`);
+    return null;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** One line of the decision log. A line that cannot be written is a warning; a post that went out
+ * is still reported as posted. */
+function logDecision(line) {
+  const r = core(["log", "append", "posts/slack"], JSON.stringify(line));
+  if (!r.ok) console.error(`warning: could not write the post log on the log branch: ${r.why}`);
 }
 
 // ------------------------------------------------------------------------------- commands

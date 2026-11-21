@@ -1,28 +1,20 @@
 /**
- * The committed state the loop keeps, and the lock it never commits.
+ * The loop's state: its log, read and written through the log branch (log.ts), and the lock it
+ * never commits.
  *
- *   logs/cycle.jsonl        one line per cycle outcome
- *   logs/intake/seen        typed seen keys, one per line, appended
- *   logs/intake/watermark   one UTC ISO line
- *   logs/outages.jsonl      outage events
+ *   the log branch           cycles, seen keys, outages; the watermark is the tip's trailer
  *   <git dir>/opsbot-cycle.lock   {pid, session, started}
  *
- * Line shapes are byte-compatible with the bot the loop was extracted from:
+ * Line shapes, as the readers get them:
  *   check     {at, outcome, inputs: {<input>: {ok, new}}, new, failed: [{input, error}], watermark}
  *   finished  {at, outcome: "finished", records, watermark, degraded[, summary]}
  *   outage    {at, outcome: "outage", kind, started, ended, note}
  *   end       {at, outcome: "outage-end", started, ended}
- * Outage lines are read from both files, since an earlier bot wrote them into
- * the cycle log.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { ISO_RE, gitPath, nowIso, nowMs, parseIso } from "./repo.js";
+import { branchCycleLines, branchLastCycleAt, branchOutageLines, branchSeen, branchWatermark, logBranch, stage } from "./log.js";
 
-export const CYCLE_LOG = "logs/cycle.jsonl";
-export const SEEN_FILE = "logs/intake/seen";
-export const WATERMARK_FILE = "logs/intake/watermark";
-export const OUTAGES_FILE = "logs/outages.jsonl";
 export const LOCK_NAME = "opsbot-cycle.lock";
 
 export const OUTAGE_KINDS = ["failed-turn", "refused", "plan-limit", "session-ended", "stopped"] as const;
@@ -37,52 +29,23 @@ export interface LogLine {
   [k: string]: unknown;
 }
 
-export function paths(root: string) {
-  return {
-    log: join(root, CYCLE_LOG),
-    seen: join(root, SEEN_FILE),
-    watermark: join(root, WATERMARK_FILE),
-    outages: join(root, OUTAGES_FILE),
-    lock: gitPath(root, LOCK_NAME),
-  };
+export function lockPath(root: string): string {
+  return gitPath(root, LOCK_NAME);
 }
 
-export function readJsonl(file: string): LogLine[] {
-  if (!existsSync(file)) return [];
-  const out: LogLine[] = [];
-  for (const line of readFileSync(file, "utf8").split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const v = JSON.parse(line);
-      if (v && typeof v === "object" && typeof v.at === "string" && typeof v.outcome === "string") out.push(v);
-    } catch {
-      // a torn or foreign line is skipped, never fatal
-    }
-  }
-  return out;
-}
-
-export function appendJsonl(file: string, obj: unknown): void {
-  mkdirSync(dirname(file), { recursive: true });
-  appendFileSync(file, `${JSON.stringify(obj)}\n`);
-}
-
-export function fileSize(file: string): number {
-  try {
-    return statSync(file).size;
-  } catch {
-    return 0;
-  }
-}
-
-export function truncateTo(file: string, size: number): void {
-  if (!existsSync(file)) return;
-  if (size === 0 && fileSize(file) > 0) truncateSync(file, 0);
-  else truncateSync(file, size);
-}
-
+/** The cycle log: the log branch read as lines (records, quiet runs and what is staged). */
 export function readCycleLog(root: string): LogLine[] {
-  return readJsonl(paths(root).log);
+  return branchCycleLines(root, logBranch(root)) as LogLine[];
+}
+
+/** Add one line to the cycle log: staged for the next log commit. */
+export function appendCycleLine(root: string, line: Record<string, unknown>): void {
+  stage(root, { cycles: [line] });
+}
+
+/** When the last cycle logged: from the tip alone (and anything staged). */
+export function lastCycleTime(root: string): string | null {
+  return branchLastCycleAt(root, logBranch(root));
 }
 
 /** The time of the last line a cycle wrote (a check's line or a finish), or null. */
@@ -112,11 +75,7 @@ export interface Outage {
 }
 
 export function outageLines(root: string): LogLine[] {
-  const p = paths(root);
-  const lines = [...readJsonl(p.log), ...readJsonl(p.outages)].filter(
-    (l) => l.outcome === "outage" || l.outcome === "outage-end",
-  );
-  return lines.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  return (branchOutageLines(root, logBranch(root)) as LogLine[]).filter((l) => l.outcome === "outage" || l.outcome === "outage-end");
 }
 
 /** Every recorded outage with its end, if any. */
@@ -155,51 +114,40 @@ export function recordOutage(
     ended: o.ended ?? null,
     note: o.note,
   };
-  appendJsonl(paths(root).outages, line);
+  appendOutage(root, line);
   return line;
 }
 
 export function recordOutageEnd(root: string, started: string, ended: string): LogLine {
   const line = { at: nowIso(), outcome: "outage-end", started, ended };
-  appendJsonl(paths(root).outages, line);
+  appendOutage(root, line);
   return line;
+}
+
+/** An outage line, staged for the next log commit. The record's path names its kind and edge
+ * (`start` or `end`), so an end carries the kind of the outage it ends. */
+function appendOutage(root: string, line: Record<string, unknown>): void {
+  logBranch(root);
+  const end = line.outcome === "outage-end";
+  const kind = end ? (outages(root).find((o) => o.started === line.started)?.kind ?? "outage") : line.kind;
+  stage(root, { outages: [{ ...line, kind, edge: end ? "end" : "start" }] });
 }
 
 // -------------------------------------------------------------- watermark
 
+/** The watermark: the log tip's trailer (or one a `check --no-commit` staged). */
 export function readWatermark(root: string): string | null {
-  const f = paths(root).watermark;
-  if (!existsSync(f)) return null;
-  const line = readFileSync(f, "utf8").split("\n")[0]?.trim() ?? "";
-  return line || null;
+  return branchWatermark(root, logBranch(root));
 }
 
 export function validWatermark(wm: string | null): boolean {
   return !!wm && ISO_RE.test(wm) && parseIso(wm) !== null;
 }
 
-export function writeWatermark(root: string, wm: string): void {
-  const f = paths(root).watermark;
-  mkdirSync(dirname(f), { recursive: true });
-  writeFileSync(f, `${wm}\n`);
-}
-
 // ------------------------------------------------------------------- seen
 
 export function readSeen(root: string): Set<string> {
-  const f = paths(root).seen;
-  if (!existsSync(f)) return new Set();
-  return new Set(
-    readFileSync(f, "utf8")
-      .split("\n")
-      .filter((l) => l !== ""),
-  );
-}
-
-export function appendSeen(root: string, keys: string[]): void {
-  const f = paths(root).seen;
-  mkdirSync(dirname(f), { recursive: true });
-  appendFileSync(f, keys.map((k) => `${k}\n`).join(""));
+  return branchSeen(root, logBranch(root));
 }
 
 // ------------------------------------------------------------------- lock
@@ -211,7 +159,7 @@ export interface LockHold {
 }
 
 export function readLock(root: string): { hold: LockHold | null; raw: boolean } {
-  const f = paths(root).lock;
+  const f = lockPath(root);
   if (!existsSync(f)) return { hold: null, raw: false };
   try {
     const v = JSON.parse(readFileSync(f, "utf8"));
@@ -298,7 +246,7 @@ export function readLoopSession(root: string): string | null {
 
 /** Take the lock with noclobber semantics; false when another cycle got there first. */
 export function takeLock(root: string): boolean {
-  const f = paths(root).lock;
+  const f = lockPath(root);
   const hold: LockHold = {
     pid: process.env.CLAUDE_PID ?? "",
     session: process.env.CLAUDE_CODE_SESSION_ID ?? "",
@@ -315,5 +263,5 @@ export function takeLock(root: string): boolean {
 }
 
 export function releaseLock(root: string): void {
-  rmSync(paths(root).lock, { force: true });
+  rmSync(lockPath(root), { force: true });
 }
