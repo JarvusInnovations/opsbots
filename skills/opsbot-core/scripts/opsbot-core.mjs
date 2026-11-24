@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "7cb69f2" : "dev";
+    VERSION = true ? "94899f8" : "dev";
   }
 });
 
@@ -2032,7 +2032,7 @@ var init_reference = __esm({
             summary: "Register the SessionStart (`cold-start --write`) and PreToolUse (`gate check`) hooks; project scope by default."
           },
           { usage: "hooks list [--point P]", summary: "Every script that will run at each lifecycle point, in order, with its source." },
-          { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails; and a log branch (`log.branch`, default `opsbot/log`) that names the branch checked out, or no `gitsheets-axi` 2.15.0 or later to write it; `log.ledgers` or `log.state` that is not names with lists of field names; and, naming `log migrate`, every setting only the old log files needed (the list of files each cycle committed, `routines.runs_dir`, and `repo_sync` `pull-on-clean` or `never-pull`)." }
+          { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets `autoMemoryEnabled`, or an `autoMemoryDirectory` other than `memory.dir` (the same directory, relative or absolute, is accepted, so a session `start` did not launch shares the bot's memory); any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails; and a log branch (`log.branch`, default `opsbot/log`) that names the branch checked out, or no `gitsheets-axi` 2.15.0 or later to write it; `log.ledgers` or `log.state` that is not names with lists of field names; and, naming `log migrate`, every setting only the old log files needed (the list of files each cycle committed, `routines.runs_dir`, and `repo_sync` `pull-on-clean` or `never-pull`)." }
         ]
       }
     ];
@@ -4370,10 +4370,40 @@ var init_routine_store = __esm({
 
 // src/opsbot-core/memory.ts
 import { createHash as createHash2 } from "node:crypto";
-import { existsSync as existsSync10, readdirSync as readdirSync4, readFileSync as readFileSync7, rmSync as rmSync4, statSync as statSync2, writeFileSync as writeFileSync5 } from "node:fs";
-import { join as join8, relative as relative3, resolve as resolve4, sep as sep2 } from "node:path";
+import { existsSync as existsSync10, readdirSync as readdirSync4, readFileSync as readFileSync7, realpathSync as realpathSync3, rmSync as rmSync4, statSync as statSync2, writeFileSync as writeFileSync5 } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { basename as basename4, dirname as dirname4, join as join8, relative as relative3, resolve as resolve4, sep as sep2 } from "node:path";
 function memoryDir(root, s) {
   return s.memory ? resolve4(root, s.memory.dir) : null;
+}
+function resolveDir(root, p) {
+  const home = p === "~" || p.startsWith("~/") ? homedir3() + p.slice(1) : p;
+  const abs = resolve4(root, home);
+  const rest = [];
+  let at = abs;
+  for (; ; ) {
+    try {
+      return join8(realpathSync3(at), ...rest);
+    } catch {
+      const up = dirname4(at);
+      if (up === at) return abs;
+      rest.unshift(basename4(at));
+      at = up;
+    }
+  }
+}
+function autoMemoryDirectoryProblem(root, value, memory) {
+  const shown = JSON.stringify(value);
+  if (memory === null) {
+    return `.claude/settings.json sets autoMemoryDirectory ${shown} but memory is false in opsbot.json; remove it, or turn memory on`;
+  }
+  const want = resolveDir(root, memory.dir);
+  if (typeof value !== "string" || value.trim() === "") {
+    return `.claude/settings.json sets autoMemoryDirectory ${shown}, which is not a directory; memory.dir is ${want}`;
+  }
+  const got = resolveDir(root, value);
+  if (got === want) return null;
+  return `.claude/settings.json sets autoMemoryDirectory ${shown} (${got}) but memory.dir is ${JSON.stringify(memory.dir)} (${want}); point it at the same directory, or remove it`;
 }
 function changedMemoryFiles(root, s, already = []) {
   const dir = memoryDir(root, s);
@@ -4987,7 +5017,7 @@ var init_reader = __esm({
 });
 
 // node_modules/agent-recall-axi/dist/src/lib/adapters/claude-code/classify.js
-import { basename as basename4, join as join10 } from "node:path";
+import { basename as basename5, join as join10 } from "node:path";
 import { existsSync as existsSync12 } from "node:fs";
 function isSilentType(type) {
   if (type === void 0)
@@ -5138,7 +5168,7 @@ function foldParts(parts2) {
 function skillDraft(text) {
   const firstLine2 = text.trimStart().split("\n", 1)[0] ?? "";
   const path = firstLine2.slice(SKILL_PREFIX.length).trim();
-  return { kind: "skill", text, extra: { meta: { skill: basename4(path), path } } };
+  return { kind: "skill", text, extra: { meta: { skill: basename5(path), path } } };
 }
 function stripTags(text) {
   return text.replace(/<\/?[A-Za-z][\w-]*(?:\s[^<>]*)?>/g, "").replace(/[ \t]+\n/g, "\n").trim();
@@ -5229,7 +5259,7 @@ function parsePointer(text, sidecar) {
   let path = stored;
   let exists = existsSync12(stored);
   if (sidecar) {
-    const relocated = join10(sidecar, "tool-results", basename4(stored));
+    const relocated = join10(sidecar, "tool-results", basename5(stored));
     if (relocated !== stored && existsSync12(relocated)) {
       path = relocated;
       exists = true;
@@ -5600,11 +5630,11 @@ var init_detect = __esm({
 // node_modules/agent-recall-axi/dist/src/lib/adapters/claude-code/sessions.js
 import { createHash as createHash3 } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
-import { basename as basename5, dirname as dirname4, join as join11 } from "node:path";
-import { homedir as homedir3 } from "node:os";
+import { basename as basename6, dirname as dirname5, join as join11 } from "node:path";
+import { homedir as homedir4 } from "node:os";
 function defaultRoot(env = process.env) {
   const config = env.CLAUDE_CONFIG_DIR;
-  return join11(config && config.length ? config : join11(homedir3(), ".claude"), "projects");
+  return join11(config && config.length ? config : join11(homedir4(), ".claude"), "projects");
 }
 function encodeCwd(cwd) {
   return cwd.replace(/[^A-Za-z0-9]/g, "-");
@@ -5648,7 +5678,7 @@ async function firstCwd(path, maxLines = 200) {
   return void 0;
 }
 async function projectForDir(dir) {
-  const encoded = basename5(dir);
+  const encoded = basename6(dir);
   const files = await jsonlFiles(dir);
   let cwd;
   let fallback;
@@ -5682,19 +5712,19 @@ async function* listProjects(root) {
     yield await projectForDir(join11(root, name));
 }
 function shortId(id, path) {
-  return /^[0-9a-f]{8}/i.test(id) ? id.slice(0, 8).toLowerCase() : createHash3("sha1").update(basename5(path)).digest("hex").slice(0, 8);
+  return /^[0-9a-f]{8}/i.test(id) ? id.slice(0, 8).toLowerCase() : createHash3("sha1").update(basename6(path)).digest("hex").slice(0, 8);
 }
 function sessionForPath(path, project) {
-  const file = basename5(path).replace(/\.jsonl$/, "");
-  const parentDir = dirname4(path);
-  if (basename5(parentDir) === "subagents") {
+  const file = basename6(path).replace(/\.jsonl$/, "");
+  const parentDir = dirname5(path);
+  if (basename6(parentDir) === "subagents") {
     const id = file.replace(/^agent-/, "");
-    const sidecar = dirname4(parentDir);
+    const sidecar = dirname5(parentDir);
     const s2 = {
       id,
       short: shortId(id, path),
       kind: "subagent",
-      parent: basename5(sidecar),
+      parent: basename6(sidecar),
       path,
       sidecar,
       adapter: ADAPTER_ID
@@ -5728,7 +5758,7 @@ async function* listSessions(project, opts = {}) {
   for (const f of files) {
     const main2 = sessionForPath(join11(project.dir, f), project);
     yield main2;
-    if (!opts.subagents || !sidecars?.has(basename5(main2.sidecar)))
+    if (!opts.subagents || !sidecars?.has(basename6(main2.sidecar)))
       continue;
     const subDir = join11(main2.sidecar, "subagents");
     if (!await isDir(subDir))
@@ -5843,8 +5873,8 @@ var init_claude_code = __esm({
 
 // node_modules/agent-recall-axi/dist/src/lib/scope.js
 import { stat as stat2 } from "node:fs/promises";
-import { homedir as homedir4 } from "node:os";
-import { dirname as dirname5, join as join12, resolve as resolve5 } from "node:path";
+import { homedir as homedir5 } from "node:os";
+import { dirname as dirname6, join as join12, resolve as resolve5 } from "node:path";
 function rootOf(scope = {}) {
   return scope.root ?? claudeCode.root(scope.env ?? process.env);
 }
@@ -5873,9 +5903,9 @@ async function projectForCwd(root, dir, scanned) {
 }
 function expandHome(value) {
   if (value === "~")
-    return homedir4();
+    return homedir5();
   if (value.startsWith("~/"))
-    return join12(homedir4(), value.slice(2));
+    return join12(homedir5(), value.slice(2));
   return value;
 }
 function looksLikePath(value) {
@@ -5907,7 +5937,7 @@ async function resolveScope(scope = {}) {
   }
   const cwd = resolve5(scope.cwd ?? process.cwd());
   let scanned;
-  for (let dir = cwd; ; dir = dirname5(dir)) {
+  for (let dir = cwd; ; dir = dirname6(dir)) {
     const candidate = join12(root, encodeCwd(dir));
     if (await isDir2(candidate)) {
       const p = await projectForDir(candidate);
@@ -5918,7 +5948,7 @@ async function resolveScope(scope = {}) {
     const hit = scanned.find((p) => p.cwd === dir);
     if (hit)
       return { root, all: false, projects: [hit] };
-    if (dirname5(dir) === dir)
+    if (dirname6(dir) === dir)
       break;
   }
   throw new AgentSessionError(`no session logs for ${cwd}`, "NO_SESSIONS", NO_SESSIONS_HINTS, { cwd });
@@ -5937,23 +5967,23 @@ var init_scope = __esm({
 });
 
 // node_modules/agent-recall-axi/dist/src/invocation.js
-import { accessSync as accessSync3, constants as constants3, realpathSync as realpathSync3, statSync as statSync3 } from "node:fs";
-import { homedir as homedir5 } from "node:os";
-import { basename as basename6, delimiter, dirname as dirname6, join as join13 } from "node:path";
+import { accessSync as accessSync3, constants as constants3, realpathSync as realpathSync4, statSync as statSync3 } from "node:fs";
+import { homedir as homedir6 } from "node:os";
+import { basename as basename7, delimiter, dirname as dirname7, join as join13 } from "node:path";
 function real(path) {
   try {
     if (!statSync3(path).isFile())
       return void 0;
-    return realpathSync3(path);
+    return realpathSync4(path);
   } catch {
     return void 0;
   }
 }
 function bundleShim(entrypoint) {
-  if (!entrypoint || basename6(entrypoint) !== BUNDLE_FILE)
+  if (!entrypoint || basename7(entrypoint) !== BUNDLE_FILE)
     return void 0;
   const bundle = real(entrypoint) ?? entrypoint;
-  const shim = join13(dirname6(bundle), NAME);
+  const shim = join13(dirname7(bundle), NAME);
   try {
     accessSync3(shim, constants3.X_OK);
     return { bundle, shim };
@@ -5976,7 +6006,7 @@ function shellWord(text) {
   return /^[\w@%+=:,./-]+$/.test(text) ? text : `'${text.replace(/'/g, `'\\''`)}'`;
 }
 function pathWord(path) {
-  const home = homedir5();
+  const home = homedir6();
   if (path === home)
     return "~";
   if (path.startsWith(`${home}/`))
@@ -6052,10 +6082,10 @@ var init_window_state = __esm({
 
 // node_modules/agent-recall-axi/dist/src/version.js
 import { readFileSync as readFileSync9 } from "node:fs";
-import { dirname as dirname7, join as join14 } from "node:path";
+import { dirname as dirname8, join as join14 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 function readVersion() {
-  const here = dirname7(fileURLToPath2(import.meta.url));
+  const here = dirname8(fileURLToPath2(import.meta.url));
   for (const candidate of [join14(here, "..", "package.json"), join14(here, "..", "..", "package.json")]) {
     try {
       const pkg = JSON.parse(readFileSync9(candidate, "utf8"));
@@ -6076,13 +6106,13 @@ var init_version2 = __esm({
 // node_modules/agent-recall-axi/dist/src/lib/cache/store.js
 import { createHash as createHash4 } from "node:crypto";
 import { lstat, mkdir, open as open2, readFile, rename, rm, stat as stat3, writeFile } from "node:fs/promises";
-import { homedir as homedir6 } from "node:os";
+import { homedir as homedir7 } from "node:os";
 import { join as join15 } from "node:path";
 function cacheDir(opts = {}) {
   if (opts.dir)
     return opts.dir;
   const env = opts.env ?? process.env;
-  const base = env.XDG_CACHE_HOME && env.XDG_CACHE_HOME.length ? env.XDG_CACHE_HOME : join15(homedir6(), ".cache");
+  const base = env.XDG_CACHE_HOME && env.XDG_CACHE_HOME.length ? env.XDG_CACHE_HOME : join15(homedir7(), ".cache");
   return join15(base, "agent-recall-axi");
 }
 function recordName(path) {
@@ -6653,7 +6683,7 @@ __export(stats_exports, {
   statsFromTable: () => statsFromTable
 });
 import { readFile as readFile3, stat as stat5 } from "node:fs/promises";
-import { dirname as dirname8, join as join17 } from "node:path";
+import { dirname as dirname9, join as join17 } from "node:path";
 function mirrorOf(t) {
   const m = {
     v: MIRROR_VERSION,
@@ -6770,7 +6800,7 @@ async function headHuman(session) {
   return void 0;
 }
 async function indexEntry(session, mtimeMs) {
-  const dir = session.kind === "main" ? session.project?.dir ?? dirname8(session.path) : void 0;
+  const dir = session.kind === "main" ? session.project?.dir ?? dirname9(session.path) : void 0;
   if (!dir)
     return void 0;
   const e = (await readSessionsIndex(dir)).get(session.id);
@@ -6980,7 +7010,7 @@ var init_session = __esm({
 // node_modules/agent-recall-axi/dist/src/lib/ids.js
 import { constants as constants4 } from "node:fs";
 import { access, stat as stat7 } from "node:fs/promises";
-import { homedir as homedir7 } from "node:os";
+import { homedir as homedir8 } from "node:os";
 import { join as join18, resolve as resolve7 } from "node:path";
 function formatId(id) {
   return id.block === void 0 ? `${id.session}:${id.seq}` : `${id.session}:${id.seq}.${id.block}`;
@@ -7010,9 +7040,9 @@ function comparePosition(a, b) {
 }
 function expandHome2(value) {
   if (value === "~")
-    return homedir7();
+    return homedir8();
   if (value.startsWith("~/"))
-    return join18(homedir7(), value.slice(2));
+    return join18(homedir8(), value.slice(2));
   return value;
 }
 function looksLikePath2(ref2) {
@@ -9818,9 +9848,9 @@ var init_transcript = __esm({
 
 // src/opsbot-core/wake.ts
 import { readFileSync as readFileSync11, rmSync as rmSync5, writeFileSync as writeFileSync6 } from "node:fs";
-import { homedir as homedir8 } from "node:os";
+import { homedir as homedir9 } from "node:os";
 function expandHome3(p) {
-  return p.replace(/^~(?=\/|$)/, homedir8());
+  return p.replace(/^~(?=\/|$)/, homedir9());
 }
 function wakeFiles(s) {
   return s.wake.files.map(expandHome3);
@@ -9971,7 +10001,7 @@ async function wakeWait(files, base, deadlineMs, pollMs = WAKE_POLL_MS) {
       const m = text.length ? text.split("\n").length - 1 : 0;
       if (m < counts[i]) counts[i] = 0;
       if (m > counts[i]) {
-        const name = basename7(f);
+        const name = basename8(f);
         for (const l of newLines(text, counts[i], m, DELIVER_MAX_LINES)) out.push(`${name}: ${cut(l, DELIVER_MAX_CHARS)}`);
         counts[i] = m;
       }
@@ -10007,7 +10037,7 @@ function schedulePackLines(s, evs, now) {
   if (st) return [`armed until ${hhmm2(st.until)} (since ${hhmm2(st.at)}); nothing to do until it delivers`];
   return [`${evs ? "not armed" : "state unknown (no session log)"} \xB7 run \`cycle begin\` now; it prints the one Monitor call to make`];
 }
-var MONITOR_MAX_MS, MONITOR_MIN_MS, WAKE_BASE_NAME, DELIVER_MAX_LINES, hhmm2, ARRIVED_RULE, CHAIN_RULE, CLOSE_RULE, WAKE_RULES, SCHEDULE_MARGIN_S, CYCLE_DUE, WAKE_WAIT_MAX_S, WAKE_POLL_MS, DELIVER_MAX_CHARS, basename7, cut, SLEEP_RULES, SCHEDULE_RULES;
+var MONITOR_MAX_MS, MONITOR_MIN_MS, WAKE_BASE_NAME, DELIVER_MAX_LINES, hhmm2, ARRIVED_RULE, CHAIN_RULE, CLOSE_RULE, WAKE_RULES, SCHEDULE_MARGIN_S, CYCLE_DUE, WAKE_WAIT_MAX_S, WAKE_POLL_MS, DELIVER_MAX_CHARS, basename8, cut, SLEEP_RULES, SCHEDULE_RULES;
 var init_wake = __esm({
   "src/opsbot-core/wake.ts"() {
     "use strict";
@@ -10033,7 +10063,7 @@ var init_wake = __esm({
     WAKE_WAIT_MAX_S = 1800;
     WAKE_POLL_MS = 2e3;
     DELIVER_MAX_CHARS = 300;
-    basename7 = (p) => p.replace(/\/+$/, "").split("/").pop() || p;
+    basename8 = (p) => p.replace(/\/+$/, "").split("/").pop() || p;
     cut = (l, n) => {
       const cs = Array.from(l);
       return cs.length > n ? cs.slice(0, n).join("") : l;
@@ -10712,10 +10742,10 @@ var init_sync = __esm({
 
 // src/opsbot-core/commands/coldstart.ts
 import { appendFileSync, existsSync as existsSync15, mkdirSync as mkdirSync3, readdirSync as readdirSync5, readFileSync as readFileSync13, rmSync as rmSync7, statSync as statSync5, writeFileSync as writeFileSync8 } from "node:fs";
-import { homedir as homedir9 } from "node:os";
-import { dirname as dirname9, join as join20, resolve as resolve8 } from "node:path";
+import { homedir as homedir10 } from "node:os";
+import { dirname as dirname10, join as join20, resolve as resolve8 } from "node:path";
 function legacyCacheDir(name) {
-  const base = process.env.XDG_CACHE_HOME || join20(homedir9(), ".cache");
+  const base = process.env.XDG_CACHE_HOME || join20(homedir10(), ".cache");
   return join20(base, name);
 }
 function ensureScratch(root) {
@@ -10730,7 +10760,7 @@ function ensureScratch(root) {
   }
   const present = text.split("\n").some((l) => ["/.scratch", "/.scratch/", ".scratch", ".scratch/"].includes(l.trim()));
   if (!present) {
-    mkdirSync3(dirname9(exclude), { recursive: true });
+    mkdirSync3(dirname10(exclude), { recursive: true });
     appendFileSync(exclude, `${text && !text.endsWith("\n") ? "\n" : ""}${SCRATCH_EXCLUDE}
 `);
   }
@@ -11229,7 +11259,7 @@ function decideFast(input) {
   const want = /* @__PURE__ */ new Set();
   for (const g of grown) {
     const ins = named.get(g.file);
-    if (!ins || ins.length === 0) return full(`${basename7(g.file)} names no inputs`);
+    if (!ins || ins.length === 0) return full(`${basename8(g.file)} names no inputs`);
     for (const i of ins) want.add(i);
   }
   for (const i of want) if (!input.installed.includes(i)) return full(`input ${i} is not installed in heartbeat.d`);
@@ -11584,7 +11614,7 @@ function closing(root, settings, out, o) {
   const recall2 = cycleEndRecall(root, settings);
   if (recall2.length) out.recall = recall2;
   if (arrived.length) {
-    out.arrived = arrived.map((a) => `${a.n} on ${basename7(a.file)}`).join(", ");
+    out.arrived = arrived.map((a) => `${a.n} on ${basename8(a.file)}`).join(", ");
     out.next = "0 arrived";
   } else out.next = next2(root, settings);
   if (sleep) {
@@ -11706,7 +11736,7 @@ var init_outage = __esm({
 
 // src/opsbot-core/runtime.ts
 import { appendFileSync as appendFileSync2, readFileSync as readFileSync15 } from "node:fs";
-import { homedir as homedir10 } from "node:os";
+import { homedir as homedir11 } from "node:os";
 import { join as join21 } from "node:path";
 function normStatus(s) {
   return s === "idle" || s === "done" || s === "working" || s === "blocked" ? s : "unknown";
@@ -11747,7 +11777,7 @@ function sessionLogPath(row) {
   const id = sess && sess.kind === "id" && typeof sess.value === "string" ? sess.value : null;
   const cwd = typeof row.cwd === "string" ? row.cwd : null;
   if (!id || !cwd || !/^[A-Za-z0-9-]+$/.test(id)) return null;
-  return join21(homedir10(), ".claude", "projects", projectSlug(cwd), `${id}.jsonl`);
+  return join21(homedir11(), ".claude", "projects", projectSlug(cwd), `${id}.jsonl`);
 }
 function herdrResolve(agent) {
   const r = run("herdr", ["agent", "list"]);
@@ -12070,10 +12100,10 @@ var init_liveness = __esm({
 
 // src/opsbot-core/commands/infra.ts
 import { existsSync as existsSync17, mkdirSync as mkdirSync5, readFileSync as readFileSync17, readdirSync as readdirSync6, rmSync as rmSync9, writeFileSync as writeFileSync11 } from "node:fs";
-import { homedir as homedir11 } from "node:os";
+import { homedir as homedir12 } from "node:os";
 import { join as join22 } from "node:path";
 function unitDir() {
-  const base = process.env.XDG_CONFIG_HOME || join22(homedir11(), ".config");
+  const base = process.env.XDG_CONFIG_HOME || join22(homedir12(), ".config");
   return join22(base, "systemd", "user");
 }
 function templatesDir() {
@@ -12263,10 +12293,10 @@ var init_infra = __esm({
 
 // src/opsbot-core/commands/hook.ts
 import { existsSync as existsSync18, mkdirSync as mkdirSync6, readFileSync as readFileSync18, writeFileSync as writeFileSync12 } from "node:fs";
-import { homedir as homedir12 } from "node:os";
-import { dirname as dirname10, join as join23, relative as relative4 } from "node:path";
+import { homedir as homedir13 } from "node:os";
+import { dirname as dirname11, join as join23, relative as relative4 } from "node:path";
 function settingsPath(scope, dir) {
-  if (scope === "global") return join23(homedir12(), ".claude", "settings.json");
+  if (scope === "global") return join23(homedir13(), ".claude", "settings.json");
   return join23(dir, ".claude", "settings.json");
 }
 function hookBase(scope, dir) {
@@ -12286,7 +12316,7 @@ function readSettings(p) {
   }
 }
 function writeSettings(p, s) {
-  mkdirSync6(dirname10(p), { recursive: true });
+  mkdirSync6(dirname11(p), { recursive: true });
   writeFileSync12(p, `${JSON.stringify(s, null, 2)}
 `);
 }
@@ -12393,7 +12423,7 @@ var init_hook = __esm({
 
 // src/opsbot-core/commands/sleep.ts
 import { statSync as statSync7 } from "node:fs";
-import { basename as basename8 } from "node:path";
+import { basename as basename9 } from "node:path";
 function wakePrompt(s, reason) {
   return `${s.loop.prompt} (woken: ${reason})`;
 }
@@ -12411,7 +12441,7 @@ function cheapReason(root, s, st, now) {
   if (op) return { reason: "the operator wrote to the session", event_at: op };
   for (const [file, base] of Object.entries(st.wake_lines)) {
     const n = lineCount(file);
-    if (n > base || n < base && n > 0) return { reason: `a new line in ${basename8(file)}`, event_at: mtime(file) ?? iso(now) };
+    if (n > base || n < base && n > 0) return { reason: `a new line in ${basename9(file)}`, event_at: mtime(file) ?? iso(now) };
   }
   const by = wakeBy(s, st);
   if ((parseIso(by.at) ?? Infinity) <= now) return { reason: by.why, event_at: by.at };
@@ -12570,7 +12600,7 @@ var init_sleep2 = __esm({
 
 // src/opsbot-core/commands/memory.ts
 import { copyFileSync, existsSync as existsSync19, mkdirSync as mkdirSync7, readdirSync as readdirSync7, readFileSync as readFileSync19, statSync as statSync8, writeFileSync as writeFileSync13 } from "node:fs";
-import { dirname as dirname11, join as join24, resolve as resolve9 } from "node:path";
+import { dirname as dirname12, join as join24, resolve as resolve9 } from "node:path";
 function settingsFor(root) {
   try {
     return loadSettings(root).settings;
@@ -12767,7 +12797,7 @@ function importCommand(args) {
     if (plan.indexAdd.length) {
       const destIdx = join24(dest, MEMORY_INDEX);
       const cur = existsSync19(destIdx) ? readFileSync19(destIdx, "utf8") : "";
-      mkdirSync7(dirname11(destIdx), { recursive: true });
+      mkdirSync7(dirname12(destIdx), { recursive: true });
       writeFileSync13(destIdx, `${cur}${cur && !cur.endsWith("\n") ? "\n" : ""}${plan.indexAdd.join("\n")}
 `);
     }
@@ -13588,9 +13618,9 @@ var init_logbranch = __esm({
 
 // src/opsbot-core/commands/migrate.ts
 import { copyFileSync as copyFileSync2, existsSync as existsSync22, mkdirSync as mkdirSync9, readdirSync as readdirSync8, readFileSync as readFileSync21, rmSync as rmSync10, statSync as statSync9, writeFileSync as writeFileSync15 } from "node:fs";
-import { basename as basename9, dirname as dirname12, extname, join as join26 } from "node:path";
+import { basename as basename10, dirname as dirname13, extname, join as join26 } from "node:path";
 function nameFor(path) {
-  const stem = basename9(path).replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^[^a-z0-9]+/, "");
+  const stem = basename10(path).replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^[^a-z0-9]+/, "");
   return (stem || "ledger").slice(0, 64);
 }
 function trackedFiles(root) {
@@ -13703,7 +13733,7 @@ function inventory(root, raw, assigns) {
   for (const [ch, p] of Object.entries(posts)) if (tracked.has(p) || existsSync22(join26(root, p))) add(p, "posts", `the ${ch} post log`, ch);
   const rd = runsDir(raw);
   for (const f of [.../* @__PURE__ */ new Set([...walkFiles(root, rd), ...[...tracked].filter((t) => t.startsWith(`${rd}/`))])].sort()) {
-    if (f.endsWith(".md") && basename9(f) !== "README.md") add(f, "runs", "a routine run");
+    if (f.endsWith(".md") && basename10(f) !== "README.md") add(f, "runs", "a routine run");
   }
   for (const f of [...tracked].sort()) if (f.startsWith("logs/") && !seen.has(f)) add(f, null, "tracked under logs/, named by no setting");
   const hooks = [...tracked].filter((f) => f.startsWith("opsbot.d/"));
@@ -13780,7 +13810,7 @@ function build2(root, sources, branch, now) {
         if (typeof data.routine !== "string" || !LOG_NAME_RE.test(data.routine)) throw new FrontmatterError("no routine name");
         if (!at) throw new FrontmatterError("no readable at");
         const rec = clean({
-          id: typeof data.id === "string" ? data.id : basename9(src.path, ".md"),
+          id: typeof data.id === "string" ? data.id : basename10(src.path, ".md"),
           routine: data.routine,
           at,
           outcome: typeof data.outcome === "string" ? data.outcome : "done",
@@ -14096,7 +14126,7 @@ function logMigrate(args) {
   for (const s of ignored) {
     if (!s.exists) continue;
     const dst = join26(backup, s.path);
-    mkdirSync9(dirname12(dst), { recursive: true });
+    mkdirSync9(dirname13(dst), { recursive: true });
     copyFileSync2(join26(root, s.path), dst);
   }
   const cur = git(root, ["symbolic-ref", "--short", "-q", "HEAD"]).stdout.trim() || "main";
@@ -14318,9 +14348,19 @@ function settingsCommand(args) {
     try {
       const cs = JSON.parse(readFileSync22(claude, "utf8"));
       const loop = raw.loop ?? {};
-      for (const k of ["autoMemoryEnabled", "autoMemoryDirectory"]) {
-        if (cs && cs[k] !== void 0) {
-          problems.push(`.claude/settings.json sets ${k}; auto memory is set by memory in opsbot.json, which start passes to Claude Code, so set it in one place`);
+      if (cs && cs.autoMemoryEnabled !== void 0) {
+        problems.push(`.claude/settings.json sets autoMemoryEnabled; auto memory is set by memory in opsbot.json, which start passes to Claude Code, so set it in one place`);
+      }
+      if (cs && cs.autoMemoryDirectory !== void 0) {
+        let memory;
+        try {
+          memory = withDefaults(raw).memory;
+        } catch {
+          memory = void 0;
+        }
+        if (memory !== void 0) {
+          const p = autoMemoryDirectoryProblem(root, cs.autoMemoryDirectory, memory);
+          if (p) problems.push(p);
         }
       }
       if (cs && cs.autoCompactWindow !== void 0 && String(cs.autoCompactWindow) !== String(loop.autocompact ?? "")) {
@@ -14371,6 +14411,7 @@ var init_simple = __esm({
     init_invocation();
     init_lifecycle();
     init_repo();
+    init_memory();
     init_log();
     init_logbranch();
     init_migrate();

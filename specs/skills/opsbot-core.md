@@ -72,8 +72,14 @@ key named `//` is a comment and is allowed at any level, since JSON has no comme
 `streams.<name>` objects are the heartbeat scripts' own and are not checked inside.
 When `.claude/settings.json` sets `autoCompactWindow`, `settings validate` refuses it
 unless it equals `loop.autocompact` (one value, one place). It also refuses
-`.claude/settings.json` setting `autoMemoryEnabled` or `autoMemoryDirectory`: `memory` is
-where that is set. `memory` must be `false` or an object; `memory.dir` must be a non-empty
+`.claude/settings.json` setting `autoMemoryEnabled`: `memory` is where that is set. It
+accepts `autoMemoryDirectory` there only when it is the same directory as `memory.dir`, so
+that a person's interactive session in the bot's checkout, which `start` does not launch,
+shares the bot's memory: the value is resolved against the repo root when relative, `~/`
+against the home directory, a trailing slash ignored, and both sides through symbolic links
+when they exist. Any other directory, or any value with `memory: false`, is refused with
+both paths named (the value as written and as resolved, and `memory.dir` resolved).
+`memory` must be `false` or an object; `memory.dir` must be a non-empty
 repo-relative path with no `..` segment, not absolute, not the repo itself, and not under
 `.git/`, `.claude/` or `.scratch/`; `memory.review_days` a positive whole number.
 `routines.dir` follows the same rule as `memory.dir`. `settings
@@ -492,8 +498,9 @@ lost when a bot moves hosts. Bots keep the habit, but the folder lives in the bo
 - **Where.** `start` passes `autoMemoryEnabled: true` and `autoMemoryDirectory` (the absolute
   path of `memory.dir`, `memory/` by default) in its one `--settings` object, and creates the
   directory when it is missing so the first write lands. The setting takes an absolute or
-  `~/` path. A session started any other way writes to Claude Code's default location;
-  `start` is how a bot is launched.
+  `~/` path. A session started any other way writes to Claude Code's default location,
+  unless the bot's `.claude/settings.json` names the same directory (the one auto memory key
+  `settings validate` accepts there); `start` is how a bot is launched.
 - **Off.** `memory: false` turns it off for a bot: `start` passes `autoMemoryEnabled: false`
   and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`. No value leaves memory on at Claude Code's
   default location.
