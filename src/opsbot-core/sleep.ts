@@ -5,7 +5,7 @@
  * `.git/opsbot-sleep`, which the sleep timer (`sleep tick`), the nudge and the watchdog read:
  *
  *   {decided_at, by, quiet_since, due, due_what, wake_lines, began, compacted, looked_at,
- *    woken: {at, reason, event_at, sent} | null, escalated}
+ *    woken: {at, reason, event_at, sent} | null, escalated, typed}
  *
  *   decided  the session was told to sleep; the timer compacts it once it is idle (going down)
  *   began    the sleep began (compacted, or marked begun without compaction)
@@ -50,6 +50,9 @@ export interface SleepState {
   looked_at: string | null;
   woken: Woken | null;
   escalated: boolean;
+  /** Every text the sleep timer typed into the session (its `/compact`, its wakes): never the
+   * operator's. Absent in a file written before it was recorded. */
+  typed?: string[];
 }
 
 export function sleepFile(root: string): string {
@@ -92,13 +95,22 @@ export function wakeLineCounts(s: Settings, base: Record<string, number> | null 
   return Object.fromEntries(wakeFiles(s).map((f) => [f, baseFor(base, f) ?? lineCount(f)]));
 }
 
-/** The operator's last message in the session log: the loop prompt (which the nudge and the sleep
- * timer type) and harness notifications are not the operator. */
-export function lastOperatorAt(evs: Ev[], loopPrompt: string, after?: string): string | null {
+/** A slash command as typed: `/name`, then whitespace or the end. Claude Code sometimes logs the
+ * bare text of a typed `/compact` (or `/context`, …) as a plain user row ahead of its command
+ * record; either way it is the operator acting on the session, not writing to the loop. */
+export const SLASH_COMMAND = /^\/[A-Za-z][\w:.-]*(?:\s|$)/;
+
+/** The operator's last message in the session log (specs/skills/opsbot-core.md, Sleep, "What
+ * counts as the operator writing"). Not the operator: the loop prompt (which the nudge and the
+ * sleep timer type), any text in `typed` (what the sleep timer recorded typing), a slash command
+ * in either form, harness notifications, and Claude Code's own entries. */
+export function lastOperatorAt(evs: Ev[], loopPrompt: string, after?: string, typed: string[] = []): string | null {
   const prompt = loopPrompt.trim();
+  const own = new Set(typed.map((t) => t.trim()));
   let last: string | null = null;
   for (const m of humanMessages(evs)) {
     if (m.text.startsWith(prompt) || m.text.startsWith("<task-notification") || m.text.startsWith("<system-reminder")) continue;
+    if (SLASH_COMMAND.test(m.text) || own.has(m.text)) continue;
     if (after && m.at <= after) continue;
     if (!last || m.at > last) last = m.at;
   }
@@ -198,6 +210,7 @@ export function decideSleep(
       looked_at: null,
       woken: null,
       escalated: false,
+      typed: [],
     },
   };
 }

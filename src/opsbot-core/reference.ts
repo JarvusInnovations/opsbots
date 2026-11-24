@@ -147,7 +147,7 @@ export const COMMAND_GROUPS: CommandGroup[] = [
       {
         usage: "sleep tick [--dry-run]",
         summary:
-          "The sleep timer's tick (only with `sleep` set; a no-op while awake). Going down: types `/compact` once the session is idle. Asleep: wakes it with `<loop.prompt> (woken: <reason>)` on an operator message, a wake-file line, the due time, `max_minutes`, or a `check --peek` exit of 10 or 20. A wake no `cycle begin` answers within `watchdog_minutes` is told once through `escalate.d/`. Exit 1 when the runtime or the operator could not be reached.",
+          "The sleep timer's tick (only with `sleep` set; a no-op while awake). Going down: types `/compact` once the session is idle. Asleep: wakes it with `<loop.prompt> (woken: <reason>)` on an operator message (a typed prompt; a slash command such as a hand-typed `/compact`, and the timer's own keystrokes, are not one), a wake-file line, the due time, `max_minutes`, or a `check --peek` exit of 10 or 20. A wake no `cycle begin` answers within `watchdog_minutes` is told once through `escalate.d/`. Exit 1 when the runtime or the operator could not be reached.",
       },
       {
         usage: "infra install|uninstall|status [--dry-run]",
