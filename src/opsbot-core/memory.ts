@@ -11,7 +11,8 @@
  *   <git dir>/opsbot-memory-review.json    the snapshot `memory review --begin` takes
  */
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { git, gitPath } from "./repo.js";
 import type { Settings } from "./settings.js";
@@ -28,6 +29,37 @@ const DAY = 86_400_000;
 /** The memory directory's absolute path, or null when memory is off. */
 export function memoryDir(root: string, s: Settings): string | null {
   return s.memory ? resolve(root, s.memory.dir) : null;
+}
+
+/** A directory as Claude Code would take it: `~/` against the home directory, a relative path
+ * against the repo root, no trailing slash, through symbolic links when it exists. */
+export function resolveDir(root: string, p: string): string {
+  const home = p === "~" || p.startsWith("~/") ? homedir() + p.slice(1) : p;
+  const abs = resolve(root, home);
+  try {
+    return realpathSync(abs);
+  } catch {
+    return abs;
+  }
+}
+
+/**
+ * The problem with `.claude/settings.json` setting `autoMemoryDirectory`, or null when it is the
+ * same directory as `memory.dir` (so a session `start` did not launch shares the bot's memory).
+ * `memory` is the resolved settings' `memory` (null when `memory: false`).
+ */
+export function autoMemoryDirectoryProblem(root: string, value: unknown, memory: { dir: string } | null): string | null {
+  const shown = JSON.stringify(value);
+  if (memory === null) {
+    return `.claude/settings.json sets autoMemoryDirectory ${shown} but memory is false in opsbot.json; remove it, or turn memory on`;
+  }
+  const want = resolveDir(root, memory.dir);
+  if (typeof value !== "string" || value.trim() === "") {
+    return `.claude/settings.json sets autoMemoryDirectory ${shown}, which is not a directory; memory.dir is ${want}`;
+  }
+  const got = resolveDir(root, value);
+  if (got === want) return null;
+  return `.claude/settings.json sets autoMemoryDirectory ${shown} (${got}) but memory.dir is ${JSON.stringify(memory.dir)} (${want}); point it at the same directory, or remove it`;
 }
 
 /**
