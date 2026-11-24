@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "94899f8" : "dev";
+    VERSION = true ? "9ffda8c" : "dev";
   }
 });
 
@@ -2016,7 +2016,7 @@ var init_reference = __esm({
           },
           {
             usage: "sleep tick [--dry-run]",
-            summary: "The sleep timer's tick (only with `sleep` set; a no-op while awake). Going down: types `/compact` once the session is idle. Asleep: wakes it with `<loop.prompt> (woken: <reason>)` on an operator message, a wake-file line, the due time, `max_minutes`, or a `check --peek` exit of 10 or 20. A wake no `cycle begin` answers within `watchdog_minutes` is told once through `escalate.d/`. Exit 1 when the runtime or the operator could not be reached."
+            summary: "The sleep timer's tick (only with `sleep` set; a no-op while awake). Going down: types `/compact` once the session is idle. Asleep: wakes it with `<loop.prompt> (woken: <reason>)` on an operator message (a typed prompt; a slash command such as a hand-typed `/compact`, and the timer's own keystrokes, are not one), a wake-file line, the due time, `max_minutes`, or a `check --peek` exit of 10 or 20. A wake no `cycle begin` answers within `watchdog_minutes` is told once through `escalate.d/`. Exit 1 when the runtime or the operator could not be reached."
           },
           {
             usage: "infra install|uninstall|status [--dry-run]",
@@ -9662,6 +9662,9 @@ function readEvents(path, maxBytes = TAIL_BYTES) {
         const e = { type: v.type, timestamp: String(v.timestamp ?? ""), content: v.message?.content ?? (v.type === "queue-operation" ? v.content : void 0) };
         if (typeof v.subtype === "string") e.subtype = v.subtype;
         if (typeof v.message?.model === "string") e.model = v.message.model;
+        if (v.isMeta === true) e.meta = true;
+        if (v.isCompactSummary === true) e.summary = true;
+        if (typeof v.origin?.kind === "string") e.origin = v.origin.kind;
         out.push(e);
       }
     } catch {
@@ -9687,6 +9690,7 @@ function humanMessages2(evs, from = 0) {
   const out = [];
   for (const e of evs.slice(Math.max(0, from))) {
     if (e.type !== "user") continue;
+    if (e.meta || e.summary || e.origin !== void 0 && e.origin !== "human") continue;
     if (typeof e.content === "string") {
       const t = e.content.trim();
       if (!t || t.startsWith(COMPACTION_MARK) || NOISE.some((r) => r.test(t))) continue;
@@ -10114,11 +10118,13 @@ function clearSleep(root) {
 function wakeLineCounts(s, base = null) {
   return Object.fromEntries(wakeFiles(s).map((f) => [f, baseFor(base, f) ?? lineCount(f)]));
 }
-function lastOperatorAt(evs, loopPrompt, after) {
+function lastOperatorAt(evs, loopPrompt, after, typed = []) {
   const prompt = loopPrompt.trim();
+  const own = new Set(typed.map((t) => t.trim()));
   let last = null;
   for (const m of humanMessages2(evs)) {
     if (m.text.startsWith(prompt) || m.text.startsWith("<task-notification") || m.text.startsWith("<system-reminder")) continue;
+    if (SLASH_COMMAND.test(m.text) || own.has(m.text)) continue;
     if (after && m.at <= after) continue;
     if (!last || m.at > last) last = m.at;
   }
@@ -10186,7 +10192,8 @@ function decideSleep(root, s, settingsText, lines, now, evs, by, base = null) {
       compacted: false,
       looked_at: null,
       woken: null,
-      escalated: false
+      escalated: false,
+      typed: []
     }
   };
 }
@@ -10250,7 +10257,7 @@ function sleepStatusLine(s, st) {
   const next3 = iso((parseIso(lastLook) ?? 0) + (s.sleep?.probe_minutes ?? 10) * 6e4);
   return `asleep since ${hhmm3(st.began)}, next look ${hhmm3(next3)}, wake by ${hhmm3(wakeBy(s, st).at)}`;
 }
-var SLEEP_STATE, hhmm3;
+var SLEEP_STATE, hhmm3, SLASH_COMMAND;
 var init_sleep = __esm({
   "src/opsbot-core/sleep.ts"() {
     "use strict";
@@ -10263,6 +10270,7 @@ var init_sleep = __esm({
     init_wake();
     SLEEP_STATE = "opsbot-sleep";
     hhmm3 = (t) => `${t.slice(11, 16)}Z`;
+    SLASH_COMMAND = /^\/[A-Za-z][\w:.-]*(?:\s|$)/;
   }
 });
 
@@ -12437,7 +12445,7 @@ function sleepCommand(args) {
 }
 function cheapReason(root, s, st, now) {
   const ptr = sessionPointer(root);
-  const op = ptr ? lastOperatorAt(readEvents(ptr.transcript_path), s.loop.prompt, st.decided_at) : null;
+  const op = ptr ? lastOperatorAt(readEvents(ptr.transcript_path), s.loop.prompt, st.decided_at, st.typed ?? []) : null;
   if (op) return { reason: "the operator wrote to the session", event_at: op };
   for (const [file, base] of Object.entries(st.wake_lines)) {
     const n = lineCount(file);
@@ -12499,17 +12507,17 @@ function goDown(root, s, st, now, dry, save2) {
   }
   const r = rt.prompt(agent, COMPACT);
   if (!r.ok) {
-    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") save2({ ...st, began: iso(now), compacted: true, looked_at: iso(now) });
+    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") save2({ ...withTyped(st, COMPACT), began: iso(now), compacted: true, looked_at: iso(now) });
     setExit(1);
     return { sleep: `going down \xB7 cannot \xB7 ${rt.name} prompt ${agent}: ${r.code}: ${r.message}` };
   }
-  save2({ ...st, began: iso(now), compacted: true, looked_at: iso(now) });
+  save2({ ...withTyped(st, COMPACT), began: iso(now), compacted: true, looked_at: iso(now) });
   return { sleep: `asleep \xB7 typed ${COMPACT} into ${agent}${idle.via}`, at: iso(now) };
 }
 function wake(root, s, st, why, now, dry, save2) {
   const agent = s.runtime.agent;
   const text = wakePrompt(s, why.reason);
-  const record = (sent) => save2({ ...st, woken: { at: st.woken?.at ?? iso(now), reason: why.reason, event_at: why.event_at, sent } });
+  const record = (sent) => save2({ ...withTyped(st, text), woken: { at: st.woken?.at ?? iso(now), reason: why.reason, event_at: why.event_at, sent } });
   const rt = runtimeFor(s);
   const found2 = rt.get(agent);
   if (!found2.ok) {
@@ -12570,7 +12578,7 @@ function answerWatch(root, s, text, st, now, dry, save2) {
   }
   return { sleep: `woken ${mins} min ago and unanswered \xB7 the operator told \xB7 outage recorded`, escalations: results };
 }
-var SLEEP_USAGE, COMPACT, mtime;
+var SLEEP_USAGE, COMPACT, mtime, withTyped;
 var init_sleep2 = __esm({
   "src/opsbot-core/commands/sleep.ts"() {
     "use strict";
@@ -12595,6 +12603,7 @@ var init_sleep2 = __esm({
         return null;
       }
     };
+    withTyped = (st, text) => ({ ...st, typed: [.../* @__PURE__ */ new Set([...st.typed ?? [], text])] });
   }
 });
 

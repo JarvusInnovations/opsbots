@@ -76,8 +76,9 @@ the CLI is not on PATH.
    field in place of `wake`. Then arm no monitor, schedule nothing, and end the turn. The
    sleep timer compacts the idle session and wakes it later by typing the loop prompt with
    `(woken: <reason>)` after it: a wake-file line, a stream that `check --peek` finds new or
-   failing, the due time, or `max_minutes`. Treat the wake as any other: read the pack if
-   the gate asks, then run `cycle begin`.
+   failing, the due time, `max_minutes`, or a prompt the operator typed into the session (a
+   slash command typed there, such as `/compact` or `/context`, is not one). Treat the wake
+   as any other: read the pack if the gate asks, then run `cycle begin`.
 
 ### A fast cycle
 
@@ -438,7 +439,7 @@ record.** They live apart.
 
 - `scripts/opsbot-core watchdog [--dry-run]` — When no cycle has logged within `watchdog_minutes`, tell the operator once per outage through `escalate.d/` and record it. Stands down while the bot sleeps.
 - `scripts/opsbot-core nudge [--now [--reason TEXT]] [--dry-run]` — Re-issue `loop.prompt` to the named agent when the loop is quiet, unlocked, past cooldown and idle. `--now` (for listeners) skips the quiet test. A `working` agent whose own session log shows its turn ended (background work only) is prompted anyway, with a note. While the bot sleeps only `--now` acts, and it wakes it. Every reply ends with `outcome:`, the word to test (the prose is for people): `woke` or `nudged` when the prompt was typed, `cooldown` when another nudge typed it moments ago or is typing it now (one nudge at a time holds the marker), `refused` for any other reason not to (lock, mid-turn, blocked, asleep, quiet), `cannot` (exit 1) when the runtime failed, `dry-run`.
-- `scripts/opsbot-core sleep tick [--dry-run]` — The sleep timer's tick (only with `sleep` set; a no-op while awake). Going down: types `/compact` once the session is idle. Asleep: wakes it with `<loop.prompt> (woken: <reason>)` on an operator message, a wake-file line, the due time, `max_minutes`, or a `check --peek` exit of 10 or 20. A wake no `cycle begin` answers within `watchdog_minutes` is told once through `escalate.d/`. Exit 1 when the runtime or the operator could not be reached.
+- `scripts/opsbot-core sleep tick [--dry-run]` — The sleep timer's tick (only with `sleep` set; a no-op while awake). Going down: types `/compact` once the session is idle. Asleep: wakes it with `<loop.prompt> (woken: <reason>)` on an operator message (a typed prompt; a slash command such as a hand-typed `/compact`, and the timer's own keystrokes, are not one), a wake-file line, the due time, `max_minutes`, or a `check --peek` exit of 10 or 20. A wake no `cycle begin` answers within `watchdog_minutes` is told once through `escalate.d/`. Exit 1 when the runtime or the operator could not be reached.
 - `scripts/opsbot-core infra install|uninstall|status [--dry-run]` — Render the watchdog and nudge timers, one unit per `monitor.d/` script, and with `sleep` set the sleep timer, from `opsbot.json`; `status` names stale units and the sleep state.
 
 ### Setup

@@ -62,10 +62,13 @@ const mtime = (f: string): string | null => {
   }
 };
 
+/** The state with `text` added to what the timer typed, so it is never read back as the operator's. */
+const withTyped = (st: SleepState, text: string): SleepState => ({ ...st, typed: [...new Set([...(st.typed ?? []), text])] });
+
 /** The reasons that cost nothing to test: the operator, a wake file, the due time, max_minutes. */
 function cheapReason(root: string, s: Settings, st: SleepState, now: number): Reason | null {
   const ptr = sessionPointer(root);
-  const op = ptr ? lastOperatorAt(readEvents(ptr.transcript_path), s.loop.prompt, st.decided_at) : null;
+  const op = ptr ? lastOperatorAt(readEvents(ptr.transcript_path), s.loop.prompt, st.decided_at, st.typed ?? []) : null;
   if (op) return { reason: "the operator wrote to the session", event_at: op };
   for (const [file, base] of Object.entries(st.wake_lines)) {
     const n = lineCount(file);
@@ -137,11 +140,11 @@ function goDown(root: string, s: Settings, st: SleepState, now: number, dry: boo
   const r = rt.prompt(agent, COMPACT);
   if (!r.ok) {
     // refused before anything was sent: try again at the next tick; anything else may have landed
-    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") save({ ...st, began: iso(now), compacted: true, looked_at: iso(now) });
+    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") save({ ...withTyped(st, COMPACT), began: iso(now), compacted: true, looked_at: iso(now) });
     setExit(1);
     return { sleep: `going down · cannot · ${rt.name} prompt ${agent}: ${r.code}: ${r.message}` };
   }
-  save({ ...st, began: iso(now), compacted: true, looked_at: iso(now) });
+  save({ ...withTyped(st, COMPACT), began: iso(now), compacted: true, looked_at: iso(now) });
   return { sleep: `asleep · typed ${COMPACT} into ${agent}${idle.via}`, at: iso(now) };
 }
 
@@ -150,7 +153,7 @@ function goDown(root: string, s: Settings, st: SleepState, now: number, dry: boo
 function wake(root: string, s: Settings, st: SleepState, why: Reason, now: number, dry: boolean, save: (x: SleepState) => void): Record<string, unknown> {
   const agent = s.runtime.agent;
   const text = wakePrompt(s, why.reason);
-  const record = (sent: boolean) => save({ ...st, woken: { at: st.woken?.at ?? iso(now), reason: why.reason, event_at: why.event_at, sent } });
+  const record = (sent: boolean) => save({ ...withTyped(st, text), woken: { at: st.woken?.at ?? iso(now), reason: why.reason, event_at: why.event_at, sent } });
   const rt = runtimeFor(s);
   const found = rt.get(agent);
   if (!found.ok) {
