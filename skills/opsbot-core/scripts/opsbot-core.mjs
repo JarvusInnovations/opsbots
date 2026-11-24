@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "b94ee8c" : "dev";
+    VERSION = true ? "0cc6c32" : "dev";
   }
 });
 
@@ -3743,17 +3743,24 @@ var init_routine_store = __esm({
 import { createHash } from "node:crypto";
 import { existsSync as existsSync9, readdirSync as readdirSync4, readFileSync as readFileSync6, realpathSync as realpathSync3, rmSync as rmSync3, statSync as statSync3, writeFileSync as writeFileSync4 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { join as join8, relative as relative3, resolve as resolve4, sep as sep2 } from "node:path";
+import { basename as basename4, dirname as dirname5, join as join8, relative as relative3, resolve as resolve4, sep as sep2 } from "node:path";
 function memoryDir(root, s) {
   return s.memory ? resolve4(root, s.memory.dir) : null;
 }
 function resolveDir(root, p) {
   const home = p === "~" || p.startsWith("~/") ? homedir3() + p.slice(1) : p;
   const abs = resolve4(root, home);
-  try {
-    return realpathSync3(abs);
-  } catch {
-    return abs;
+  const rest = [];
+  let at = abs;
+  for (; ; ) {
+    try {
+      return join8(realpathSync3(at), ...rest);
+    } catch {
+      const up = dirname5(at);
+      if (up === at) return abs;
+      rest.unshift(basename4(at));
+      at = up;
+    }
   }
 }
 function autoMemoryDirectoryProblem(root, value2, memory) {
@@ -4381,7 +4388,7 @@ var init_reader = __esm({
 });
 
 // node_modules/agent-recall-axi/dist/src/lib/adapters/claude-code/classify.js
-import { basename as basename4, join as join10 } from "node:path";
+import { basename as basename5, join as join10 } from "node:path";
 import { existsSync as existsSync11 } from "node:fs";
 function isSilentType(type) {
   if (type === void 0)
@@ -4532,7 +4539,7 @@ function foldParts(parts2) {
 function skillDraft(text) {
   const firstLine2 = text.trimStart().split("\n", 1)[0] ?? "";
   const path = firstLine2.slice(SKILL_PREFIX.length).trim();
-  return { kind: "skill", text, extra: { meta: { skill: basename4(path), path } } };
+  return { kind: "skill", text, extra: { meta: { skill: basename5(path), path } } };
 }
 function stripTags(text) {
   return text.replace(/<\/?[A-Za-z][\w-]*(?:\s[^<>]*)?>/g, "").replace(/[ \t]+\n/g, "\n").trim();
@@ -4623,7 +4630,7 @@ function parsePointer(text, sidecar) {
   let path = stored;
   let exists = existsSync11(stored);
   if (sidecar) {
-    const relocated = join10(sidecar, "tool-results", basename4(stored));
+    const relocated = join10(sidecar, "tool-results", basename5(stored));
     if (relocated !== stored && existsSync11(relocated)) {
       path = relocated;
       exists = true;
@@ -4994,7 +5001,7 @@ var init_detect = __esm({
 // node_modules/agent-recall-axi/dist/src/lib/adapters/claude-code/sessions.js
 import { createHash as createHash2 } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
-import { basename as basename5, dirname as dirname5, join as join11 } from "node:path";
+import { basename as basename6, dirname as dirname6, join as join11 } from "node:path";
 import { homedir as homedir4 } from "node:os";
 function defaultRoot(env = process.env) {
   const config = env.CLAUDE_CONFIG_DIR;
@@ -5042,7 +5049,7 @@ async function firstCwd(path, maxLines = 200) {
   return void 0;
 }
 async function projectForDir(dir) {
-  const encoded = basename5(dir);
+  const encoded = basename6(dir);
   const files = await jsonlFiles(dir);
   let cwd;
   let fallback;
@@ -5076,19 +5083,19 @@ async function* listProjects(root) {
     yield await projectForDir(join11(root, name));
 }
 function shortId(id, path) {
-  return /^[0-9a-f]{8}/i.test(id) ? id.slice(0, 8).toLowerCase() : createHash2("sha1").update(basename5(path)).digest("hex").slice(0, 8);
+  return /^[0-9a-f]{8}/i.test(id) ? id.slice(0, 8).toLowerCase() : createHash2("sha1").update(basename6(path)).digest("hex").slice(0, 8);
 }
 function sessionForPath(path, project) {
-  const file = basename5(path).replace(/\.jsonl$/, "");
-  const parentDir = dirname5(path);
-  if (basename5(parentDir) === "subagents") {
+  const file = basename6(path).replace(/\.jsonl$/, "");
+  const parentDir = dirname6(path);
+  if (basename6(parentDir) === "subagents") {
     const id = file.replace(/^agent-/, "");
-    const sidecar = dirname5(parentDir);
+    const sidecar = dirname6(parentDir);
     const s2 = {
       id,
       short: shortId(id, path),
       kind: "subagent",
-      parent: basename5(sidecar),
+      parent: basename6(sidecar),
       path,
       sidecar,
       adapter: ADAPTER_ID
@@ -5122,7 +5129,7 @@ async function* listSessions(project, opts = {}) {
   for (const f of files) {
     const main2 = sessionForPath(join11(project.dir, f), project);
     yield main2;
-    if (!opts.subagents || !sidecars?.has(basename5(main2.sidecar)))
+    if (!opts.subagents || !sidecars?.has(basename6(main2.sidecar)))
       continue;
     const subDir = join11(main2.sidecar, "subagents");
     if (!await isDir(subDir))
@@ -5238,7 +5245,7 @@ var init_claude_code = __esm({
 // node_modules/agent-recall-axi/dist/src/lib/scope.js
 import { stat as stat2 } from "node:fs/promises";
 import { homedir as homedir5 } from "node:os";
-import { dirname as dirname6, join as join12, resolve as resolve5 } from "node:path";
+import { dirname as dirname7, join as join12, resolve as resolve5 } from "node:path";
 function rootOf(scope = {}) {
   return scope.root ?? claudeCode.root(scope.env ?? process.env);
 }
@@ -5301,7 +5308,7 @@ async function resolveScope(scope = {}) {
   }
   const cwd = resolve5(scope.cwd ?? process.cwd());
   let scanned;
-  for (let dir = cwd; ; dir = dirname6(dir)) {
+  for (let dir = cwd; ; dir = dirname7(dir)) {
     const candidate = join12(root, encodeCwd(dir));
     if (await isDir2(candidate)) {
       const p = await projectForDir(candidate);
@@ -5312,7 +5319,7 @@ async function resolveScope(scope = {}) {
     const hit = scanned.find((p) => p.cwd === dir);
     if (hit)
       return { root, all: false, projects: [hit] };
-    if (dirname6(dir) === dir)
+    if (dirname7(dir) === dir)
       break;
   }
   throw new AgentSessionError(`no session logs for ${cwd}`, "NO_SESSIONS", NO_SESSIONS_HINTS, { cwd });
@@ -5333,7 +5340,7 @@ var init_scope = __esm({
 // node_modules/agent-recall-axi/dist/src/invocation.js
 import { accessSync as accessSync3, constants as constants3, realpathSync as realpathSync4, statSync as statSync4 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { basename as basename6, delimiter, dirname as dirname7, join as join13 } from "node:path";
+import { basename as basename7, delimiter, dirname as dirname8, join as join13 } from "node:path";
 function real(path) {
   try {
     if (!statSync4(path).isFile())
@@ -5344,10 +5351,10 @@ function real(path) {
   }
 }
 function bundleShim(entrypoint) {
-  if (!entrypoint || basename6(entrypoint) !== BUNDLE_FILE)
+  if (!entrypoint || basename7(entrypoint) !== BUNDLE_FILE)
     return void 0;
   const bundle = real(entrypoint) ?? entrypoint;
-  const shim = join13(dirname7(bundle), NAME);
+  const shim = join13(dirname8(bundle), NAME);
   try {
     accessSync3(shim, constants3.X_OK);
     return { bundle, shim };
@@ -5446,10 +5453,10 @@ var init_window_state = __esm({
 
 // node_modules/agent-recall-axi/dist/src/version.js
 import { readFileSync as readFileSync8 } from "node:fs";
-import { dirname as dirname8, join as join14 } from "node:path";
+import { dirname as dirname9, join as join14 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 function readVersion() {
-  const here = dirname8(fileURLToPath2(import.meta.url));
+  const here = dirname9(fileURLToPath2(import.meta.url));
   for (const candidate of [join14(here, "..", "package.json"), join14(here, "..", "..", "package.json")]) {
     try {
       const pkg = JSON.parse(readFileSync8(candidate, "utf8"));
@@ -6047,7 +6054,7 @@ __export(stats_exports, {
   statsFromTable: () => statsFromTable
 });
 import { readFile as readFile3, stat as stat5 } from "node:fs/promises";
-import { dirname as dirname9, join as join17 } from "node:path";
+import { dirname as dirname10, join as join17 } from "node:path";
 function mirrorOf(t) {
   const m = {
     v: MIRROR_VERSION,
@@ -6164,7 +6171,7 @@ async function headHuman(session) {
   return void 0;
 }
 async function indexEntry(session, mtimeMs) {
-  const dir = session.kind === "main" ? session.project?.dir ?? dirname9(session.path) : void 0;
+  const dir = session.kind === "main" ? session.project?.dir ?? dirname10(session.path) : void 0;
   if (!dir)
     return void 0;
   const e = (await readSessionsIndex(dir)).get(session.id);
@@ -9365,7 +9372,7 @@ async function wakeWait(files, base, deadlineMs, pollMs = WAKE_POLL_MS) {
       const m = text.length ? text.split("\n").length - 1 : 0;
       if (m < counts[i]) counts[i] = 0;
       if (m > counts[i]) {
-        const name = basename7(f);
+        const name = basename8(f);
         for (const l of newLines(text, counts[i], m, DELIVER_MAX_LINES)) out.push(`${name}: ${cut(l, DELIVER_MAX_CHARS)}`);
         counts[i] = m;
       }
@@ -9401,7 +9408,7 @@ function schedulePackLines(s, evs, now) {
   if (st) return [`armed until ${hhmm2(st.until)} (since ${hhmm2(st.at)}); nothing to do until it delivers`];
   return [`${evs ? "not armed" : "state unknown (no session log)"} \xB7 run \`cycle begin\` now; it prints the one Monitor call to make`];
 }
-var MONITOR_MAX_MS, MONITOR_MIN_MS, WAKE_BASE_NAME, DELIVER_MAX_LINES, hhmm2, ARRIVED_RULE, CHAIN_RULE, CLOSE_RULE, WAKE_RULES, SCHEDULE_MARGIN_S, CYCLE_DUE, WAKE_WAIT_MAX_S, WAKE_POLL_MS, DELIVER_MAX_CHARS, basename7, cut, SLEEP_RULES, SCHEDULE_RULES;
+var MONITOR_MAX_MS, MONITOR_MIN_MS, WAKE_BASE_NAME, DELIVER_MAX_LINES, hhmm2, ARRIVED_RULE, CHAIN_RULE, CLOSE_RULE, WAKE_RULES, SCHEDULE_MARGIN_S, CYCLE_DUE, WAKE_WAIT_MAX_S, WAKE_POLL_MS, DELIVER_MAX_CHARS, basename8, cut, SLEEP_RULES, SCHEDULE_RULES;
 var init_wake = __esm({
   "src/opsbot-core/wake.ts"() {
     "use strict";
@@ -9427,7 +9434,7 @@ var init_wake = __esm({
     WAKE_WAIT_MAX_S = 1800;
     WAKE_POLL_MS = 2e3;
     DELIVER_MAX_CHARS = 300;
-    basename7 = (p) => p.replace(/\/+$/, "").split("/").pop() || p;
+    basename8 = (p) => p.replace(/\/+$/, "").split("/").pop() || p;
     cut = (l, n) => {
       const cs = Array.from(l);
       return cs.length > n ? cs.slice(0, n).join("") : l;
@@ -10042,7 +10049,7 @@ var init_check = __esm({
 // src/opsbot-core/commands/coldstart.ts
 import { appendFileSync as appendFileSync2, existsSync as existsSync15, mkdirSync as mkdirSync4, readdirSync as readdirSync5, readFileSync as readFileSync12, rmSync as rmSync7, statSync as statSync6, writeFileSync as writeFileSync7 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
-import { dirname as dirname10, join as join20, resolve as resolve8 } from "node:path";
+import { dirname as dirname11, join as join20, resolve as resolve8 } from "node:path";
 function legacyCacheDir(name) {
   const base = process.env.XDG_CACHE_HOME || join20(homedir10(), ".cache");
   return join20(base, name);
@@ -10059,7 +10066,7 @@ function ensureScratch(root) {
   }
   const present = text.split("\n").some((l) => ["/.scratch", "/.scratch/", ".scratch", ".scratch/"].includes(l.trim()));
   if (!present) {
-    mkdirSync4(dirname10(exclude), { recursive: true });
+    mkdirSync4(dirname11(exclude), { recursive: true });
     appendFileSync2(exclude, `${text && !text.endsWith("\n") ? "\n" : ""}${SCRATCH_EXCLUDE}
 `);
   }
@@ -10558,7 +10565,7 @@ function decideFast(input) {
   const want = /* @__PURE__ */ new Set();
   for (const g of grown) {
     const ins = named.get(g.file);
-    if (!ins || ins.length === 0) return full(`${basename7(g.file)} names no inputs`);
+    if (!ins || ins.length === 0) return full(`${basename8(g.file)} names no inputs`);
     for (const i of ins) want.add(i);
   }
   for (const i of want) if (!input.installed.includes(i)) return full(`input ${i} is not installed in heartbeat.d`);
@@ -10871,7 +10878,7 @@ function cycleEnd(args) {
   const recall2 = cycleEndRecall(root, settings);
   if (recall2.length) out.recall = recall2;
   if (arrived.length) {
-    out.arrived = arrived.map((a) => `${a.n} on ${basename7(a.file)}`).join(", ");
+    out.arrived = arrived.map((a) => `${a.n} on ${basename8(a.file)}`).join(", ");
     out.next = "0 arrived";
   } else out.next = next2(root, settings);
   if (sleep) {
@@ -11535,7 +11542,7 @@ var init_infra = __esm({
 // src/opsbot-core/commands/hook.ts
 import { existsSync as existsSync19, mkdirSync as mkdirSync7, readFileSync as readFileSync17, writeFileSync as writeFileSync11 } from "node:fs";
 import { homedir as homedir13 } from "node:os";
-import { dirname as dirname11, join as join23, relative as relative4 } from "node:path";
+import { dirname as dirname12, join as join23, relative as relative4 } from "node:path";
 function settingsPath(scope, dir) {
   if (scope === "global") return join23(homedir13(), ".claude", "settings.json");
   return join23(dir, ".claude", "settings.json");
@@ -11557,7 +11564,7 @@ function readSettings(p) {
   }
 }
 function writeSettings(p, s) {
-  mkdirSync7(dirname11(p), { recursive: true });
+  mkdirSync7(dirname12(p), { recursive: true });
   writeFileSync11(p, `${JSON.stringify(s, null, 2)}
 `);
 }
@@ -11664,7 +11671,7 @@ var init_hook = __esm({
 
 // src/opsbot-core/commands/sleep.ts
 import { statSync as statSync8 } from "node:fs";
-import { basename as basename8 } from "node:path";
+import { basename as basename9 } from "node:path";
 function wakePrompt(s, reason) {
   return `${s.loop.prompt} (woken: ${reason})`;
 }
@@ -11682,7 +11689,7 @@ function cheapReason(root, s, st, now) {
   if (op) return { reason: "the operator wrote to the session", event_at: op };
   for (const [file, base] of Object.entries(st.wake_lines)) {
     const n = lineCount(file);
-    if (n > base || n < base && n > 0) return { reason: `a new line in ${basename8(file)}`, event_at: mtime(file) ?? iso(now) };
+    if (n > base || n < base && n > 0) return { reason: `a new line in ${basename9(file)}`, event_at: mtime(file) ?? iso(now) };
   }
   const by = wakeBy(s, st);
   if ((parseIso(by.at) ?? Infinity) <= now) return { reason: by.why, event_at: by.at };
@@ -11841,7 +11848,7 @@ var init_sleep2 = __esm({
 
 // src/opsbot-core/commands/memory.ts
 import { copyFileSync, existsSync as existsSync20, mkdirSync as mkdirSync8, readdirSync as readdirSync7, readFileSync as readFileSync18, statSync as statSync9, writeFileSync as writeFileSync12 } from "node:fs";
-import { dirname as dirname12, join as join24, resolve as resolve9 } from "node:path";
+import { dirname as dirname13, join as join24, resolve as resolve9 } from "node:path";
 function settingsFor(root) {
   try {
     return loadSettings(root).settings;
@@ -12038,7 +12045,7 @@ function importCommand(args) {
     if (plan.indexAdd.length) {
       const destIdx = join24(dest, MEMORY_INDEX);
       const cur = existsSync20(destIdx) ? readFileSync18(destIdx, "utf8") : "";
-      mkdirSync8(dirname12(destIdx), { recursive: true });
+      mkdirSync8(dirname13(destIdx), { recursive: true });
       writeFileSync12(destIdx, `${cur}${cur && !cur.endsWith("\n") ? "\n" : ""}${plan.indexAdd.join("\n")}
 `);
     }

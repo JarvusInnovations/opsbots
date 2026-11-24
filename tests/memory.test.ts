@@ -67,7 +67,9 @@ describe("memory settings", () => {
     const claude = (v: unknown) => writeFileSync(join(bot.root, ".claude", "settings.json"), JSON.stringify({ autoMemoryDirectory: v }));
     // relative, absolute (as written and through the symlink-free path), trailing slash; the
     // directory need not exist yet (start creates it)
-    for (const same of ["memory", "./memory", "memory/", `${root}/memory`, `${root}/memory/`, `${bot.root}/memory`]) {
+    const link = join(bot.home, "checkout-link");
+    symlinkSync(root, link);
+    for (const same of ["memory", "./memory", "memory/", `${root}/memory`, `${root}/memory/`, `${bot.root}/memory`, `${link}/memory`]) {
       claude(same);
       const r = cli(bot, ["settings", "validate"]);
       expect({ same, code: r.code, out: r.code ? r.out : "" }).toEqual({ same, code: 0, out: "" });
@@ -75,10 +77,8 @@ describe("memory settings", () => {
     mkdirSync(join(bot.root, "memory"));
     claude(`${root}/memory/`);
     expect(cli(bot, ["settings", "validate"]).code).toBe(0);
-    // through a symbolic link to the checkout, once the directory exists
-    const link = join(bot.home, "checkout-link");
-    symlinkSync(root, link);
-    claude(`${link}/memory`);
+    // through a symbolic link to the checkout, once the directory exists too
+    claude(`${link}/memory/`);
     expect(cli(bot, ["settings", "validate"]).code).toBe(0);
     // a custom memory.dir
     setSettings(bot, { memory: { dir: "notes/mem" } });
