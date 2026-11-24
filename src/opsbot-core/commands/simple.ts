@@ -10,6 +10,7 @@ import { delayLine, nextDelay } from "../cadence.js";
 import { cliInvocation } from "../invocation.js";
 import { POINTS, POINT_DIRS, discover, parsePoint, type Point } from "../lifecycle.js";
 import { nowMs, parseIso, requireRoot, showHead } from "../repo.js";
+import { autoMemoryDirectoryProblem } from "../memory.js";
 import { SETTINGS_FILE, loadSettings, parseSettingsText, withDefaults } from "../settings.js";
 import { routineProblems } from "./routines.js";
 import { queryRecall, recallSheetProblems } from "../record.js";
@@ -182,9 +183,20 @@ export function settingsCommand(args: string[]): Record<string, unknown> {
     try {
       const cs = JSON.parse(readFileSync(claude, "utf8"));
       const loop = (raw.loop ?? {}) as Record<string, unknown>;
-      for (const k of ["autoMemoryEnabled", "autoMemoryDirectory"]) {
-        if (cs && cs[k] !== undefined) {
-          problems.push(`.claude/settings.json sets ${k}; auto memory is set by memory in opsbot.json, which start passes to Claude Code, so set it in one place`);
+      if (cs && cs.autoMemoryEnabled !== undefined) {
+        problems.push(`.claude/settings.json sets autoMemoryEnabled; auto memory is set by memory in opsbot.json, which start passes to Claude Code, so set it in one place`);
+      }
+      // the same directory as memory.dir is accepted: a session start did not launch shares it
+      if (cs && cs.autoMemoryDirectory !== undefined) {
+        let memory: { dir: string } | null | undefined;
+        try {
+          memory = withDefaults(raw).memory;
+        } catch {
+          memory = undefined; // opsbot.json's own problems are already listed
+        }
+        if (memory !== undefined) {
+          const p = autoMemoryDirectoryProblem(root, cs.autoMemoryDirectory, memory);
+          if (p) problems.push(p);
         }
       }
       if (cs && cs.autoCompactWindow !== undefined && String(cs.autoCompactWindow) !== String(loop.autocompact ?? "")) {

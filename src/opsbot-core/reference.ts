@@ -163,7 +163,7 @@ export const COMMAND_GROUPS: CommandGroup[] = [
         summary: "Register the SessionStart (`cold-start --write`) and PreToolUse (`gate check`) hooks; project scope by default.",
       },
       { usage: "hooks list [--point P]", summary: "Every script that will run at each lifecycle point, in order, with its source." },
-      { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails." },
+      { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets `autoMemoryEnabled`, or an `autoMemoryDirectory` other than `memory.dir` (the same directory, relative or absolute, is accepted, so a session `start` did not launch shares the bot's memory); any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails." },
     ],
   },
 ];
