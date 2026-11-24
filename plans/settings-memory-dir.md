@@ -1,5 +1,7 @@
 ---
-status: in-progress
+status: done
+done: 2026-11-24
+pr: 135
 depends: []
 specs:
   - specs/skills/opsbot-core.md
@@ -43,15 +45,24 @@ Out: `autoMemoryEnabled` in `.claude/settings.json` (still refused); what `start
 
 ## Validation
 
-- [ ] `memory`, `./memory`, `memory/`, the absolute path with and without a trailing slash, and
+- [x] `memory`, `./memory`, `memory/`, the absolute path with and without a trailing slash, and
       the path through a symlinked temp directory are all accepted, before and after the
       directory exists; a custom `memory.dir` likewise.
-- [ ] `/elsewhere`, a subdirectory, a sibling, `~/memory` and a non-string are refused, the
+- [x] `/elsewhere`, a subdirectory, a sibling, `~/memory` and a non-string are refused, the
       message naming the value and `memory.dir`'s absolute path.
-- [ ] With `memory: false`, any `autoMemoryDirectory` is refused.
-- [ ] `autoMemoryEnabled` in `.claude/settings.json` is still refused.
-- [ ] `bun run build`, `bun run type-check`, `bun run check` and `bun test` pass.
+- [x] With `memory: false`, any `autoMemoryDirectory` is refused.
+- [x] `autoMemoryEnabled` in `.claude/settings.json` is still refused.
+- [x] `bun run build`, `bun run type-check`, `bun run check` and `bun test` pass.
 
 ## Notes
 
+- `resolveDir` resolves symbolic links through the nearest existing parent, so a path through a
+  symlinked checkout matches before `memory/` exists, as `start` creates it only at launch.
+- `bun test` passes on CI for the PR head. Locally, on a host at load average 40, three tests
+  in other files (`drift`, `start --continue`, a Meet status test) hit the 5-second default
+  timeout or a stray request in a full run; each passes alone or on CI and none touches this
+  change.
+
 ## Follow-ups
+
+None.
