@@ -3,6 +3,8 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { join } from "node:path";
 import { BASE_SETTINGS, cli, git, logOf, logSubjects, makeBot, makeExecutable, outagesOf, setSettings, writeStream, type Bot } from "./helpers";
 import { validateSettings, withDefaults } from "../src/opsbot-core/settings";
+import { lastOperatorAt } from "../src/opsbot-core/sleep";
+import { readEvents } from "../src/opsbot-core/transcript";
 
 // Each test runs the CLI several times; a loaded runner needs more than the 5 s default.
 setDefaultTimeout(120000);
@@ -253,6 +255,40 @@ describe("asleep: the nudge and the watchdog stand down", () => {
 });
 
 
+describe("what counts as the operator writing", () => {
+  const P = MON_LOOP.prompt;
+  /** The operator's last message in a log made of these rows. */
+  function lastOp(rows: Record<string, unknown>[], typed: string[] = []): string | null {
+    bot = makeBot();
+    const f = join(bot.home, "session.jsonl");
+    writeFileSync(f, rows.map((r) => `${JSON.stringify(r)}\n`).join(""));
+    return lastOperatorAt(readEvents(f), P, at(0), typed);
+  }
+  const user = (min: number, content: unknown, extra: Record<string, unknown> = {}) => ({ type: "user", timestamp: at(min), message: { content }, ...extra });
+  const midTurn = (min: number, text: string) => user(min, [{ type: "tool_result", tool_use_id: "t1", content: "ok" }, { type: "text", text: `The user sent a new message while you were working:\n${text}\n\nThis is how Claude Code surfaces it.` }]);
+
+  test("a typed prompt is the operator, in either position", () => {
+    expect(lastOp([user(5, "check the deploy channel", { origin: { kind: "human" }, promptSource: "typed" })])).toBe(at(5));
+    expect(lastOp([user(5, "check the deploy channel")])).toBe(at(5));
+    expect(lastOp([midTurn(6, "and the other one")])).toBe(at(6));
+    // a path is not a slash command
+    expect(lastOp([user(7, "/tmp/out.log has the error")])).toBe(at(7));
+  });
+
+  test("slash commands, harness entries and the timer's own keystrokes are not", () => {
+    expect(lastOp([user(5, "/compact"), user(6, "/compact keep the open threads"), user(7, "/context"), user(8, "/model fable")])).toBeNull();
+    expect(lastOp([midTurn(6, "/compact")])).toBeNull();
+    expect(lastOp([user(5, "<command-name>/compact</command-name>"), user(5, "<local-command-stdout>Compacted</local-command-stdout>")])).toBeNull();
+    expect(lastOp([user(5, "a skill's text, logged by Claude Code", { isMeta: true })])).toBeNull();
+    expect(lastOp([user(5, [{ type: "text", text: "This session is being continued from a previous conversation. The user sent a new message while you were working:\nhello" }], { isCompactSummary: true })])).toBeNull();
+    expect(lastOp([user(5, "a background task finished", { origin: { kind: "task-notification" } })])).toBeNull();
+    expect(lastOp([user(5, `${P} (woken: due: the weekly report)`)])).toBeNull();
+    // what the timer recorded typing, whatever it is
+    expect(lastOp([user(5, "wake up")], ["wake up"])).toBeNull();
+    expect(lastOp([user(5, "wake up"), user(9, "a real question")], ["wake up"])).toBe(at(9));
+  });
+});
+
 describe("sleep tick, against a stub runtime", () => {
   const PROMPT = MON_LOOP.prompt;
   const assistant = (when: string) => JSON.stringify({ type: "assistant", timestamp: when, message: { content: [{ type: "text", text: "working" }] } });
@@ -374,6 +410,57 @@ describe("sleep tick, against a stub runtime", () => {
     appendFileSync(sessionLog, `${JSON.stringify({ type: "user", timestamp: at(63), message: { content: "are you there?" } })}\n${assistant(at(63))}\n${turnDone(at(64))}\n`);
     expect(cli(bot, ["sleep", "tick"], { now: at(65) }).out).toContain("woke testbot for: the operator wrote to the session");
     expect(prompts(f)).toEqual([`${PROMPT} (woken: the operator wrote to the session)`]);
+  });
+
+  /**
+   * Replays a session-log fixture: rows before the first timed mark are the log when the sleep is
+   * decided; at each `{"replay": "<minute>"}` mark a tick runs at that minute, then the rows after
+   * it are appended. Returns each tick's output by minute.
+   */
+  function replay(fixture: string): { ticks: Record<string, string>; prompts: string[] } {
+    bot = sleepyBot();
+    const sessionLog = join(bot.home, "session.jsonl");
+    writeFileSync(sessionLog, "");
+    cli(bot, ["cold-start", "--write"], { now: T0, input: JSON.stringify({ transcript_path: sessionLog }) });
+    const f = fakeRuntime(bot, { status: "idle" });
+    const chunks: Array<{ tick: string | null; rows: string[] }> = [];
+    for (const line of readFileSync(join(import.meta.dir, "fixtures", fixture), "utf8").split("\n").filter(Boolean)) {
+      const v = JSON.parse(line);
+      if ("replay" in v) chunks.push({ tick: v.replay, rows: [] });
+      else chunks.at(-1)!.rows.push(line);
+    }
+    const ticks: Record<string, string> = {};
+    for (const [i, c] of chunks.entries()) {
+      if (i === 0) {
+        expect(c.tick).toBeNull();
+        appendFileSync(sessionLog, c.rows.map((r) => `${r}\n`).join(""));
+        putToSleep(bot);
+        continue;
+      }
+      ticks[c.tick!] = cli(bot, ["sleep", "tick"], { now: at(Number(c.tick)) }).out;
+      appendFileSync(sessionLog, c.rows.map((r) => `${r}\n`).join(""));
+    }
+    return { ticks, prompts: prompts(f) };
+  }
+
+  test("replay: a /compact typed by hand while asleep, logged with its bare text, is not the operator writing", () => {
+    const r = replay("sleep-compact-by-hand.jsonl");
+    expect(r.ticks["62"]).toContain("asleep · typed /compact into testbot");
+    expect(r.ticks["72"]).toContain("asleep since 16:02Z");
+    // the hand-typed /compact (bare row, record, compaction summary, hook context) and a /context
+    expect(r.ticks["82"]).toContain("asleep since 16:02Z");
+    expect(r.ticks["82"]).not.toContain("operator");
+    expect(r.prompts).toEqual(["/compact"]);
+    expect(state(bot)).toMatchObject({ woken: null, typed: ["/compact"] });
+  });
+
+  test("replay: the same, then a real message, wakes for the operator at the message", () => {
+    const r = replay("sleep-compact-then-message.jsonl");
+    expect(r.ticks["82"]).toContain("asleep since 16:02Z");
+    expect(r.ticks["92"]).toContain("woke testbot for: the operator wrote to the session");
+    expect(r.prompts).toEqual(["/compact", `${PROMPT} (woken: the operator wrote to the session)`]);
+    expect(state(bot).woken).toMatchObject({ reason: "the operator wrote to the session", event_at: "2026-03-02T16:25:00.000Z" });
+    expect(state(bot).typed).toEqual(["/compact", `${PROMPT} (woken: the operator wrote to the session)`]);
   });
 
   test("does nothing while awake, and with sleep unset", () => {
