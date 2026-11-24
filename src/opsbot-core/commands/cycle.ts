@@ -21,7 +21,8 @@ import { AxiError } from "axi-sdk-js";
 import { intFlag, parseArgs, setExit, usageError } from "../args.js";
 import { delayLine, nextDelay } from "../cadence.js";
 import { cliInvocation } from "../invocation.js";
-import { baseEnv, configSnapshot, discover, runScript } from "../lifecycle.js";
+import { baseEnv, configSnapshot, discover, runScript, scriptTimeoutMs } from "../lifecycle.js";
+import { recordHookTimes, seconds } from "../hooktimes.js";
 import { blockedBy, commitOnly, firstLine, nowIso, nowMs, parseIso, pushCommits, requireRoot, trailers } from "../repo.js";
 import { loadSettings, type Settings } from "../settings.js";
 import { commitStaged, dropStaged, forgetLogBranch, logBranch, logWriter, notMigratedError, pushLog, stage, type PushResult } from "../log.js";
@@ -63,7 +64,8 @@ function refusedPush(root: string, s: Settings, checkLine: string, pushed: PushR
   };
 }
 
-export const CYCLE_USAGE = "cycle begin [--full] | cycle end --records N [--degraded] [--summary TEXT]";
+export const CYCLE_USAGE = "cycle begin [--full] [--skip-hook <name>]... | cycle end --records N [--degraded] [--summary TEXT]";
+const BEGIN_USAGE = "cycle begin [--full] [--skip-hook <name>]...";
 
 function next(root: string, s: Settings): string {
   return delayLine(nextDelay(s, readCycleLog(root), nowMs()));
@@ -114,8 +116,8 @@ function driftLines(root: string, s: Settings): string[] {
 export function cycleCommand(args: string[]): Record<string, unknown> {
   const [sub, ...rest] = args;
   if (sub === "begin") {
-    const { flags } = parseArgs(rest, { bool: ["full"] }, "cycle begin [--full]");
-    return cycleBegin(flags.full === true);
+    const { flags, lists } = parseArgs(rest, { bool: ["full"], repeat: ["skip-hook"] }, BEGIN_USAGE);
+    return cycleBegin(flags.full === true, [...new Set(lists["skip-hook"] ?? [])]);
   }
   if (sub === "end") return cycleEnd(rest);
   throw new AxiError(sub ? `unknown cycle subcommand ${sub}` : "cycle needs a subcommand", "VALIDATION_ERROR", [
@@ -133,13 +135,27 @@ function wait(root: string, s: Settings, who: string): Record<string, unknown> {
 
 const hhmm = (t: string) => `${t.slice(11, 16)}Z`;
 
-function cycleBegin(forceFull: boolean): Record<string, unknown> {
+function cycleBegin(forceFull: boolean, skip: string[] = []): Record<string, unknown> {
   const root = requireRoot();
   // one writer at a time: a checkout still set up for the log files writes nothing until the
   // migration's commit is merged into it
   const writer = logWriter(root);
   if ("notMigrated" in writer) throw notMigratedError(root, writer.notMigrated);
   let { settings, text } = loadSettings(root);
+
+  // a begin script to skip must be one that is installed: refused before the lock
+  if (skip.length) {
+    const installed = discover(root, "cycle.begin").scripts.map((x) => x.name);
+    const unknown = skip.filter((n) => !installed.includes(n));
+    if (unknown.length) {
+      throw usageError(
+        `--skip-hook ${unknown.join(", ")}: no such script in cycle.d/begin/`,
+        BEGIN_USAGE,
+        installed.length ? `installed: ${installed.join(", ")}` : "cycle.d/begin/ holds no scripts",
+      );
+    }
+  }
+  const skipNote = skip.length ? ` · skipped ${skip.map((n) => `cycle.d/begin/${n}`).join(", ")}` : "";
 
   // another writer
   const blocked = blockedBy(root);
@@ -220,11 +236,19 @@ function cycleBegin(forceFull: boolean): Record<string, unknown> {
   }
 
   // housekeeping that must run first; on a fast cycle only what declares itself quick (`.fast`)
+  // each is timed, for the cycle's record and the slow-script item; a skipped one is not run
   const configPath = configSnapshot(root, text);
+  const hooks: Record<string, number> = {};
+  const skipCommand = (name: string) => `\`${cliInvocation()} cycle begin --skip-hook ${name}\``;
+  const timesItems = () => recordHookTimes(root, hooks, nowIso(), scriptTimeoutMs(), skipCommand);
   for (const s of discover(root, "cycle.begin").scripts) {
     if (decision.fast && !s.name.endsWith(".fast")) continue;
+    if (skip.includes(s.name)) continue;
+    const t0 = performance.now();
     const r = runScript(s, root, baseEnv(root, settings, configPath, "cycle.begin"));
+    hooks[s.name] = seconds(performance.now() - t0);
     if (r.code !== 0) {
+      timesItems();
       const error = `exit ${r.code}: ${firstLine(r.stderr) || firstLine(r.stdout) || "no message"}`;
       const failLine = {
         at: nowIso(),
@@ -233,6 +257,8 @@ function cycleBegin(forceFull: boolean): Record<string, unknown> {
         new: 0,
         failed: [{ input: `cycle.d/begin/${s.name}`, error }],
         watermark: readWatermark(root),
+        hooks,
+        ...(skip.length ? { skipped_hooks: skip } : {}),
       };
       const branch = logBranch(root);
       let unwritten = "";
@@ -247,11 +273,14 @@ function cycleBegin(forceFull: boolean): Record<string, unknown> {
       }
       setExit(20);
       return {
-        cycle: `degraded · cycle.d/begin/${s.name} failed, so the check did not run · ${error}${unwritten}`,
+        cycle: `degraded · cycle.d/begin/${s.name} failed, so the check did not run · ${error}${unwritten}${skipNote}`,
         help: [`Fix what it reports, then run \`${cliInvocation()} cycle end --records 0 --degraded\` to release the checkout`],
       };
     }
   }
+
+  const slow = timesItems();
+  if (slow.length) core.push({ input: "hook-times", items: slow });
 
   // where this check starts reading each wake file: the monitor armed after it starts there
   recordWakeBase(root, files, counts);
@@ -261,12 +290,18 @@ function cycleBegin(forceFull: boolean): Record<string, unknown> {
   process.env.OPSBOT_COMMIT_TRAILERS = trailers();
   let r;
   try {
-    r = runCheck(root, { commit: true, fast: decision.fast ? { inputs: decision.inputs, since: decision.since } : null, mode: decision.mode, core });
+    r = runCheck(root, {
+      commit: true,
+      fast: decision.fast ? { inputs: decision.inputs, since: decision.since } : null,
+      mode: decision.mode,
+      core,
+      record: { hooks, ...(skip.length ? { skipped_hooks: skip } : {}) },
+    });
   } catch (e) {
     // the check could not run: treated as degraded, the hold kept
     setExit(20);
     return {
-      cycle: `degraded · the check could not run: ${(e as Error).message}`,
+      cycle: `degraded · the check could not run: ${(e as Error).message}${skipNote}`,
       help: [`Run \`${cliInvocation()} cycle end --records 0 --degraded\` once it is fixed`],
     };
   } finally {
@@ -287,7 +322,7 @@ function cycleBegin(forceFull: boolean): Record<string, unknown> {
     const why = [pushed.why, prog].filter(Boolean).join("; ") || null;
     releaseLock(root);
     setExit(0);
-    const out: Record<string, unknown> = { cycle: `${r.line}${why ? ` · not pushed: ${why}` : ""}${unsynced ? ` · not pulled: ${unsynced}` : ""} · next ${next(root, settings)}` };
+    const out: Record<string, unknown> = { cycle: `${r.line}${why ? ` · not pushed: ${why}` : ""}${unsynced ? ` · not pulled: ${unsynced}` : ""}${skipNote} · next ${next(root, settings)}` };
     if (fastLine) out.fast = fastLine;
     const wake = sleep ? [] : wakeReport(root, settings, true);
     if (sleep) out.sleep = sleepFieldLines(settings, sleep);
@@ -299,7 +334,7 @@ function cycleBegin(forceFull: boolean): Record<string, unknown> {
   setExit(r.code);
   const { check: checkLine, ...rest } = r.output;
   const held: Record<string, unknown> = {
-    check: unsynced ? `${String(checkLine)} · not pulled: ${unsynced}` : checkLine,
+    check: `${String(checkLine)}${unsynced ? ` · not pulled: ${unsynced}` : ""}${skipNote}`,
     ...(fastLine ? { fast: fastLine } : {}),
     ...rest,
     help: [

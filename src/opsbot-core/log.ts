@@ -619,6 +619,8 @@ export interface Quiet {
   watermark: string | null;
   check: string;
   since: string;
+  /** More trailers for this cycle (`Hook-Times: …`), written again on every replacement. */
+  extra?: string[];
 }
 
 /**
@@ -633,7 +635,7 @@ export function writeQuiet(root: string, b: string, q: Quiet, nowMs: number, ses
   if (!tip) return { ok: false, why: `the log branch ${b} cannot be read` };
   const head = programHead(root);
   const base = baseTrailers(head, q.watermark, q.check);
-  const own = sessionTrailers(session);
+  const own = [...(q.extra ?? []), ...sessionTrailers(session)];
   const n = Number(tip.trailers["Quiet-Cycles"] ?? 0);
   const open = isOpenQuiet(tip, nowMs) && tip.trailers.Check === q.check && tip.trailers.Program === (head ?? "none") && n > 0;
   if (open) {

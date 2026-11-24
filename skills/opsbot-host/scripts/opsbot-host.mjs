@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-host/version.ts"() {
     "use strict";
-    VERSION = true ? "7cb69f2" : "dev";
+    VERSION = true ? "04b9bac" : "dev";
   }
 });
 
@@ -2067,9 +2067,11 @@ var init_invocation2 = __esm({
 // src/opsbot-core/args.ts
 function parseArgs(args, spec, usage) {
   const bool = spec.bool ?? [];
-  const value = spec.value ?? [];
+  const repeat = spec.repeat ?? [];
+  const value = [...spec.value ?? [], ...repeat];
   const positionals = [];
   const flags = {};
+  const lists = {};
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a.startsWith("--")) {
@@ -2082,6 +2084,7 @@ function parseArgs(args, spec, usage) {
         const v = eq > 0 ? a.slice(eq + 1) : args[++i];
         if (v === void 0 || eq < 0 && v.startsWith("--")) throw usageError(`--${name} needs a value`, usage);
         flags[name] = v;
+        if (repeat.includes(name)) (lists[name] ??= []).push(v);
       } else {
         const valid = [...value, ...bool].map((f) => `--${f}`).join(", ");
         throw usageError(`unknown flag --${name}`, usage, valid ? `valid flags here: ${valid}` : "this command takes no flags");
@@ -2093,7 +2096,7 @@ function parseArgs(args, spec, usage) {
   if (positionals.length > (spec.maxPositionals ?? 0)) {
     throw usageError(`unexpected argument ${JSON.stringify(positionals[spec.maxPositionals ?? 0])}`, usage);
   }
-  return { positionals, flags };
+  return { positionals, flags, lists };
 }
 function usageError(message, usage, extra) {
   const help = [`${cliInvocation2()} ${usage}`];

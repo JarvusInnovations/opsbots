@@ -7,7 +7,19 @@
  */
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 
-export interface Ev { type: string; subtype?: string; timestamp: string; content: unknown; model?: string }
+export interface Ev {
+  type: string;
+  subtype?: string;
+  timestamp: string;
+  content: unknown;
+  model?: string;
+  /** Claude Code's own entry (`isMeta`): a caveat, skill text, hook context; never a person. */
+  meta?: boolean;
+  /** A compaction summary (`isCompactSummary`), in either content form. */
+  summary?: boolean;
+  /** `origin.kind` when the entry carries one: `human`, `task-notification`, … */
+  origin?: string;
+}
 interface Part { type: string; text?: string; name?: string; id?: string; input?: unknown; tool_use_id?: string; content?: unknown }
 
 export const COMPACTION_MARK = "This session is being continued from a previous conversation";
@@ -47,6 +59,9 @@ export function readEvents(path: string, maxBytes: number = TAIL_BYTES): Ev[] {
         const e: Ev = { type: v.type, timestamp: String(v.timestamp ?? ""), content: v.message?.content ?? (v.type === "queue-operation" ? v.content : undefined) };
         if (typeof v.subtype === "string") e.subtype = v.subtype;
         if (typeof v.message?.model === "string") e.model = v.message.model;
+        if (v.isMeta === true) e.meta = true;
+        if (v.isCompactSummary === true) e.summary = true;
+        if (typeof v.origin?.kind === "string") e.origin = v.origin.kind;
         out.push(e);
       }
     } catch { /* not an event line */ }
@@ -77,11 +92,14 @@ export function lastCompaction(evs: Ev[]): number {
 
 const NOISE = [/^<command-/, /^<local-command/, /hook success/, /^<bash-input>/, /^\[Request interrupted/];
 
-/** The operator's own words since `from`, verbatim: turn-initial messages and mid-turn ones. */
+/** The operator's own words since `from`, verbatim: turn-initial messages and mid-turn ones.
+ * Claude Code's own entries (meta, a compaction summary, an origin that is not a person) are
+ * never the operator's. */
 export function humanMessages(evs: Ev[], from = 0): { at: string; text: string }[] {
   const out: { at: string; text: string }[] = [];
   for (const e of evs.slice(Math.max(0, from))) {
     if (e.type !== "user") continue;
+    if (e.meta || e.summary || (e.origin !== undefined && e.origin !== "human")) continue;
     if (typeof e.content === "string") {
       const t = e.content.trim();
       if (!t || t.startsWith(COMPACTION_MARK) || NOISE.some((r) => r.test(t))) continue;

@@ -28,10 +28,11 @@ The bot's own files the skill reads and writes:
 | `.git/opsbot-log-cache.json`, `.git/opsbot-seen` | the records already read, per sheet tree; the seen keys as a file for heartbeat scripts (`OPSBOT_SEEN`); never committed |
 | `.git/opsbot-cycle.lock` | the writer lock; never committed |
 | `.git/opsbot-{watchdog,nudge,nudge-now}` | the watchdog's told-once marker and the nudge cooldowns; never committed |
-| `.git/opsbot-sleep` | present while the bot is going down, asleep, or woken and not yet answered: when it was decided and by which command, quiet since when, the earliest due time and what it is, each wake file's line count as the deciding cycle's check started (its wake base), when the sleep began and whether it compacted, the sleep timer's last look, the wake (when, why, when the event was, whether the prompt landed) and whether an unanswered wake was escalated; removed by `cycle begin`; never committed; ignored while `sleep` is absent from `opsbot.json` |
+| `.git/opsbot-sleep` | present while the bot is going down, asleep, or woken and not yet answered: when it was decided and by which command, quiet since when, the earliest due time and what it is, each wake file's line count as the deciding cycle's check started (its wake base), when the sleep began and whether it compacted, the sleep timer's last look, every text the timer typed (`typed`), the wake (when, why, when the event was, whether the prompt landed) and whether an unanswered wake was escalated; removed by `cycle begin`; never committed; ignored while `sleep` is absent from `opsbot.json` |
 | `.scratch/` | the bot's scratch directory for files written to look at and throw away; `cold-start --write` creates it and adds a `.scratch/` line to the repository's `info/exclude` (`git rev-parse --git-path info/exclude`, so a worktree checkout works), never to `.gitignore`; never committed |
 | `.scratch/opsbot-core/reground.md` + `reground.pending` | the cold-start pack and its flag; inside the working directory, so reading the pack needs no permission beyond the checkout |
 | `memory/` (`memory.dir`) | the session's Claude Code auto memory: `MEMORY.md`, the index Claude Code loads at every session start, and one small file per memory, which the model writes on its own; committed with the cycles; see *Auto memory* below |
+| `.git/opsbot-hook-times.json` | each `cycle.d/begin/` script's last three wall times and when its current run over 60% of the script limit began ([Hook times and skipping a hook](#hook-times-and-skipping-a-hook)); never committed |
 | `.git/opsbot-memory-review.json` | the snapshot `memory review --begin` takes (each memory file's name and content hash) for `--done` to diff against; removed by `--done`; never committed |
 | `routines/` (`routines.dir`) | the bot's routine definitions, one markdown file per routine: the schedule in TOML frontmatter, the instructions in the body; committed, governed like the rule card, read at `HEAD`; the core never writes here; see *Routines* below |
 
@@ -72,8 +73,14 @@ key named `//` is a comment and is allowed at any level, since JSON has no comme
 `streams.<name>` objects are the heartbeat scripts' own and are not checked inside.
 When `.claude/settings.json` sets `autoCompactWindow`, `settings validate` refuses it
 unless it equals `loop.autocompact` (one value, one place). It also refuses
-`.claude/settings.json` setting `autoMemoryEnabled` or `autoMemoryDirectory`: `memory` is
-where that is set. `memory` must be `false` or an object; `memory.dir` must be a non-empty
+`.claude/settings.json` setting `autoMemoryEnabled`: `memory` is where that is set. It
+accepts `autoMemoryDirectory` there only when it is the same directory as `memory.dir`, so
+that a person's interactive session in the bot's checkout, which `start` does not launch,
+shares the bot's memory: the value is resolved against the repo root when relative, `~/`
+against the home directory, a trailing slash ignored, and both sides through symbolic links
+when they exist. Any other directory, or any value with `memory: false`, is refused with
+both paths named (the value as written and as resolved, and `memory.dir` resolved).
+`memory` must be `false` or an object; `memory.dir` must be a non-empty
 repo-relative path with no `..` segment, not absolute, not the repo itself, and not under
 `.git/`, `.claude/` or `.scratch/`; `memory.review_days` a positive whole number.
 `routines.dir` follows the same rule as `memory.dir`. `settings
@@ -97,10 +104,10 @@ it tells its operator once. Outside a session (`CLAUDECODE` unset) nothing is ch
 | --- | --- | --- |
 | *(none)* | home: bot name, bin path, last cycle outcome and age, lock state, next wake, counts of failed inputs and open outages, one `memory` line (as `memory status` prints it, or `off`), and with `sleep` set the sleep state (`awake`, going down, `asleep since HH:MMZ, next look HH:MMZ, wake by HH:MMZ`, or woken and waiting); three help lines | 0 |
 | `check` | runs every script in `heartbeat.d/` and the core's own `routines` input (one item per due routine occurrence; see *Routines*), aggregates, records seen keys, logs, commits; prints the digest or one line | 0 nothing new · 10 new · 20 degraded · 2 cannot run |
-| `cycle begin` | refuses (exit 2, naming `log migrate`) a checkout still set up for the old log files, writing nothing; refuses while another writer holds the checkout; takes the lock; with `repo_sync: pull` on a full cycle fast-forwards a clean checkout that is behind, and makes one that cannot an item; records a `stopped` outage if overdue; runs `cycle.d/begin/`; runs `check`, or a fast check when a wake file woke it ([A fast cycle](#a-fast-cycle)); on 0 releases and prints the closing line. With `loop.schedule: "monitor"`, on 0 and on 30 it also prints a `wake` field: the schedule monitor's state and the one `Monitor` call to make now | as `check`; 30 wait |
+| `cycle begin [--full] [--skip-hook <name>]…` | refuses (exit 2, naming `log migrate`) a checkout still set up for the old log files, writing nothing; refuses (exit 2, naming the installed ones) a `--skip-hook` that names no script in `cycle.d/begin/`; refuses while another writer holds the checkout; takes the lock; with `repo_sync: pull` on a full cycle fast-forwards a clean checkout that is behind, and makes one that cannot an item; records a `stopped` outage if overdue; runs `cycle.d/begin/` but the scripts named by `--skip-hook` ([Hook times and skipping a hook](#hook-times-and-skipping-a-hook)); runs `check`, or a fast check when a wake file woke it ([A fast cycle](#a-fast-cycle)); on 0 releases and prints the closing line. With `loop.schedule: "monitor"`, on 0 and on 30 it also prints a `wake` field: the schedule monitor's state and the one `Monitor` call to make now | as `check`; 30 wait |
 | `cycle end --records N [--degraded] [--summary TEXT]` | runs `cycle.d/end/`; pins the watermark to this cycle's check time; writes `finished` with what the cycle staged as one log commit; pushes it; releases; prints whatever `cycle.d/end/` scripts printed (due promises, owed fixes), then, when a wake file gained lines since this cycle's check, an `arrived` field and `next 0 arrived` with no `wake` field ([A fast cycle](#a-fast-cycle)), else `next <s> <reason>`; a `memory` line when the memory review is due and a `routines` field with one line per other due routine (neither alongside a `sleep` field); with `loop.schedule: "monitor"`, then a `wake` field with the schedule monitor's state and the one `Monitor` call to make now, and no self-paced guidance | 0 · 1 refused (nothing written; the lock released) or could not commit (the lock kept) |
 | `check --peek` | runs every script in `heartbeat.d/` and the `routines` input, and prints the count of new items per input; records nothing, logs nothing, commits nothing, and leaves the watermark and the seen keys alone, so the cycle that follows sees the same items. Each script also gets `OPSBOT_PEEK=1`: an adapter that keeps state of its own (a baseline it updates) must leave that state alone when it is set, or the check that follows misses what the peek saw | 0 nothing new · 10 new · 20 degraded · 2 cannot run |
-| `sleep tick [--dry-run]` | the sleep timer's one command, a no-op unless `.git/opsbot-sleep` exists and `sleep` is set. Going down: once the session is idle by the nudge's test (the runtime's `idle` or `done`, or `working` with the session log showing the turn ended), types `/compact` through the adapter when `sleep.compact` is set, and marks the sleep begun. Asleep: wakes the session, typing `<loop.prompt> (woken: <reason>)` through the adapter, when the operator wrote to the session since the decision, when a wake file has a line past the count its check started from, when the recorded due time has passed, when `max_minutes` since the decision is up, or when `check --peek` exits 10 or 20 (tested in that order, the peek last and only once the sleep has begun); otherwise records its look and does nothing. Any of these while going down is a wake, not a compaction. A busy session is woken at a later tick; one that cannot be reached, or sits at a dialog, is recorded as woken unsent and tried again. A wake not followed by a `cycle begin` within `watchdog_minutes` is told to the operator once through `escalate.d/` and recorded as a `stopped` outage from the wake. `--dry-run` types and writes nothing | 0 · 1 could not reach the runtime, or could not tell the operator |
+| `sleep tick [--dry-run]` | the sleep timer's one command, a no-op unless `.git/opsbot-sleep` exists and `sleep` is set. Going down: once the session is idle by the nudge's test (the runtime's `idle` or `done`, or `working` with the session log showing the turn ended), types `/compact` through the adapter when `sleep.compact` is set, and marks the sleep begun. Every text it types is recorded in the sleep file's `typed`. Asleep: wakes the session, typing `<loop.prompt> (woken: <reason>)` through the adapter, when the operator wrote to the session since the decision (a typed prompt, never a slash command or the timer's own keystrokes; see *Sleep*), when a wake file has a line past the count its check started from, when the recorded due time has passed, when `max_minutes` since the decision is up, or when `check --peek` exits 10 or 20 (tested in that order, the peek last and only once the sleep has begun); otherwise records its look and does nothing. Any of these while going down is a wake, not a compaction. A busy session is woken at a later tick; one that cannot be reached, or sits at a dialog, is recorded as woken unsent and tried again. A wake not followed by a `cycle begin` within `watchdog_minutes` is told to the operator once through `escalate.d/` and recorded as a `stopped` outage from the wake. `--dry-run` types and writes nothing | 0 · 1 could not reach the runtime, or could not tell the operator |
 | `wake backstop --key <key> --at <ISO time> [--grace <seconds>] --reason <text>` | the listeners' one wake routine, so no listener carries its own: waits `grace` (default 20) for a check begun after the event or the key seen on the log branch; waits out a cycle that was already running and looks again; skips the wait when the bot is asleep; then runs `nudge --now`, again every 10 seconds, until the outcome is `woke` or `cooldown`, a newer check begins, the key is seen, or 30 minutes pass. Prints one line (`woken by monitor`, `nudged after <n>s`, `nudged after cycle`, `already woken`, `asleep: nudged`, `gave up`) and exits 0. Several running at once share one nudge through the nudge's own claim | 0 · 2 |
 | `wake wait --until <epoch seconds>` | the schedule monitor's poller, run by the session's one `Monitor` call and by nothing else: polls every 2 seconds from the line counts the last check recorded; prints the new lines of any wake file, each prefixed with the file's basename and cut to 300 characters, at most 20, and exits 0; or prints `cycle due` and exits 0 when the time passes. Without a recorded count for a file it starts at that file's end. A time more than 1 800 seconds ahead is refused | 0 · 2 |
 | `next-delay` | reads the log and the cadence table; prints `<seconds> <reason>`. With `loop.schedule: "monitor"` no delay passes 1 740 seconds (29 minutes: the delay plus the monitor's one-minute margin stays inside the harness's 30-minute limit), and a capped reason says so: `night (capped at 29 min: a monitor's limit)` | 0 |
@@ -161,7 +168,7 @@ file, since a unit outlives any one commit.
 | --- | --- | --- |
 | `heartbeat.d/` | every `check` | a stream adapter: prints NDJSON items `{key, at, conv, kind: "group"\|"dm", from, text, ...}`; `key` is the typed seen key; optional `keys` is an array of more seen keys the item stands for (one digest row for a group of events); optional `report: false` marks the item's keys seen without showing it (the bot's own messages); optional `gate_word_void: "<why>"` says the item's author cannot give the gate word: a gate word in its text is flagged `gate_word: present, does not count: <why>` instead of `present`, and the field itself is not printed; exit 0 with no lines = nothing new; non-zero = this input failed, reported as degraded by the script's name |
 | `monitor.d/` | always on | a long-running watcher or a timed probe; `infra install` renders it as a user service (`monitor.d/<name>`) or timer (`monitor.d/<name>@<interval>`); it appends one line per event to a file named in `wake.files` (the session's monitor wakes on it) and also runs `<core> nudge --now` (the backstop) |
-| `cycle.d/begin/` | after the lock, before `check` | housekeeping that must run first (a repo sync, a cache warm); non-zero aborts the cycle as degraded |
+| `cycle.d/begin/` | after the lock, before `check` | housekeeping that must run first (a repo sync, a cache warm); non-zero aborts the cycle as degraded; each is timed, and one can be skipped for a cycle ([Hook times and skipping a hook](#hook-times-and-skipping-a-hook)) |
 | `cycle.d/end/` | after records, before the commit | what to show at the close: due promises, fixes not yet told, anything the operator should see this cycle; stdout is appended to the closing line |
 | `wake.d/` | every cold start | one section of the reground pack each (what is owed, open escalations, …); each capped to its share of the byte budget |
 | `due.d/` | when a sleep is being decided | prints one line per thing due, `<ISO-8601 time> <what>` (a promise, the start of working hours); the earliest is the sleep's wake time; a script that exits non-zero, or a line that does not open with a time, keeps the bot awake, since what is due cannot be known. The core adds its own lines beside the scripts': the next time each routine that is not due now becomes due (see *Routines*) |
@@ -172,6 +179,33 @@ installs its adapter into `heartbeat.d/` and its listener into `monitor.d/` ([op
 skill installs `wake.d/20-owed` and `cycle.d/end/20-due`; a bot's own script goes in
 the same way. `opsbot-core hooks list` shows what will run at each point and in what
 order.
+
+### Hook times and skipping a hook
+
+A `cycle.d/begin/` script runs under the same 300-second limit as every lifecycle script, and
+one that passes it stops the cycle. Two things keep a slow or broken one from stopping the loop
+unseen.
+
+- **Times.** `cycle begin` times each `cycle.d/begin/` script it runs (wall time, in seconds to
+  one decimal). The cycle's record on the log branch carries them as `hooks: {<name>:
+  <seconds>}`, the check's line or, for a begin script that failed, the failure's line; a run
+  of quiet cycles carries its newest cycle's times in a `Hook-Times: <name>=<seconds>, …`
+  trailer. `.git/opsbot-hook-times.json` keeps each script's last three times.
+- **Slow on three cycles in a row.** When a script's last three times each passed 60% of the
+  limit (180 s of 300 s), the check carries one heartbeat item from the core's own
+  `hook-times` input, naming the script, its last three times, and the limit, keyed
+  `hook-times:<name>:<when the run over 60% began>`, so a run is reported once and a script
+  that recovers and slows again is reported again. A time under 60% ends the run. A skipped
+  script and a fast cycle's unrun scripts add no time and end nothing.
+- **Skipping.** `cycle begin --skip-hook <name>` (repeatable; the script's file name in
+  `cycle.d/begin/`) runs the cycle without that script, so a bot is not left choosing between
+  no cycles and running checks by hand outside the loop. The cycle's output says so on its
+  first line (`· skipped cycle.d/begin/<name>`), and its record carries `skipped_hooks:
+  [<name>, …]`; a cycle with a skipped script is never folded into a quiet commit, so the skip
+  is a record of its own. The skip lasts for that one cycle; the next `cycle begin` runs every
+  script again unless it is named again. A name that is not installed is refused before the
+  lock is taken. Only `cycle.d/begin/` scripts can be skipped: an `end` script's failure is
+  already a note, not a stop.
 
 ## Peer sessions
 
@@ -443,8 +477,7 @@ further call, and is woken from outside the model only when there is something t
   cycle that found anything, or the operator's last message, is `after_minutes` or more ago
   (with neither, the first cycle the log holds); the last check was not degraded; and nothing
   `due.d/` prints falls within the next `after_minutes`. The operator's message is read from
-  the session log; the loop prompt, which the nudge and the sleep timer type, is not the
-  operator. The command writes `.git/opsbot-sleep` (when it was decided, and the earliest
+  the session log; see *What counts as the operator writing* below. The command writes `.git/opsbot-sleep` (when it was decided, and the earliest
   time something is due) and prints a `sleep` field in place of the `wake` field: arm
   nothing, schedule nothing, end the turn. The log gets a `sleep` entry, in the cycle's log
   commit (`cycle begin` makes its own `cycle: sleep` commit on the log branch); a commit that
@@ -466,6 +499,25 @@ further call, and is woken from outside the model only when there is something t
   `wake` entry with the reason and the seconds since the event, and the loop runs as usual.
   A cycle that wakes to nothing new may decide a new sleep at once: the stretch is still
   quiet.
+- **What counts as the operator writing.** Only a prompt a person typed to the loop: a user
+  entry in the session log, or a message Claude Code folds into a turn as sent while it was
+  working. None of these is the operator:
+  - the loop prompt, which the nudge and the sleep timer type, and any text the sleep timer
+    records typing (`typed` in `.git/opsbot-sleep`: its `/compact` and its wakes);
+  - a slash command, in either form the log holds it: the command record (`<command-name>…`)
+    or the bare text (`/compact`, `/compact <instructions>`, `/context`) that Claude Code
+    sometimes writes ahead of it (seen when the conversation's last turn had not ended: after
+    a compaction, a branch, or an interrupted turn). A slash command is the operator acting
+    on the session, not writing to the loop;
+  - local-command output and its caveat, a compaction summary, and any entry Claude Code
+    marks as its own (`isMeta`, or an `origin` that is not a person: task notifications, hook
+    context, system reminders).
+
+  Why: a wake that says the operator wrote sends the session looking for a message that does
+  not exist, and it counts as an operator wake in the sleep's numbers. Before this rule, a
+  `/compact` typed by hand into a session the timer had already compacted logged the bare
+  text, which was read as the operator, while the timer's own `/compact` (typed after an
+  ended turn) logged only the command record.
 - **Readers.** A `sleep`…`wake` span in the log is intended silence. The stopped-outage test
   at `cycle begin` counts only the time since the wake; the 48-hour summary's longest gap
   skips the span and adds a line, `slept N times, M min in all`.
@@ -492,8 +544,9 @@ lost when a bot moves hosts. Bots keep the habit, but the folder lives in the bo
 - **Where.** `start` passes `autoMemoryEnabled: true` and `autoMemoryDirectory` (the absolute
   path of `memory.dir`, `memory/` by default) in its one `--settings` object, and creates the
   directory when it is missing so the first write lands. The setting takes an absolute or
-  `~/` path. A session started any other way writes to Claude Code's default location;
-  `start` is how a bot is launched.
+  `~/` path. A session started any other way writes to Claude Code's default location,
+  unless the bot's `.claude/settings.json` names the same directory (the one auto memory key
+  `settings validate` accepts there); `start` is how a bot is launched.
 - **Off.** `memory: false` turns it off for a bot: `start` passes `autoMemoryEnabled: false`
   and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`. No value leaves memory on at Claude Code's
   default location.

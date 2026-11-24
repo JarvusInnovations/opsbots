@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "7cb69f2" : "dev";
+    VERSION = true ? "04b9bac" : "dev";
   }
 });
 
@@ -1902,8 +1902,8 @@ var init_reference = __esm({
         group: "The cycle",
         commands: [
           {
-            usage: "cycle begin [--full]",
-            summary: "Refuse while another writer holds the checkout (exit 30, `wait \xB7 \u2026 \xB7 next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. A wake from a wake file whose `wake.files` entry names its inputs (`{file, inputs}`) runs a fast check: only those inputs, the last full check's window, the watermark left alone, only `cycle.d/begin/` scripts named `*.fast`, and a `fast` field naming the inputs and when the next full check is due; a quiet deadline, a full check older than `check.full_minutes` (10; 0 turns fast checks off), a failed last check or `--full` runs the full check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it. With `loop.schedule: monitor`, on 0 and 30 the `wake` field holds the schedule monitor's state and the one Monitor call to make now. With `sleep` set, a nothing-new begin that finds the loop quiet for `after_minutes` prints a `sleep` field in place of `wake`: arm nothing, end the turn. A begin that finds `.git/opsbot-sleep` removes it and logs the wake."
+            usage: "cycle begin [--full] [--skip-hook <name>]...",
+            summary: "Refuse while another writer holds the checkout (exit 30, `wait \xB7 \u2026 \xB7 next <s>`); take the lock; record outages; run `cycle.d/begin/`; run the check. A wake from a wake file whose `wake.files` entry names its inputs (`{file, inputs}`) runs a fast check: only those inputs, the last full check's window, the watermark left alone, only `cycle.d/begin/` scripts named `*.fast`, and a `fast` field naming the inputs and when the next full check is due; a quiet deadline, a full check older than `check.full_minutes` (10; 0 turns fast checks off), a failed last check or `--full` runs the full check. Exit 0 nothing new (lock released), 10 new, 20 degraded (lock kept until `cycle end`). With `wake.files` set, a `wake` field says whether the live-wake monitor is armed and prints the call that arms it. With `loop.schedule: monitor`, on 0 and 30 the `wake` field holds the schedule monitor's state and the one Monitor call to make now. With `sleep` set, a nothing-new begin that finds the loop quiet for `after_minutes` prints a `sleep` field in place of `wake`: arm nothing, end the turn. A begin that finds `.git/opsbot-sleep` removes it and logs the wake. `--skip-hook <name>` (repeatable) runs the cycle without that `cycle.d/begin/` script, says so on the first line and records `skipped_hooks`; an unknown name exits 2. Each begin script's time rides the cycle's record (`hooks`); one over 60% of the script limit on three cycles in a row is a `hook-times` item."
           },
           {
             usage: "check [--no-commit]",
@@ -2016,7 +2016,7 @@ var init_reference = __esm({
           },
           {
             usage: "sleep tick [--dry-run]",
-            summary: "The sleep timer's tick (only with `sleep` set; a no-op while awake). Going down: types `/compact` once the session is idle. Asleep: wakes it with `<loop.prompt> (woken: <reason>)` on an operator message, a wake-file line, the due time, `max_minutes`, or a `check --peek` exit of 10 or 20. A wake no `cycle begin` answers within `watchdog_minutes` is told once through `escalate.d/`. Exit 1 when the runtime or the operator could not be reached."
+            summary: "The sleep timer's tick (only with `sleep` set; a no-op while awake). Going down: types `/compact` once the session is idle. Asleep: wakes it with `<loop.prompt> (woken: <reason>)` on an operator message (a typed prompt; a slash command such as a hand-typed `/compact`, and the timer's own keystrokes, are not one), a wake-file line, the due time, `max_minutes`, or a `check --peek` exit of 10 or 20. A wake no `cycle begin` answers within `watchdog_minutes` is told once through `escalate.d/`. Exit 1 when the runtime or the operator could not be reached."
           },
           {
             usage: "infra install|uninstall|status [--dry-run]",
@@ -2032,7 +2032,7 @@ var init_reference = __esm({
             summary: "Register the SessionStart (`cold-start --write`) and PreToolUse (`gate check`) hooks; project scope by default."
           },
           { usage: "hooks list [--point P]", summary: "Every script that will run at each lifecycle point, in order, with its source." },
-          { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets auto memory itself; any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails; and a log branch (`log.branch`, default `opsbot/log`) that names the branch checked out, or no `gitsheets-axi` 2.15.0 or later to write it; `log.ledgers` or `log.state` that is not names with lists of field names; and, naming `log migrate`, every setting only the old log files needed (the list of files each cycle committed, `routines.runs_dir`, and `repo_sync` `pull-on-clean` or `never-pull`)." }
+          { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets `autoMemoryEnabled`, or an `autoMemoryDirectory` other than `memory.dir` (the same directory, relative or absolute, is accepted, so a session `start` did not launch shares the bot's memory); any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails; and a log branch (`log.branch`, default `opsbot/log`) that names the branch checked out, or no `gitsheets-axi` 2.15.0 or later to write it; `log.ledgers` or `log.state` that is not names with lists of field names; and, naming `log migrate`, every setting only the old log files needed (the list of files each cycle committed, `routines.runs_dir`, and `repo_sync` `pull-on-clean` or `never-pull`)." }
         ]
       }
     ];
@@ -2673,7 +2673,7 @@ function writeQuiet(root, b, q, nowMs2, session = "") {
   if (!tip) return { ok: false, why: `the log branch ${b} cannot be read` };
   const head2 = programHead(root);
   const base = baseTrailers(head2, q.watermark, q.check);
-  const own = sessionTrailers(session);
+  const own = [...q.extra ?? [], ...sessionTrailers(session)];
   const n = Number(tip.trailers["Quiet-Cycles"] ?? 0);
   const open5 = isOpenQuiet(tip, nowMs2) && tip.trailers.Check === q.check && tip.trailers.Program === (head2 ?? "none") && n > 0;
   if (open5) {
@@ -4370,10 +4370,40 @@ var init_routine_store = __esm({
 
 // src/opsbot-core/memory.ts
 import { createHash as createHash2 } from "node:crypto";
-import { existsSync as existsSync10, readdirSync as readdirSync4, readFileSync as readFileSync7, rmSync as rmSync4, statSync as statSync2, writeFileSync as writeFileSync5 } from "node:fs";
-import { join as join8, relative as relative3, resolve as resolve4, sep as sep2 } from "node:path";
+import { existsSync as existsSync10, readdirSync as readdirSync4, readFileSync as readFileSync7, realpathSync as realpathSync3, rmSync as rmSync4, statSync as statSync2, writeFileSync as writeFileSync5 } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { basename as basename4, dirname as dirname4, join as join8, relative as relative3, resolve as resolve4, sep as sep2 } from "node:path";
 function memoryDir(root, s) {
   return s.memory ? resolve4(root, s.memory.dir) : null;
+}
+function resolveDir(root, p) {
+  const home = p === "~" || p.startsWith("~/") ? homedir3() + p.slice(1) : p;
+  const abs = resolve4(root, home);
+  const rest = [];
+  let at = abs;
+  for (; ; ) {
+    try {
+      return join8(realpathSync3(at), ...rest);
+    } catch {
+      const up = dirname4(at);
+      if (up === at) return abs;
+      rest.unshift(basename4(at));
+      at = up;
+    }
+  }
+}
+function autoMemoryDirectoryProblem(root, value, memory) {
+  const shown = JSON.stringify(value);
+  if (memory === null) {
+    return `.claude/settings.json sets autoMemoryDirectory ${shown} but memory is false in opsbot.json; remove it, or turn memory on`;
+  }
+  const want = resolveDir(root, memory.dir);
+  if (typeof value !== "string" || value.trim() === "") {
+    return `.claude/settings.json sets autoMemoryDirectory ${shown}, which is not a directory; memory.dir is ${want}`;
+  }
+  const got = resolveDir(root, value);
+  if (got === want) return null;
+  return `.claude/settings.json sets autoMemoryDirectory ${shown} (${got}) but memory.dir is ${JSON.stringify(memory.dir)} (${want}); point it at the same directory, or remove it`;
 }
 function changedMemoryFiles(root, s, already = []) {
   const dir = memoryDir(root, s);
@@ -4987,7 +5017,7 @@ var init_reader = __esm({
 });
 
 // node_modules/agent-recall-axi/dist/src/lib/adapters/claude-code/classify.js
-import { basename as basename4, join as join10 } from "node:path";
+import { basename as basename5, join as join10 } from "node:path";
 import { existsSync as existsSync12 } from "node:fs";
 function isSilentType(type) {
   if (type === void 0)
@@ -5138,7 +5168,7 @@ function foldParts(parts2) {
 function skillDraft(text) {
   const firstLine2 = text.trimStart().split("\n", 1)[0] ?? "";
   const path = firstLine2.slice(SKILL_PREFIX.length).trim();
-  return { kind: "skill", text, extra: { meta: { skill: basename4(path), path } } };
+  return { kind: "skill", text, extra: { meta: { skill: basename5(path), path } } };
 }
 function stripTags(text) {
   return text.replace(/<\/?[A-Za-z][\w-]*(?:\s[^<>]*)?>/g, "").replace(/[ \t]+\n/g, "\n").trim();
@@ -5229,7 +5259,7 @@ function parsePointer(text, sidecar) {
   let path = stored;
   let exists = existsSync12(stored);
   if (sidecar) {
-    const relocated = join10(sidecar, "tool-results", basename4(stored));
+    const relocated = join10(sidecar, "tool-results", basename5(stored));
     if (relocated !== stored && existsSync12(relocated)) {
       path = relocated;
       exists = true;
@@ -5600,11 +5630,11 @@ var init_detect = __esm({
 // node_modules/agent-recall-axi/dist/src/lib/adapters/claude-code/sessions.js
 import { createHash as createHash3 } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
-import { basename as basename5, dirname as dirname4, join as join11 } from "node:path";
-import { homedir as homedir3 } from "node:os";
+import { basename as basename6, dirname as dirname5, join as join11 } from "node:path";
+import { homedir as homedir4 } from "node:os";
 function defaultRoot(env = process.env) {
   const config = env.CLAUDE_CONFIG_DIR;
-  return join11(config && config.length ? config : join11(homedir3(), ".claude"), "projects");
+  return join11(config && config.length ? config : join11(homedir4(), ".claude"), "projects");
 }
 function encodeCwd(cwd) {
   return cwd.replace(/[^A-Za-z0-9]/g, "-");
@@ -5648,7 +5678,7 @@ async function firstCwd(path, maxLines = 200) {
   return void 0;
 }
 async function projectForDir(dir) {
-  const encoded = basename5(dir);
+  const encoded = basename6(dir);
   const files = await jsonlFiles(dir);
   let cwd;
   let fallback;
@@ -5682,19 +5712,19 @@ async function* listProjects(root) {
     yield await projectForDir(join11(root, name));
 }
 function shortId(id, path) {
-  return /^[0-9a-f]{8}/i.test(id) ? id.slice(0, 8).toLowerCase() : createHash3("sha1").update(basename5(path)).digest("hex").slice(0, 8);
+  return /^[0-9a-f]{8}/i.test(id) ? id.slice(0, 8).toLowerCase() : createHash3("sha1").update(basename6(path)).digest("hex").slice(0, 8);
 }
 function sessionForPath(path, project) {
-  const file = basename5(path).replace(/\.jsonl$/, "");
-  const parentDir = dirname4(path);
-  if (basename5(parentDir) === "subagents") {
+  const file = basename6(path).replace(/\.jsonl$/, "");
+  const parentDir = dirname5(path);
+  if (basename6(parentDir) === "subagents") {
     const id = file.replace(/^agent-/, "");
-    const sidecar = dirname4(parentDir);
+    const sidecar = dirname5(parentDir);
     const s2 = {
       id,
       short: shortId(id, path),
       kind: "subagent",
-      parent: basename5(sidecar),
+      parent: basename6(sidecar),
       path,
       sidecar,
       adapter: ADAPTER_ID
@@ -5728,7 +5758,7 @@ async function* listSessions(project, opts = {}) {
   for (const f of files) {
     const main2 = sessionForPath(join11(project.dir, f), project);
     yield main2;
-    if (!opts.subagents || !sidecars?.has(basename5(main2.sidecar)))
+    if (!opts.subagents || !sidecars?.has(basename6(main2.sidecar)))
       continue;
     const subDir = join11(main2.sidecar, "subagents");
     if (!await isDir(subDir))
@@ -5843,8 +5873,8 @@ var init_claude_code = __esm({
 
 // node_modules/agent-recall-axi/dist/src/lib/scope.js
 import { stat as stat2 } from "node:fs/promises";
-import { homedir as homedir4 } from "node:os";
-import { dirname as dirname5, join as join12, resolve as resolve5 } from "node:path";
+import { homedir as homedir5 } from "node:os";
+import { dirname as dirname6, join as join12, resolve as resolve5 } from "node:path";
 function rootOf(scope = {}) {
   return scope.root ?? claudeCode.root(scope.env ?? process.env);
 }
@@ -5873,9 +5903,9 @@ async function projectForCwd(root, dir, scanned) {
 }
 function expandHome(value) {
   if (value === "~")
-    return homedir4();
+    return homedir5();
   if (value.startsWith("~/"))
-    return join12(homedir4(), value.slice(2));
+    return join12(homedir5(), value.slice(2));
   return value;
 }
 function looksLikePath(value) {
@@ -5907,7 +5937,7 @@ async function resolveScope(scope = {}) {
   }
   const cwd = resolve5(scope.cwd ?? process.cwd());
   let scanned;
-  for (let dir = cwd; ; dir = dirname5(dir)) {
+  for (let dir = cwd; ; dir = dirname6(dir)) {
     const candidate = join12(root, encodeCwd(dir));
     if (await isDir2(candidate)) {
       const p = await projectForDir(candidate);
@@ -5918,7 +5948,7 @@ async function resolveScope(scope = {}) {
     const hit = scanned.find((p) => p.cwd === dir);
     if (hit)
       return { root, all: false, projects: [hit] };
-    if (dirname5(dir) === dir)
+    if (dirname6(dir) === dir)
       break;
   }
   throw new AgentSessionError(`no session logs for ${cwd}`, "NO_SESSIONS", NO_SESSIONS_HINTS, { cwd });
@@ -5937,23 +5967,23 @@ var init_scope = __esm({
 });
 
 // node_modules/agent-recall-axi/dist/src/invocation.js
-import { accessSync as accessSync3, constants as constants3, realpathSync as realpathSync3, statSync as statSync3 } from "node:fs";
-import { homedir as homedir5 } from "node:os";
-import { basename as basename6, delimiter, dirname as dirname6, join as join13 } from "node:path";
+import { accessSync as accessSync3, constants as constants3, realpathSync as realpathSync4, statSync as statSync3 } from "node:fs";
+import { homedir as homedir6 } from "node:os";
+import { basename as basename7, delimiter, dirname as dirname7, join as join13 } from "node:path";
 function real(path) {
   try {
     if (!statSync3(path).isFile())
       return void 0;
-    return realpathSync3(path);
+    return realpathSync4(path);
   } catch {
     return void 0;
   }
 }
 function bundleShim(entrypoint) {
-  if (!entrypoint || basename6(entrypoint) !== BUNDLE_FILE)
+  if (!entrypoint || basename7(entrypoint) !== BUNDLE_FILE)
     return void 0;
   const bundle = real(entrypoint) ?? entrypoint;
-  const shim = join13(dirname6(bundle), NAME);
+  const shim = join13(dirname7(bundle), NAME);
   try {
     accessSync3(shim, constants3.X_OK);
     return { bundle, shim };
@@ -5976,7 +6006,7 @@ function shellWord(text) {
   return /^[\w@%+=:,./-]+$/.test(text) ? text : `'${text.replace(/'/g, `'\\''`)}'`;
 }
 function pathWord(path) {
-  const home = homedir5();
+  const home = homedir6();
   if (path === home)
     return "~";
   if (path.startsWith(`${home}/`))
@@ -6052,10 +6082,10 @@ var init_window_state = __esm({
 
 // node_modules/agent-recall-axi/dist/src/version.js
 import { readFileSync as readFileSync9 } from "node:fs";
-import { dirname as dirname7, join as join14 } from "node:path";
+import { dirname as dirname8, join as join14 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 function readVersion() {
-  const here = dirname7(fileURLToPath2(import.meta.url));
+  const here = dirname8(fileURLToPath2(import.meta.url));
   for (const candidate of [join14(here, "..", "package.json"), join14(here, "..", "..", "package.json")]) {
     try {
       const pkg = JSON.parse(readFileSync9(candidate, "utf8"));
@@ -6076,13 +6106,13 @@ var init_version2 = __esm({
 // node_modules/agent-recall-axi/dist/src/lib/cache/store.js
 import { createHash as createHash4 } from "node:crypto";
 import { lstat, mkdir, open as open2, readFile, rename, rm, stat as stat3, writeFile } from "node:fs/promises";
-import { homedir as homedir6 } from "node:os";
+import { homedir as homedir7 } from "node:os";
 import { join as join15 } from "node:path";
 function cacheDir(opts = {}) {
   if (opts.dir)
     return opts.dir;
   const env = opts.env ?? process.env;
-  const base = env.XDG_CACHE_HOME && env.XDG_CACHE_HOME.length ? env.XDG_CACHE_HOME : join15(homedir6(), ".cache");
+  const base = env.XDG_CACHE_HOME && env.XDG_CACHE_HOME.length ? env.XDG_CACHE_HOME : join15(homedir7(), ".cache");
   return join15(base, "agent-recall-axi");
 }
 function recordName(path) {
@@ -6653,7 +6683,7 @@ __export(stats_exports, {
   statsFromTable: () => statsFromTable
 });
 import { readFile as readFile3, stat as stat5 } from "node:fs/promises";
-import { dirname as dirname8, join as join17 } from "node:path";
+import { dirname as dirname9, join as join17 } from "node:path";
 function mirrorOf(t) {
   const m = {
     v: MIRROR_VERSION,
@@ -6770,7 +6800,7 @@ async function headHuman(session) {
   return void 0;
 }
 async function indexEntry(session, mtimeMs) {
-  const dir = session.kind === "main" ? session.project?.dir ?? dirname8(session.path) : void 0;
+  const dir = session.kind === "main" ? session.project?.dir ?? dirname9(session.path) : void 0;
   if (!dir)
     return void 0;
   const e = (await readSessionsIndex(dir)).get(session.id);
@@ -6980,7 +7010,7 @@ var init_session = __esm({
 // node_modules/agent-recall-axi/dist/src/lib/ids.js
 import { constants as constants4 } from "node:fs";
 import { access, stat as stat7 } from "node:fs/promises";
-import { homedir as homedir7 } from "node:os";
+import { homedir as homedir8 } from "node:os";
 import { join as join18, resolve as resolve7 } from "node:path";
 function formatId(id) {
   return id.block === void 0 ? `${id.session}:${id.seq}` : `${id.session}:${id.seq}.${id.block}`;
@@ -7010,9 +7040,9 @@ function comparePosition(a, b) {
 }
 function expandHome2(value) {
   if (value === "~")
-    return homedir7();
+    return homedir8();
   if (value.startsWith("~/"))
-    return join18(homedir7(), value.slice(2));
+    return join18(homedir8(), value.slice(2));
   return value;
 }
 function looksLikePath2(ref2) {
@@ -9405,7 +9435,7 @@ async function recall(phrase, opts = {}) {
   const results = [];
   const states = /* @__PURE__ */ new Set();
   let bytes2 = 0;
-  let read = 0;
+  let read2 = 0;
   let unreadable = scoped.unreadable;
   let firstUnreadable = scoped.firstUnreadable;
   for (const { session, bytes: size } of scoped.sessions) {
@@ -9419,7 +9449,7 @@ async function recall(phrase, opts = {}) {
       firstUnreadable ??= session.path;
       continue;
     }
-    read++;
+    read2++;
     bytes2 += size;
     states.add(r.state);
     if (r.tally.hits > 0 && r.tally.first)
@@ -9431,7 +9461,7 @@ async function recall(phrase, opts = {}) {
   const out = {
     sessions: limit > 0 ? results.slice(0, limit) : results,
     matching: results.length,
-    scanned: { sessions: read, bytes: bytes2, ms: Date.now() - t0, index },
+    scanned: { sessions: read2, bytes: bytes2, ms: Date.now() - t0, index },
     scope: scoped.scope,
     unreadable
   };
@@ -9632,6 +9662,9 @@ function readEvents(path, maxBytes = TAIL_BYTES) {
         const e = { type: v.type, timestamp: String(v.timestamp ?? ""), content: v.message?.content ?? (v.type === "queue-operation" ? v.content : void 0) };
         if (typeof v.subtype === "string") e.subtype = v.subtype;
         if (typeof v.message?.model === "string") e.model = v.message.model;
+        if (v.isMeta === true) e.meta = true;
+        if (v.isCompactSummary === true) e.summary = true;
+        if (typeof v.origin?.kind === "string") e.origin = v.origin.kind;
         out.push(e);
       }
     } catch {
@@ -9657,6 +9690,7 @@ function humanMessages2(evs, from = 0) {
   const out = [];
   for (const e of evs.slice(Math.max(0, from))) {
     if (e.type !== "user") continue;
+    if (e.meta || e.summary || e.origin !== void 0 && e.origin !== "human") continue;
     if (typeof e.content === "string") {
       const t = e.content.trim();
       if (!t || t.startsWith(COMPACTION_MARK) || NOISE.some((r) => r.test(t))) continue;
@@ -9818,9 +9852,9 @@ var init_transcript = __esm({
 
 // src/opsbot-core/wake.ts
 import { readFileSync as readFileSync11, rmSync as rmSync5, writeFileSync as writeFileSync6 } from "node:fs";
-import { homedir as homedir8 } from "node:os";
+import { homedir as homedir9 } from "node:os";
 function expandHome3(p) {
-  return p.replace(/^~(?=\/|$)/, homedir8());
+  return p.replace(/^~(?=\/|$)/, homedir9());
 }
 function wakeFiles(s) {
   return s.wake.files.map(expandHome3);
@@ -9943,14 +9977,14 @@ function scheduleDue(command, atMs) {
   const secs = scheduleSeconds(command);
   return secs !== null ? atMs + secs * 1e3 : null;
 }
-function scheduleTimeoutMs(seconds) {
-  return (Math.max(1, Math.round(seconds)) + SCHEDULE_MARGIN_S) * 1e3;
+function scheduleTimeoutMs(seconds2) {
+  return (Math.max(1, Math.round(seconds2)) + SCHEDULE_MARGIN_S) * 1e3;
 }
 function wakeWaitCommand(untilS) {
   return `${selfCommand()} wake wait --until ${Math.floor(untilS)}`;
 }
-function scheduleCall(bot, seconds, nowMs2) {
-  const secs = Math.max(1, Math.round(seconds));
+function scheduleCall(bot, seconds2, nowMs2) {
+  const secs = Math.max(1, Math.round(seconds2));
   return `Monitor({ command: ${JSON.stringify(wakeWaitCommand(Math.floor(nowMs2 / 1e3) + secs))}, description: ${JSON.stringify(scheduleDescription(bot))}, timeout_ms: ${scheduleTimeoutMs(secs)} })`;
 }
 function newLines(text, from, to, max) {
@@ -9971,7 +10005,7 @@ async function wakeWait(files, base, deadlineMs, pollMs = WAKE_POLL_MS) {
       const m = text.length ? text.split("\n").length - 1 : 0;
       if (m < counts[i]) counts[i] = 0;
       if (m > counts[i]) {
-        const name = basename7(f);
+        const name = basename8(f);
         for (const l of newLines(text, counts[i], m, DELIVER_MAX_LINES)) out.push(`${name}: ${cut(l, DELIVER_MAX_CHARS)}`);
         counts[i] = m;
       }
@@ -10007,7 +10041,7 @@ function schedulePackLines(s, evs, now) {
   if (st) return [`armed until ${hhmm2(st.until)} (since ${hhmm2(st.at)}); nothing to do until it delivers`];
   return [`${evs ? "not armed" : "state unknown (no session log)"} \xB7 run \`cycle begin\` now; it prints the one Monitor call to make`];
 }
-var MONITOR_MAX_MS, MONITOR_MIN_MS, WAKE_BASE_NAME, DELIVER_MAX_LINES, hhmm2, ARRIVED_RULE, CHAIN_RULE, CLOSE_RULE, WAKE_RULES, SCHEDULE_MARGIN_S, CYCLE_DUE, WAKE_WAIT_MAX_S, WAKE_POLL_MS, DELIVER_MAX_CHARS, basename7, cut, SLEEP_RULES, SCHEDULE_RULES;
+var MONITOR_MAX_MS, MONITOR_MIN_MS, WAKE_BASE_NAME, DELIVER_MAX_LINES, hhmm2, ARRIVED_RULE, CHAIN_RULE, CLOSE_RULE, WAKE_RULES, SCHEDULE_MARGIN_S, CYCLE_DUE, WAKE_WAIT_MAX_S, WAKE_POLL_MS, DELIVER_MAX_CHARS, basename8, cut, SLEEP_RULES, SCHEDULE_RULES;
 var init_wake = __esm({
   "src/opsbot-core/wake.ts"() {
     "use strict";
@@ -10033,7 +10067,7 @@ var init_wake = __esm({
     WAKE_WAIT_MAX_S = 1800;
     WAKE_POLL_MS = 2e3;
     DELIVER_MAX_CHARS = 300;
-    basename7 = (p) => p.replace(/\/+$/, "").split("/").pop() || p;
+    basename8 = (p) => p.replace(/\/+$/, "").split("/").pop() || p;
     cut = (l, n) => {
       const cs = Array.from(l);
       return cs.length > n ? cs.slice(0, n).join("") : l;
@@ -10084,11 +10118,13 @@ function clearSleep(root) {
 function wakeLineCounts(s, base = null) {
   return Object.fromEntries(wakeFiles(s).map((f) => [f, baseFor(base, f) ?? lineCount(f)]));
 }
-function lastOperatorAt(evs, loopPrompt, after) {
+function lastOperatorAt(evs, loopPrompt, after, typed = []) {
   const prompt = loopPrompt.trim();
+  const own = new Set(typed.map((t) => t.trim()));
   let last = null;
   for (const m of humanMessages2(evs)) {
     if (m.text.startsWith(prompt) || m.text.startsWith("<task-notification") || m.text.startsWith("<system-reminder")) continue;
+    if (SLASH_COMMAND.test(m.text) || own.has(m.text)) continue;
     if (after && m.at <= after) continue;
     if (!last || m.at > last) last = m.at;
   }
@@ -10156,7 +10192,8 @@ function decideSleep(root, s, settingsText, lines, now, evs, by, base = null) {
       compacted: false,
       looked_at: null,
       woken: null,
-      escalated: false
+      escalated: false,
+      typed: []
     }
   };
 }
@@ -10220,7 +10257,7 @@ function sleepStatusLine(s, st) {
   const next3 = iso((parseIso(lastLook) ?? 0) + (s.sleep?.probe_minutes ?? 10) * 6e4);
   return `asleep since ${hhmm3(st.began)}, next look ${hhmm3(next3)}, wake by ${hhmm3(wakeBy(s, st).at)}`;
 }
-var SLEEP_STATE, hhmm3;
+var SLEEP_STATE, hhmm3, SLASH_COMMAND;
 var init_sleep = __esm({
   "src/opsbot-core/sleep.ts"() {
     "use strict";
@@ -10233,6 +10270,7 @@ var init_sleep = __esm({
     init_wake();
     SLEEP_STATE = "opsbot-sleep";
     hhmm3 = (t) => `${t.slice(11, 16)}Z`;
+    SLASH_COMMAND = /^\/[A-Za-z][\w:.-]*(?:\s|$)/;
   }
 });
 
@@ -10306,12 +10344,66 @@ var init_home2 = __esm({
   }
 });
 
+// src/opsbot-core/hooktimes.ts
+import { readFileSync as readFileSync13, writeFileSync as writeFileSync8 } from "node:fs";
+function read(root) {
+  try {
+    const v = JSON.parse(readFileSync13(gitPath(root, HOOK_TIMES), "utf8"));
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  } catch {
+    return {};
+  }
+}
+function hookTimesTrailer(times) {
+  return Object.entries(times).map(([n, s]) => `${n}=${s}`).join(", ");
+}
+function recordHookTimes(root, times, at, limitMs, skipCommand) {
+  if (Object.keys(times).length === 0) return [];
+  const state = read(root);
+  const limit = seconds(limitMs);
+  const over = (s) => s * 1e3 > limitMs * SLOW_SHARE;
+  const items = [];
+  for (const [name, s] of Object.entries(times)) {
+    const e = state[name] ?? { times: [], slow_since: null };
+    e.times = [...e.times ?? [], { at, s }].slice(-SLOW_RUN);
+    e.slow_since = over(s) ? e.slow_since ?? at : null;
+    state[name] = e;
+    if (e.slow_since && e.times.length === SLOW_RUN && e.times.every((t) => over(t.s))) {
+      const list = e.times.map((t) => `${t.s} s`);
+      items.push({
+        key: `hook-times:${name}:${e.slow_since}`,
+        at,
+        conv: "cycle.d/begin",
+        kind: "hook-times",
+        from: "opsbot-core",
+        text: `cycle.d/begin/${name} took ${list.slice(0, -1).join(", ")} and ${list.at(-1)} on the last ${SLOW_RUN} cycles, each over ${Math.round(SLOW_SHARE * 100)}% of the ${limit} s limit for one script; past the limit it stops the cycle. Make it faster, or run ${skipCommand(name)} while it is fixed`
+      });
+    }
+  }
+  writeFileSync8(gitPath(root, HOOK_TIMES), `${JSON.stringify(state)}
+`);
+  return items;
+}
+var HOOK_TIMES, SLOW_SHARE, SLOW_RUN, seconds;
+var init_hooktimes = __esm({
+  "src/opsbot-core/hooktimes.ts"() {
+    "use strict";
+    init_repo();
+    HOOK_TIMES = "opsbot-hook-times.json";
+    SLOW_SHARE = 0.6;
+    SLOW_RUN = 3;
+    seconds = (ms) => Math.round(ms / 100) / 10;
+  }
+});
+
 // src/opsbot-core/args.ts
 function parseArgs(args, spec, usage) {
   const bool = spec.bool ?? [];
-  const value = spec.value ?? [];
+  const repeat = spec.repeat ?? [];
+  const value = [...spec.value ?? [], ...repeat];
   const positionals = [];
   const flags = {};
+  const lists = {};
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a.startsWith("--")) {
@@ -10324,6 +10416,7 @@ function parseArgs(args, spec, usage) {
         const v = eq > 0 ? a.slice(eq + 1) : args[++i];
         if (v === void 0 || eq < 0 && v.startsWith("--")) throw usageError(`--${name} needs a value`, usage);
         flags[name] = v;
+        if (repeat.includes(name)) (lists[name] ??= []).push(v);
       } else {
         const valid = [...value, ...bool].map((f) => `--${f}`).join(", ");
         throw usageError(`unknown flag --${name}`, usage, valid ? `valid flags here: ${valid}` : "this command takes no flags");
@@ -10335,7 +10428,7 @@ function parseArgs(args, spec, usage) {
   if (positionals.length > (spec.maxPositionals ?? 0)) {
     throw usageError(`unexpected argument ${JSON.stringify(positionals[spec.maxPositionals ?? 0])}`, usage);
   }
-  return { positionals, flags };
+  return { positionals, flags, lists };
 }
 function usageError(message, usage, extra) {
   const help = [`${cliInvocation()} ${usage}`];
@@ -10430,7 +10523,7 @@ function runPeek(root) {
   return r.peek;
 }
 function runCheck(root, opts) {
-  const r = sweep(root, { commit: opts.commit, peek: false, fast: opts.fast ?? null, mode: opts.mode, core: opts.core ?? [] });
+  const r = sweep(root, { commit: opts.commit, peek: false, fast: opts.fast ?? null, mode: opts.mode, core: opts.core ?? [], record: opts.record });
   if (!("check" in r)) throw new Error("unreachable: a check returned a peek");
   return r.check;
 }
@@ -10579,6 +10672,9 @@ function branchState(root, branch, settings, c) {
       line.since = SINCE;
     }
     if (fast) line.fast = true;
+    const hooks = opts.record?.hooks ?? {};
+    if (Object.keys(hooks).length) line.hooks = hooks;
+    if (opts.record?.skipped_hooks?.length) line.skipped_hooks = opts.record.skipped_hooks;
     return line;
   };
   const seen = seenRecords(recorded, NOW);
@@ -10588,11 +10684,12 @@ function branchState(root, branch, settings, c) {
   if (!opts.commit) {
     stage(root, { cycles: [lineFor()], seen, ...advance ? { watermark: advance } : {} });
   } else {
-    const quiet = outcome === "nothing-new" && recorded.length === 0 && !hasStaged(readPending(root));
+    const quiet = outcome === "nothing-new" && recorded.length === 0 && !hasStaged(readPending(root)) && !opts.record?.skipped_hooks?.length;
+    const hookTimes = opts.record?.hooks && Object.keys(opts.record.hooks).length ? [`Hook-Times: ${hookTimesTrailer(opts.record.hooks)}`] : [];
     const subject = outcome === "nothing-new" ? "nothing new" : outcome === "new" ? `${NEW} new` : `degraded, ${NEW} new`;
     let why = null;
     if (quiet) {
-      const w = writeQuiet(root, branch, { now: NOW, watermark: advance ?? branchWatermark(root, branch), check: kind, since: SINCE }, startMs, trailers());
+      const w = writeQuiet(root, branch, { now: NOW, watermark: advance ?? branchWatermark(root, branch), check: kind, since: SINCE, extra: hookTimes }, startMs, trailers());
       if (!w.ok) why = w.why;
     } else if (opts.mode && outcome !== "nothing-new") {
       stage(root, { cycles: [lineFor()], seen });
@@ -10643,6 +10740,7 @@ var MARGIN_MINUTES, FIRST_RUN_HOURS, CHECK_USAGE, CORE_FIELDS;
 var init_check = __esm({
   "src/opsbot-core/commands/check.ts"() {
     "use strict";
+    init_hooktimes();
     init_dist2();
     init_args();
     init_invocation();
@@ -10711,11 +10809,11 @@ var init_sync = __esm({
 });
 
 // src/opsbot-core/commands/coldstart.ts
-import { appendFileSync, existsSync as existsSync15, mkdirSync as mkdirSync3, readdirSync as readdirSync5, readFileSync as readFileSync13, rmSync as rmSync7, statSync as statSync5, writeFileSync as writeFileSync8 } from "node:fs";
-import { homedir as homedir9 } from "node:os";
-import { dirname as dirname9, join as join20, resolve as resolve8 } from "node:path";
+import { appendFileSync, existsSync as existsSync15, mkdirSync as mkdirSync3, readdirSync as readdirSync5, readFileSync as readFileSync14, rmSync as rmSync7, statSync as statSync5, writeFileSync as writeFileSync9 } from "node:fs";
+import { homedir as homedir10 } from "node:os";
+import { dirname as dirname10, join as join20, resolve as resolve8 } from "node:path";
 function legacyCacheDir(name) {
-  const base = process.env.XDG_CACHE_HOME || join20(homedir9(), ".cache");
+  const base = process.env.XDG_CACHE_HOME || join20(homedir10(), ".cache");
   return join20(base, name);
 }
 function ensureScratch(root) {
@@ -10725,12 +10823,12 @@ function ensureScratch(root) {
   const exclude = gitPath(root, "info/exclude");
   let text = "";
   try {
-    text = readFileSync13(exclude, "utf8");
+    text = readFileSync14(exclude, "utf8");
   } catch {
   }
   const present = text.split("\n").some((l) => ["/.scratch", "/.scratch/", ".scratch", ".scratch/"].includes(l.trim()));
   if (!present) {
-    mkdirSync3(dirname9(exclude), { recursive: true });
+    mkdirSync3(dirname10(exclude), { recursive: true });
     appendFileSync(exclude, `${text && !text.endsWith("\n") ? "\n" : ""}${SCRATCH_EXCLUDE}
 `);
   }
@@ -10738,14 +10836,14 @@ function ensureScratch(root) {
 }
 function writeSessionPointer(root, p) {
   try {
-    writeFileSync8(gitPath(root, "opsbot-session"), `${JSON.stringify(p)}
+    writeFileSync9(gitPath(root, "opsbot-session"), `${JSON.stringify(p)}
 `);
   } catch {
   }
 }
 function sessionPointer(root) {
   try {
-    const v = JSON.parse(readFileSync13(gitPath(root, "opsbot-session"), "utf8"));
+    const v = JSON.parse(readFileSync14(gitPath(root, "opsbot-session"), "utf8"));
     return v && typeof v.transcript_path === "string" ? v : null;
   } catch {
     return null;
@@ -10844,7 +10942,7 @@ function kitSections(mode, opts = {}) {
     const m = f.match(/^\d+[-_]mode-([a-z]+)\.md$/);
     return !m || m[1] === (mode ?? "strategist");
   }).filter((f) => opts.memory !== false || !/^\d+[-_]memory\.md$/.test(f)).filter((f) => opts.routines === true || !/^\d+[-_]routines\.md$/.test(f)).sort().map((f) => {
-    let text = readFileSync13(join20(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
+    let text = readFileSync14(join20(dir, f), "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "");
     const m = text.match(/^#\s+(.+)$/m);
     const title = m ? m[1].trim() : f.replace(/^\d+[-_]/, "").replace(/\.md$/, "");
     if (m) text = text.replace(m[0], "").replace(/^\n+/, "");
@@ -10979,8 +11077,8 @@ async function coldStartCommand(args) {
   ensureScratch(root);
   const { dir, pack: packFile, pending } = packPaths(root);
   mkdirSync3(dir, { recursive: true });
-  writeFileSync8(packFile, pack);
-  writeFileSync8(pending, `${nowIso()}
+  writeFileSync9(packFile, pack);
+  writeFileSync9(pending, `${nowIso()}
 `);
   try {
     rmSync7(legacyPackPaths(s.name).pending, { force: true });
@@ -11145,7 +11243,7 @@ var init_start = __esm({
 });
 
 // src/opsbot-core/drift.ts
-import { readFileSync as readFileSync14, writeFileSync as writeFileSync9 } from "node:fs";
+import { readFileSync as readFileSync15, writeFileSync as writeFileSync10 } from "node:fs";
 function modelMatches(want, have) {
   const w = cls(want);
   const h = cls(have);
@@ -11172,19 +11270,19 @@ ${lines.join("\n")}
 `;
   let prev2 = "";
   try {
-    prev2 = readFileSync14(marker, "utf8");
+    prev2 = readFileSync15(marker, "utf8");
   } catch {
   }
   if (lines.length === 0) {
     if (prev2) try {
-      writeFileSync9(marker, "");
+      writeFileSync10(marker, "");
     } catch {
     }
     return [];
   }
   if (prev2 === sig) return [];
   try {
-    writeFileSync9(marker, sig);
+    writeFileSync10(marker, sig);
   } catch {
   }
   return [
@@ -11229,7 +11327,7 @@ function decideFast(input) {
   const want = /* @__PURE__ */ new Set();
   for (const g of grown) {
     const ins = named.get(g.file);
-    if (!ins || ins.length === 0) return full(`${basename7(g.file)} names no inputs`);
+    if (!ins || ins.length === 0) return full(`${basename8(g.file)} names no inputs`);
     for (const i of ins) want.add(i);
   }
   for (const i of want) if (!input.installed.includes(i)) return full(`input ${i} is not installed in heartbeat.d`);
@@ -11310,8 +11408,8 @@ function driftLines(root, s) {
 function cycleCommand(args) {
   const [sub, ...rest] = args;
   if (sub === "begin") {
-    const { flags } = parseArgs(rest, { bool: ["full"] }, "cycle begin [--full]");
-    return cycleBegin(flags.full === true);
+    const { flags, lists } = parseArgs(rest, { bool: ["full"], repeat: ["skip-hook"] }, BEGIN_USAGE);
+    return cycleBegin(flags.full === true, [...new Set(lists["skip-hook"] ?? [])]);
   }
   if (sub === "end") return cycleEnd(rest);
   throw new AxiError(sub ? `unknown cycle subcommand ${sub}` : "cycle needs a subcommand", "VALIDATION_ERROR", [
@@ -11325,11 +11423,23 @@ function wait(root, s, who) {
   if (s.loop.schedule === "monitor") out.wake = scheduleReport(root, s);
   return out;
 }
-function cycleBegin(forceFull) {
+function cycleBegin(forceFull, skip = []) {
   const root = requireRoot();
   const writer = logWriter(root);
   if ("notMigrated" in writer) throw notMigratedError(root, writer.notMigrated);
   let { settings, text } = loadSettings(root);
+  if (skip.length) {
+    const installed2 = discover(root, "cycle.begin").scripts.map((x) => x.name);
+    const unknown = skip.filter((n) => !installed2.includes(n));
+    if (unknown.length) {
+      throw usageError(
+        `--skip-hook ${unknown.join(", ")}: no such script in cycle.d/begin/`,
+        BEGIN_USAGE,
+        installed2.length ? `installed: ${installed2.join(", ")}` : "cycle.d/begin/ holds no scripts"
+      );
+    }
+  }
+  const skipNote = skip.length ? ` \xB7 skipped ${skip.map((n) => `cycle.d/begin/${n}`).join(", ")}` : "";
   const blocked = blockedBy(root);
   if (blocked) return wait(root, settings, blocked);
   const verdict = judgeLock(root, settings.lock_max_minutes);
@@ -11392,10 +11502,17 @@ function cycleBegin(forceFull) {
     }
   }
   const configPath = configSnapshot(root, text);
+  const hooks = {};
+  const skipCommand = (name) => `\`${cliInvocation()} cycle begin --skip-hook ${name}\``;
+  const timesItems = () => recordHookTimes(root, hooks, nowIso(), scriptTimeoutMs(), skipCommand);
   for (const s of discover(root, "cycle.begin").scripts) {
     if (decision.fast && !s.name.endsWith(".fast")) continue;
+    if (skip.includes(s.name)) continue;
+    const t0 = performance.now();
     const r2 = runScript(s, root, baseEnv(root, settings, configPath, "cycle.begin"));
+    hooks[s.name] = seconds(performance.now() - t0);
     if (r2.code !== 0) {
+      timesItems();
       const error = `exit ${r2.code}: ${firstLine(r2.stderr) || firstLine(r2.stdout) || "no message"}`;
       const failLine = {
         at: nowIso(),
@@ -11403,7 +11520,9 @@ function cycleBegin(forceFull) {
         inputs: {},
         new: 0,
         failed: [{ input: `cycle.d/begin/${s.name}`, error }],
-        watermark: readWatermark(root)
+        watermark: readWatermark(root),
+        hooks,
+        ...skip.length ? { skipped_hooks: skip } : {}
       };
       const branch2 = logBranch(root);
       let unwritten = "";
@@ -11417,21 +11536,29 @@ function cycleBegin(forceFull) {
       }
       setExit(20);
       return {
-        cycle: `degraded \xB7 cycle.d/begin/${s.name} failed, so the check did not run \xB7 ${error}${unwritten}`,
+        cycle: `degraded \xB7 cycle.d/begin/${s.name} failed, so the check did not run \xB7 ${error}${unwritten}${skipNote}`,
         help: [`Fix what it reports, then run \`${cliInvocation()} cycle end --records 0 --degraded\` to release the checkout`]
       };
     }
   }
+  const slow = timesItems();
+  if (slow.length) core.push({ input: "hook-times", items: slow });
   recordWakeBase(root, files, counts);
   const prev2 = process.env.OPSBOT_COMMIT_TRAILERS;
   process.env.OPSBOT_COMMIT_TRAILERS = trailers();
   let r;
   try {
-    r = runCheck(root, { commit: true, fast: decision.fast ? { inputs: decision.inputs, since: decision.since } : null, mode: decision.mode, core });
+    r = runCheck(root, {
+      commit: true,
+      fast: decision.fast ? { inputs: decision.inputs, since: decision.since } : null,
+      mode: decision.mode,
+      core,
+      record: { hooks, ...skip.length ? { skipped_hooks: skip } : {} }
+    });
   } catch (e) {
     setExit(20);
     return {
-      cycle: `degraded \xB7 the check could not run: ${e.message}`,
+      cycle: `degraded \xB7 the check could not run: ${e.message}${skipNote}`,
       help: [`Run \`${cliInvocation()} cycle end --records 0 --degraded\` once it is fixed`]
     };
   } finally {
@@ -11450,7 +11577,7 @@ function cycleBegin(forceFull) {
     const why = [pushed.why, prog].filter(Boolean).join("; ") || null;
     releaseLock(root);
     setExit(0);
-    const out = { cycle: `${r.line}${why ? ` \xB7 not pushed: ${why}` : ""}${unsynced ? ` \xB7 not pulled: ${unsynced}` : ""} \xB7 next ${next2(root, settings)}` };
+    const out = { cycle: `${r.line}${why ? ` \xB7 not pushed: ${why}` : ""}${unsynced ? ` \xB7 not pulled: ${unsynced}` : ""}${skipNote} \xB7 next ${next2(root, settings)}` };
     if (fastLine) out.fast = fastLine;
     const wake3 = sleep ? [] : wakeReport(root, settings, true);
     if (sleep) out.sleep = sleepFieldLines(settings, sleep);
@@ -11462,7 +11589,7 @@ function cycleBegin(forceFull) {
   setExit(r.code);
   const { check: checkLine, ...rest } = r.output;
   const held = {
-    check: unsynced ? `${String(checkLine)} \xB7 not pulled: ${unsynced}` : checkLine,
+    check: `${String(checkLine)}${unsynced ? ` \xB7 not pulled: ${unsynced}` : ""}${skipNote}`,
     ...fastLine ? { fast: fastLine } : {},
     ...rest,
     help: [
@@ -11584,7 +11711,7 @@ function closing(root, settings, out, o) {
   const recall2 = cycleEndRecall(root, settings);
   if (recall2.length) out.recall = recall2;
   if (arrived.length) {
-    out.arrived = arrived.map((a) => `${a.n} on ${basename7(a.file)}`).join(", ");
+    out.arrived = arrived.map((a) => `${a.n} on ${basename8(a.file)}`).join(", ");
     out.next = "0 arrived";
   } else out.next = next2(root, settings);
   if (sleep) {
@@ -11619,7 +11746,7 @@ function arrivals(root, s, holdAt) {
   if (!rec || !rec.at || holdAt && rec.at < holdAt) return [];
   return grownFiles(files, rec.lines, wakeCounts(files));
 }
-var hhmm4;
+var BEGIN_USAGE, hhmm4;
 var init_cycle = __esm({
   "src/opsbot-core/commands/cycle.ts"() {
     "use strict";
@@ -11628,6 +11755,7 @@ var init_cycle = __esm({
     init_cadence();
     init_invocation();
     init_lifecycle();
+    init_hooktimes();
     init_repo();
     init_settings();
     init_log();
@@ -11643,6 +11771,7 @@ var init_cycle = __esm({
     init_fast();
     init_record();
     init_sleep();
+    BEGIN_USAGE = "cycle begin [--full] [--skip-hook <name>]...";
     hhmm4 = (t) => `${t.slice(11, 16)}Z`;
   }
 });
@@ -11705,8 +11834,8 @@ var init_outage = __esm({
 });
 
 // src/opsbot-core/runtime.ts
-import { appendFileSync as appendFileSync2, readFileSync as readFileSync15 } from "node:fs";
-import { homedir as homedir10 } from "node:os";
+import { appendFileSync as appendFileSync2, readFileSync as readFileSync16 } from "node:fs";
+import { homedir as homedir11 } from "node:os";
 import { join as join21 } from "node:path";
 function normStatus(s) {
   return s === "idle" || s === "done" || s === "working" || s === "blocked" ? s : "unknown";
@@ -11747,7 +11876,7 @@ function sessionLogPath(row) {
   const id = sess && sess.kind === "id" && typeof sess.value === "string" ? sess.value : null;
   const cwd = typeof row.cwd === "string" ? row.cwd : null;
   if (!id || !cwd || !/^[A-Za-z0-9-]+$/.test(id)) return null;
-  return join21(homedir10(), ".claude", "projects", projectSlug(cwd), `${id}.jsonl`);
+  return join21(homedir11(), ".claude", "projects", projectSlug(cwd), `${id}.jsonl`);
 }
 function herdrResolve(agent) {
   const r = run("herdr", ["agent", "list"]);
@@ -11768,7 +11897,7 @@ ${r.stdout}`) };
 function fakeAdapter(file) {
   const state = () => {
     try {
-      return JSON.parse(readFileSync15(file, "utf8"));
+      return JSON.parse(readFileSync16(file, "utf8"));
     } catch {
       return {};
     }
@@ -11827,7 +11956,7 @@ ${r.stdout}`) };
 });
 
 // src/opsbot-core/commands/liveness.ts
-import { existsSync as existsSync16, readFileSync as readFileSync16, rmSync as rmSync8, statSync as statSync6, writeFileSync as writeFileSync10 } from "node:fs";
+import { existsSync as existsSync16, readFileSync as readFileSync17, rmSync as rmSync8, statSync as statSync6, writeFileSync as writeFileSync11 } from "node:fs";
 function watchdogCommand(args) {
   const { flags } = parseArgs(args, { bool: ["dry-run"] }, "watchdog [--dry-run]");
   const dry = flags["dry-run"] === true;
@@ -11863,7 +11992,7 @@ function watchdogCommand(args) {
     return { watchdog: `alive \xB7 last cycle ${last}, ${Math.floor(gap / 6e4)} min ago` };
   }
   const started = last ?? "never";
-  if (existsSync16(told) && readFileSync16(told, "utf8").split("\n")[0] === started) {
+  if (existsSync16(told) && readFileSync17(told, "utf8").split("\n")[0] === started) {
     return { watchdog: `stopped since ${started} \xB7 the operator already told` };
   }
   const seen = [];
@@ -11898,7 +12027,7 @@ function watchdogCommand(args) {
     setExit(1);
     return { watchdog: `stopped since ${started} \xB7 cannot tell the operator: every escalation script failed`, escalations: results };
   }
-  writeFileSync10(told, `${started}
+  writeFileSync11(told, `${started}
 `);
   if (blocked) {
     return { watchdog: `stopped since ${started} \xB7 the operator told \xB7 outage not recorded while ${blocked}`, escalations: results };
@@ -11965,7 +12094,7 @@ function claimMarker(marker) {
   const f = `${marker}.claim`;
   for (let i = 0; i < 2; i++) {
     try {
-      writeFileSync10(f, `${process.pid}
+      writeFileSync11(f, `${process.pid}
 `, { flag: "wx" });
       return () => rmSync8(f, { force: true });
     } catch {
@@ -12020,7 +12149,7 @@ function nudgeReply(args) {
 function nudgeClaimed(root, settings, o) {
   const { wake: wake2, reason, dry, agent, line, now, cooldown, marker, asleep, firstWake } = o;
   if (existsSync16(marker) && !firstWake) {
-    const [prev2, why] = readFileSync16(marker, "utf8").split("\n");
+    const [prev2, why] = readFileSync17(marker, "utf8").split("\n");
     if (prev2 && /^\d+$/.test(prev2) && now - Number(prev2) * 1e3 < cooldown * 6e4) {
       const ago = Math.floor((now - Number(prev2) * 1e3) / 6e4);
       return { nudge: wake2 ? `nothing \xB7 woke ${ago} min ago${why ? ` for: ${why}` : ""}` : `nothing \xB7 nudged ${ago} min ago and no cycle since`, outcome: "cooldown" };
@@ -12045,11 +12174,11 @@ ${reason}
     writeSleep(root, { ...asleep, woken: { at, reason: `nudge --now${reason ? `: ${reason}` : ""}`, event_at: at, sent: true } });
   }
   if (!r.ok) {
-    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") writeFileSync10(marker, stamp);
+    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") writeFileSync11(marker, stamp);
     setExit(1);
     return { nudge: `cannot \xB7 ${rt.name} prompt ${agent}: ${r.code}: ${r.message}` };
   }
-  writeFileSync10(marker, stamp);
+  writeFileSync11(marker, stamp);
   return { nudge: `${wake2 ? `woke ${agent}${reason ? ` for: ${reason}` : ""}` : `nudged ${agent}: ${line}`}${via}`, at: nowIso() };
 }
 var init_liveness = __esm({
@@ -12069,11 +12198,11 @@ var init_liveness = __esm({
 });
 
 // src/opsbot-core/commands/infra.ts
-import { existsSync as existsSync17, mkdirSync as mkdirSync5, readFileSync as readFileSync17, readdirSync as readdirSync6, rmSync as rmSync9, writeFileSync as writeFileSync11 } from "node:fs";
-import { homedir as homedir11 } from "node:os";
+import { existsSync as existsSync17, mkdirSync as mkdirSync5, readFileSync as readFileSync18, readdirSync as readdirSync6, rmSync as rmSync9, writeFileSync as writeFileSync12 } from "node:fs";
+import { homedir as homedir12 } from "node:os";
 import { join as join22 } from "node:path";
 function unitDir() {
-  const base = process.env.XDG_CONFIG_HOME || join22(homedir11(), ".config");
+  const base = process.env.XDG_CONFIG_HOME || join22(homedir12(), ".config");
   return join22(base, "systemd", "user");
 }
 function templatesDir() {
@@ -12088,7 +12217,7 @@ function template(name) {
       "Reinstall the skill: npx skills add JarvusInnovations/opsbots --skill opsbot-core"
     ]);
   }
-  return readFileSync17(p, "utf8");
+  return readFileSync18(p, "utf8");
 }
 function fill(t, vars) {
   return t.replace(/@([A-Z_]+)@/g, (m, k) => k in vars ? vars[k] : m);
@@ -12171,7 +12300,7 @@ function infraCommand(args) {
     const want = new Set(units.map((u) => u.file));
     const rows = units.map((u) => {
       const p = join22(dir, u.file);
-      const state = !existsSync17(p) ? "missing" : samePathless(readFileSync17(p, "utf8"), u.content) ? "current" : "stale";
+      const state = !existsSync17(p) ? "missing" : samePathless(readFileSync18(p, "utf8"), u.content) ? "current" : "stale";
       let active = "-";
       if (u.enable && state !== "missing") {
         const r = systemctl(["is-active", u.file]);
@@ -12217,7 +12346,7 @@ function infraCommand(args) {
       systemctl(["disable", "--now", ...stale]);
       for (const f of stale) rmSync9(join22(dir, f), { force: true });
     }
-    for (const u of units) writeFileSync11(join22(dir, u.file), u.content);
+    for (const u of units) writeFileSync12(join22(dir, u.file), u.content);
     const steps = [];
     const reload2 = systemctl(["daemon-reload"]);
     steps.push({ step: "daemon-reload", ok: reload2.ok, detail: firstLine(reload2.out) });
@@ -12262,11 +12391,11 @@ var init_infra = __esm({
 });
 
 // src/opsbot-core/commands/hook.ts
-import { existsSync as existsSync18, mkdirSync as mkdirSync6, readFileSync as readFileSync18, writeFileSync as writeFileSync12 } from "node:fs";
-import { homedir as homedir12 } from "node:os";
-import { dirname as dirname10, join as join23, relative as relative4 } from "node:path";
+import { existsSync as existsSync18, mkdirSync as mkdirSync6, readFileSync as readFileSync19, writeFileSync as writeFileSync13 } from "node:fs";
+import { homedir as homedir13 } from "node:os";
+import { dirname as dirname11, join as join23, relative as relative4 } from "node:path";
 function settingsPath(scope, dir) {
-  if (scope === "global") return join23(homedir12(), ".claude", "settings.json");
+  if (scope === "global") return join23(homedir13(), ".claude", "settings.json");
   return join23(dir, ".claude", "settings.json");
 }
 function hookBase(scope, dir) {
@@ -12280,14 +12409,14 @@ function hookBase(scope, dir) {
 function readSettings(p) {
   if (!existsSync18(p)) return {};
   try {
-    return JSON.parse(readFileSync18(p, "utf8"));
+    return JSON.parse(readFileSync19(p, "utf8"));
   } catch {
     throw new AxiError(`${p} is not valid JSON; not touching it`, "CANNOT_RUN", ["Fix the file by hand, then run hook install again"]);
   }
 }
 function writeSettings(p, s) {
-  mkdirSync6(dirname10(p), { recursive: true });
-  writeFileSync12(p, `${JSON.stringify(s, null, 2)}
+  mkdirSync6(dirname11(p), { recursive: true });
+  writeFileSync13(p, `${JSON.stringify(s, null, 2)}
 `);
 }
 function upsertPreTool(settings, command) {
@@ -12393,7 +12522,7 @@ var init_hook = __esm({
 
 // src/opsbot-core/commands/sleep.ts
 import { statSync as statSync7 } from "node:fs";
-import { basename as basename8 } from "node:path";
+import { basename as basename9 } from "node:path";
 function wakePrompt(s, reason) {
   return `${s.loop.prompt} (woken: ${reason})`;
 }
@@ -12407,11 +12536,11 @@ function sleepCommand(args) {
 }
 function cheapReason(root, s, st, now) {
   const ptr = sessionPointer(root);
-  const op = ptr ? lastOperatorAt(readEvents(ptr.transcript_path), s.loop.prompt, st.decided_at) : null;
+  const op = ptr ? lastOperatorAt(readEvents(ptr.transcript_path), s.loop.prompt, st.decided_at, st.typed ?? []) : null;
   if (op) return { reason: "the operator wrote to the session", event_at: op };
   for (const [file, base] of Object.entries(st.wake_lines)) {
     const n = lineCount(file);
-    if (n > base || n < base && n > 0) return { reason: `a new line in ${basename8(file)}`, event_at: mtime(file) ?? iso(now) };
+    if (n > base || n < base && n > 0) return { reason: `a new line in ${basename9(file)}`, event_at: mtime(file) ?? iso(now) };
   }
   const by = wakeBy(s, st);
   if ((parseIso(by.at) ?? Infinity) <= now) return { reason: by.why, event_at: by.at };
@@ -12469,17 +12598,17 @@ function goDown(root, s, st, now, dry, save2) {
   }
   const r = rt.prompt(agent, COMPACT);
   if (!r.ok) {
-    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") save2({ ...st, began: iso(now), compacted: true, looked_at: iso(now) });
+    if (r.code !== "agent_blocked" && r.code !== "agent_not_found") save2({ ...withTyped(st, COMPACT), began: iso(now), compacted: true, looked_at: iso(now) });
     setExit(1);
     return { sleep: `going down \xB7 cannot \xB7 ${rt.name} prompt ${agent}: ${r.code}: ${r.message}` };
   }
-  save2({ ...st, began: iso(now), compacted: true, looked_at: iso(now) });
+  save2({ ...withTyped(st, COMPACT), began: iso(now), compacted: true, looked_at: iso(now) });
   return { sleep: `asleep \xB7 typed ${COMPACT} into ${agent}${idle.via}`, at: iso(now) };
 }
 function wake(root, s, st, why, now, dry, save2) {
   const agent = s.runtime.agent;
   const text = wakePrompt(s, why.reason);
-  const record = (sent) => save2({ ...st, woken: { at: st.woken?.at ?? iso(now), reason: why.reason, event_at: why.event_at, sent } });
+  const record = (sent) => save2({ ...withTyped(st, text), woken: { at: st.woken?.at ?? iso(now), reason: why.reason, event_at: why.event_at, sent } });
   const rt = runtimeFor(s);
   const found2 = rt.get(agent);
   if (!found2.ok) {
@@ -12540,7 +12669,7 @@ function answerWatch(root, s, text, st, now, dry, save2) {
   }
   return { sleep: `woken ${mins} min ago and unanswered \xB7 the operator told \xB7 outage recorded`, escalations: results };
 }
-var SLEEP_USAGE, COMPACT, mtime;
+var SLEEP_USAGE, COMPACT, mtime, withTyped;
 var init_sleep2 = __esm({
   "src/opsbot-core/commands/sleep.ts"() {
     "use strict";
@@ -12565,12 +12694,13 @@ var init_sleep2 = __esm({
         return null;
       }
     };
+    withTyped = (st, text) => ({ ...st, typed: [.../* @__PURE__ */ new Set([...st.typed ?? [], text])] });
   }
 });
 
 // src/opsbot-core/commands/memory.ts
-import { copyFileSync, existsSync as existsSync19, mkdirSync as mkdirSync7, readdirSync as readdirSync7, readFileSync as readFileSync19, statSync as statSync8, writeFileSync as writeFileSync13 } from "node:fs";
-import { dirname as dirname11, join as join24, resolve as resolve9 } from "node:path";
+import { copyFileSync, existsSync as existsSync19, mkdirSync as mkdirSync7, readdirSync as readdirSync7, readFileSync as readFileSync20, statSync as statSync8, writeFileSync as writeFileSync14 } from "node:fs";
+import { dirname as dirname12, join as join24, resolve as resolve9 } from "node:path";
 function settingsFor(root) {
   try {
     return loadSettings(root).settings;
@@ -12623,7 +12753,7 @@ function protocolLines() {
   if (!file) return [`(the protocol is in ${join24(skillDir(), GUIDE)})`];
   const items = [];
   let cur = null;
-  const body = readFileSync19(file, "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "").replace(/^#\s+.+\n+/m, "");
+  const body = readFileSync20(file, "utf8").replace(/^\s*<!--[\s\S]*?-->\s*/, "").replace(/^#\s+.+\n+/m, "");
   for (const line of body.split("\n")) {
     const t = line.trim();
     if (!t) {
@@ -12717,17 +12847,17 @@ function planImport(src, dest) {
     }
     const to = join24(dest, e.name);
     if (!existsSync19(to)) plan.copy.push(e.name);
-    else if (statSync8(to).isFile() && readFileSync19(to).equals(readFileSync19(join24(src, e.name)))) plan.same.push(e.name);
+    else if (statSync8(to).isFile() && readFileSync20(to).equals(readFileSync20(join24(src, e.name)))) plan.same.push(e.name);
     else plan.clashes.push(e.name);
   }
   const srcIdx = join24(src, MEMORY_INDEX);
   if (existsSync19(srcIdx)) {
     const destIdx = join24(dest, MEMORY_INDEX);
-    const have = existsSync19(destIdx) ? readFileSync19(destIdx, "utf8").split("\n") : [];
+    const have = existsSync19(destIdx) ? readFileSync20(destIdx, "utf8").split("\n") : [];
     const haveLines = new Set(have.map((l) => l.trim()).filter(Boolean));
     const haveTargets = new Set(have.map(indexTarget).filter((t) => t !== null));
     const clash = new Set(plan.clashes);
-    for (const raw of readFileSync19(srcIdx, "utf8").split("\n")) {
+    for (const raw of readFileSync20(srcIdx, "utf8").split("\n")) {
       const l = raw.trimEnd();
       if (!l.trim()) continue;
       const t = indexTarget(l);
@@ -12766,9 +12896,9 @@ function importCommand(args) {
     for (const f of plan.copy) copyFileSync(join24(src, f), join24(dest, f));
     if (plan.indexAdd.length) {
       const destIdx = join24(dest, MEMORY_INDEX);
-      const cur = existsSync19(destIdx) ? readFileSync19(destIdx, "utf8") : "";
-      mkdirSync7(dirname11(destIdx), { recursive: true });
-      writeFileSync13(destIdx, `${cur}${cur && !cur.endsWith("\n") ? "\n" : ""}${plan.indexAdd.join("\n")}
+      const cur = existsSync19(destIdx) ? readFileSync20(destIdx, "utf8") : "";
+      mkdirSync7(dirname12(destIdx), { recursive: true });
+      writeFileSync14(destIdx, `${cur}${cur && !cur.endsWith("\n") ? "\n" : ""}${plan.indexAdd.join("\n")}
 `);
     }
   }
@@ -13294,7 +13424,7 @@ var init_record2 = __esm({
 
 // src/opsbot-core/commands/logbranch.ts
 import { createHash as createHash5 } from "node:crypto";
-import { existsSync as existsSync21, mkdirSync as mkdirSync8, readFileSync as readFileSync20, writeFileSync as writeFileSync14 } from "node:fs";
+import { existsSync as existsSync21, mkdirSync as mkdirSync8, readFileSync as readFileSync21, writeFileSync as writeFileSync15 } from "node:fs";
 import { isAbsolute, join as join25, resolve as resolve10 } from "node:path";
 function needBranch(root, _what) {
   return logBranch(root);
@@ -13319,7 +13449,7 @@ function write(root, b, settings, records, subject) {
 function readStdinRecords(what, usage) {
   let text = "";
   try {
-    text = readFileSync20(0, "utf8");
+    text = readFileSync21(0, "utf8");
   } catch {
     text = "";
   }
@@ -13458,7 +13588,7 @@ function scalar(v) {
 }
 function writeJsonOut(path, v) {
   const abs = isAbsolute(path) ? path : resolve10(process.cwd(), path);
-  writeFileSync14(abs, `${JSON.stringify(v)}
+  writeFileSync15(abs, `${JSON.stringify(v)}
 `);
 }
 function parseSheet(name) {
@@ -13587,10 +13717,10 @@ var init_logbranch = __esm({
 });
 
 // src/opsbot-core/commands/migrate.ts
-import { copyFileSync as copyFileSync2, existsSync as existsSync22, mkdirSync as mkdirSync9, readdirSync as readdirSync8, readFileSync as readFileSync21, rmSync as rmSync10, statSync as statSync9, writeFileSync as writeFileSync15 } from "node:fs";
-import { basename as basename9, dirname as dirname12, extname, join as join26 } from "node:path";
+import { copyFileSync as copyFileSync2, existsSync as existsSync22, mkdirSync as mkdirSync9, readdirSync as readdirSync8, readFileSync as readFileSync22, rmSync as rmSync10, statSync as statSync9, writeFileSync as writeFileSync16 } from "node:fs";
+import { basename as basename10, dirname as dirname13, extname, join as join26 } from "node:path";
 function nameFor(path) {
-  const stem = basename9(path).replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^[^a-z0-9]+/, "");
+  const stem = basename10(path).replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^[^a-z0-9]+/, "");
   return (stem || "ledger").slice(0, 64);
 }
 function trackedFiles(root) {
@@ -13703,13 +13833,13 @@ function inventory(root, raw, assigns) {
   for (const [ch, p] of Object.entries(posts)) if (tracked.has(p) || existsSync22(join26(root, p))) add(p, "posts", `the ${ch} post log`, ch);
   const rd = runsDir(raw);
   for (const f of [.../* @__PURE__ */ new Set([...walkFiles(root, rd), ...[...tracked].filter((t) => t.startsWith(`${rd}/`))])].sort()) {
-    if (f.endsWith(".md") && basename9(f) !== "README.md") add(f, "runs", "a routine run");
+    if (f.endsWith(".md") && basename10(f) !== "README.md") add(f, "runs", "a routine run");
   }
   for (const f of [...tracked].sort()) if (f.startsWith("logs/") && !seen.has(f)) add(f, null, "tracked under logs/, named by no setting");
   const hooks = [...tracked].filter((f) => f.startsWith("opsbot.d/"));
   const hookText = hooks.map((h) => {
     try {
-      return [h, readFileSync21(join26(root, h), "utf8")];
+      return [h, readFileSync22(join26(root, h), "utf8")];
     } catch {
       return [h, ""];
     }
@@ -13771,7 +13901,7 @@ function build2(root, sources, branch, now) {
       count2(sheet === "ledgers" ? `ledgers/${String(rec.ledger)}` : sheet === "posts" ? `posts/${String(rec.channel)}` : sheet);
     };
     if (src.kind === "runs") {
-      const text = readFileSync21(join26(root, src.path), "utf8");
+      const text = readFileSync22(join26(root, src.path), "utf8");
       tally.lines = 1;
       const at0 = lineTimes(root, src.path, now)[0] ?? now;
       try {
@@ -13780,7 +13910,7 @@ function build2(root, sources, branch, now) {
         if (typeof data.routine !== "string" || !LOG_NAME_RE.test(data.routine)) throw new FrontmatterError("no routine name");
         if (!at) throw new FrontmatterError("no readable at");
         const rec = clean({
-          id: typeof data.id === "string" ? data.id : basename9(src.path, ".md"),
+          id: typeof data.id === "string" ? data.id : basename10(src.path, ".md"),
           routine: data.routine,
           at,
           outcome: typeof data.outcome === "string" ? data.outcome : "done",
@@ -13797,7 +13927,7 @@ function build2(root, sources, branch, now) {
       continue;
     }
     if (src.kind === "state") {
-      const text = readFileSync21(join26(root, src.path), "utf8");
+      const text = readFileSync22(join26(root, src.path), "utf8");
       tally.lines = 1;
       const times2 = lineTimes(root, src.path, now).sort();
       const at = times2[times2.length - 1] ?? now;
@@ -13872,7 +14002,7 @@ function build2(root, sources, branch, now) {
 function readLines2(root, path, keepEmpty = false) {
   let text;
   try {
-    text = readFileSync21(join26(root, path), "utf8");
+    text = readFileSync22(join26(root, path), "utf8");
   } catch {
     return [];
   }
@@ -13987,7 +14117,7 @@ function logMigrate(args) {
   }
   const headText = showHead(root, "opsbot.json");
   if (headText === null) throw new AxiError("opsbot.json is not committed in this checkout", "CANNOT_RUN");
-  const wt = existsSync22(join26(root, "opsbot.json")) ? readFileSync21(join26(root, "opsbot.json"), "utf8") : null;
+  const wt = existsSync22(join26(root, "opsbot.json")) ? readFileSync22(join26(root, "opsbot.json"), "utf8") : null;
   if (wt !== headText) {
     throw new AxiError("opsbot.json has changes that are not committed; the prepared commit is made from the one at HEAD", "CANNOT_RUN", ["Commit or discard the change to opsbot.json, then run log migrate again"]);
   }
@@ -14096,7 +14226,7 @@ function logMigrate(args) {
   for (const s of ignored) {
     if (!s.exists) continue;
     const dst = join26(backup, s.path);
-    mkdirSync9(dirname12(dst), { recursive: true });
+    mkdirSync9(dirname13(dst), { recursive: true });
     copyFileSync2(join26(root, s.path), dst);
   }
   const cur = git(root, ["symbolic-ref", "--short", "-q", "HEAD"]).stdout.trim() || "main";
@@ -14119,7 +14249,7 @@ ${body}
 `;
   const prepared = prepare(root, { remove: removeTracked, untrack: ignored.filter((s) => s.tracked).map((s) => s.path), ignore: ignored.map((s) => s.path), settings, message });
   const prBody = gitPath(root, "opsbot-log-migrate.md");
-  writeFileSync15(prBody, `${body}
+  writeFileSync16(prBody, `${body}
 `);
   const discard = [...removeTracked, ...ignored.filter((s) => s.tracked).map((s) => s.path)];
   out.migrate = `done \xB7 ${lineCount2} lines from ${built.tallies.length} files on ${branch} at ${logTip.slice(0, 12)}: ${sheetLine} \xB7 prepared ${MIGRATE_BRANCH} at ${prepared.slice(0, 12)} \xB7 nothing changed on ${cur}`;
@@ -14166,7 +14296,7 @@ var init_migrate = __esm({
 });
 
 // src/opsbot-core/commands/simple.ts
-import { existsSync as existsSync23, readFileSync as readFileSync22 } from "node:fs";
+import { existsSync as existsSync23, readFileSync as readFileSync23 } from "node:fs";
 import { join as join27 } from "node:path";
 function nextDelayCommand(args) {
   parseArgs(args, {}, "next-delay");
@@ -14304,7 +14434,7 @@ function settingsCommand(args) {
     where = `${SETTINGS_FILE} at HEAD`;
   } else {
     const p = join27(root, SETTINGS_FILE);
-    text = existsSync23(p) ? readFileSync22(p, "utf8") : null;
+    text = existsSync23(p) ? readFileSync23(p, "utf8") : null;
     where = SETTINGS_FILE;
   }
   if (text === null) {
@@ -14316,11 +14446,21 @@ function settingsCommand(args) {
   const claude = join27(root, ".claude", "settings.json");
   if (raw && existsSync23(claude)) {
     try {
-      const cs = JSON.parse(readFileSync22(claude, "utf8"));
+      const cs = JSON.parse(readFileSync23(claude, "utf8"));
       const loop = raw.loop ?? {};
-      for (const k of ["autoMemoryEnabled", "autoMemoryDirectory"]) {
-        if (cs && cs[k] !== void 0) {
-          problems.push(`.claude/settings.json sets ${k}; auto memory is set by memory in opsbot.json, which start passes to Claude Code, so set it in one place`);
+      if (cs && cs.autoMemoryEnabled !== void 0) {
+        problems.push(`.claude/settings.json sets autoMemoryEnabled; auto memory is set by memory in opsbot.json, which start passes to Claude Code, so set it in one place`);
+      }
+      if (cs && cs.autoMemoryDirectory !== void 0) {
+        let memory;
+        try {
+          memory = withDefaults(raw).memory;
+        } catch {
+          memory = void 0;
+        }
+        if (memory !== void 0) {
+          const p = autoMemoryDirectoryProblem(root, cs.autoMemoryDirectory, memory);
+          if (p) problems.push(p);
         }
       }
       if (cs && cs.autoCompactWindow !== void 0 && String(cs.autoCompactWindow) !== String(loop.autocompact ?? "")) {
@@ -14371,6 +14511,7 @@ var init_simple = __esm({
     init_invocation();
     init_lifecycle();
     init_repo();
+    init_memory();
     init_log();
     init_logbranch();
     init_migrate();

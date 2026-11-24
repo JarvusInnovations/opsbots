@@ -4,6 +4,8 @@ import { cliInvocation } from "./invocation.js";
 export interface Parsed {
   positionals: string[];
   flags: Record<string, string | boolean>;
+  /** Every value of a repeatable flag, in order (`spec.repeat`). */
+  lists: Record<string, string[]>;
 }
 
 /**
@@ -13,13 +15,15 @@ export interface Parsed {
  */
 export function parseArgs(
   args: string[],
-  spec: { bool?: string[]; value?: string[]; maxPositionals?: number },
+  spec: { bool?: string[]; value?: string[]; repeat?: string[]; maxPositionals?: number },
   usage: string,
 ): Parsed {
   const bool = spec.bool ?? [];
-  const value = spec.value ?? [];
+  const repeat = spec.repeat ?? [];
+  const value = [...(spec.value ?? []), ...repeat];
   const positionals: string[] = [];
   const flags: Record<string, string | boolean> = {};
+  const lists: Record<string, string[]> = {};
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a.startsWith("--")) {
@@ -32,6 +36,7 @@ export function parseArgs(
         const v = eq > 0 ? a.slice(eq + 1) : args[++i];
         if (v === undefined || (eq < 0 && v.startsWith("--"))) throw usageError(`--${name} needs a value`, usage);
         flags[name] = v;
+        if (repeat.includes(name)) (lists[name] ??= []).push(v);
       } else {
         const valid = [...value, ...bool].map((f) => `--${f}`).join(", ");
         throw usageError(`unknown flag --${name}`, usage, valid ? `valid flags here: ${valid}` : "this command takes no flags");
@@ -43,7 +48,7 @@ export function parseArgs(
   if (positionals.length > (spec.maxPositionals ?? 0)) {
     throw usageError(`unexpected argument ${JSON.stringify(positionals[spec.maxPositionals ?? 0])}`, usage);
   }
-  return { positionals, flags };
+  return { positionals, flags, lists };
 }
 
 export function usageError(message: string, usage: string, extra?: string): AxiError {

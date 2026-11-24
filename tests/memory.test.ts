@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BASE_SETTINGS, cli, git, logOf, makeBot, setSettings, writeStream, type Bot } from "./helpers";
 import { validateSettings, withDefaults } from "../src/opsbot-core/settings";
@@ -57,6 +57,61 @@ describe("memory settings", () => {
     expect(r.out).toContain("autoMemoryDirectory");
     writeFileSync(join(bot.root, ".claude", "settings.json"), JSON.stringify({ permissions: {} }));
     expect(cli(bot, ["settings", "validate"]).code).toBe(0);
+    writeFileSync(join(bot.root, ".claude", "settings.json"), JSON.stringify({ autoMemoryEnabled: true }));
+    const e = cli(bot, ["settings", "validate"]);
+    expect(e.code).toBe(1);
+    expect(e.out).toContain("autoMemoryEnabled");
+  }, SLOW);
+
+  test("settings validate accepts autoMemoryDirectory when it is memory.dir, in any form", () => {
+    bot = makeBot();
+    const root = realpathSync(bot.root);
+    mkdirSync(join(bot.root, ".claude"), { recursive: true });
+    const claude = (v: unknown) => writeFileSync(join(bot.root, ".claude", "settings.json"), JSON.stringify({ autoMemoryDirectory: v }));
+    // relative, absolute (as written and through the symlink-free path), trailing slash; the
+    // directory need not exist yet (start creates it)
+    const link = join(bot.home, "checkout-link");
+    symlinkSync(root, link);
+    for (const same of ["memory", "./memory", "memory/", `${root}/memory`, `${root}/memory/`, `${bot.root}/memory`, `${link}/memory`]) {
+      claude(same);
+      const r = cli(bot, ["settings", "validate"]);
+      expect({ same, code: r.code, out: r.code ? r.out : "" }).toEqual({ same, code: 0, out: "" });
+    }
+    mkdirSync(join(bot.root, "memory"));
+    claude(`${root}/memory/`);
+    expect(cli(bot, ["settings", "validate"]).code).toBe(0);
+    // through a symbolic link to the checkout, once the directory exists too
+    claude(`${link}/memory/`);
+    expect(cli(bot, ["settings", "validate"]).code).toBe(0);
+    // a custom memory.dir
+    setSettings(bot, { memory: { dir: "notes/mem" } });
+    claude("notes/mem");
+    expect(cli(bot, ["settings", "validate"]).code).toBe(0);
+    claude(`${root}/notes/mem/`);
+    expect(cli(bot, ["settings", "validate"]).code).toBe(0);
+  }, SLOW);
+
+  test("settings validate refuses autoMemoryDirectory elsewhere, naming both paths", () => {
+    bot = makeBot();
+    const root = realpathSync(bot.root);
+    mkdirSync(join(bot.root, ".claude"), { recursive: true });
+    const claude = (v: unknown) => writeFileSync(join(bot.root, ".claude", "settings.json"), JSON.stringify({ autoMemoryDirectory: v }));
+    for (const other of ["/elsewhere", "memory/sub", "notes", `${root}/memory-old`, "~/memory"]) {
+      claude(other);
+      const r = cli(bot, ["settings", "validate"]);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("autoMemoryDirectory");
+      expect(r.out).toContain(other);
+      expect(r.out).toContain(`${root}/memory`);
+    }
+    claude(5);
+    expect(cli(bot, ["settings", "validate"]).code).toBe(1);
+    // with memory off, any value is refused
+    setSettings(bot, { memory: false });
+    claude("memory");
+    const off = cli(bot, ["settings", "validate"]);
+    expect(off.code).toBe(1);
+    expect(off.out).toContain("memory is false");
   }, SLOW);
 });
 

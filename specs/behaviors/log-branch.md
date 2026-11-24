@@ -100,7 +100,9 @@ A run of cycles that found nothing is one commit, amended as it grows.
   cycle changes no record. Every trailer is written again on the replacement.
 - A quiet commit also carries `Quiet-Until: <ISO time>`, when its newest cycle ran, and
   `Since: <ISO time>`, the start of the window a fast check reuses. A fast check does not
-  move `Watermark`, so `Quiet-Until` is what shows the run was alive.
+  move `Watermark`, so `Quiet-Until` is what shows the run was alive. With any
+  `cycle.d/begin/` script run, it carries `Hook-Times: <name>=<seconds>, …`, its newest
+  cycle's times ([Hook times](../skills/opsbot-core.md#hook-times-and-skipping-a-hook)).
 - A quiet commit is replaced only by a quiet check of the same `Check` kind on the same
   `Program`. A fast run and a full run, or runs on two program commits, are separate commits.
 - A quiet cycle whose tip is anything else adds a new quiet commit with `Quiet-Cycles: 1`.
