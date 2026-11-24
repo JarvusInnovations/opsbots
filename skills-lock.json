@@ -1,11 +1,18 @@
 {
-  "version": 1,
+  "version": 2,
   "skills": {
+    "jarvus-release-flow": {
+      "source": "JarvusInnovations/agent-skills",
+      "commit": "165d3949e52b13f8e3a7e931bcfea5e2a57fc7e6",
+      "sourceType": "github",
+      "skillPath": "skills/jarvus-release-flow/SKILL.md",
+      "computedHash": "aa0eb56a4a146c566910e71e7b83c32532c1c8abcc105585cfcb9a8fee1bac8a"
+    },
     "specops": {
       "source": "JarvusInnovations/specops",
       "sourceType": "github",
       "skillPath": "skills/specops/SKILL.md",
-      "computedHash": "82a79c5b4b75d51f33bbd77c50a46074112d27eb136a126dfe222da0f1709dad"
+      "computedHash": "9a215f5e20e6ee6287cbada51b41cd0bdf94d196fbcbc6dd81c0653c2eadbe46"
     }
   }
 }
