@@ -1,5 +1,7 @@
 ---
-status: in-progress
+status: done
+done: 2026-11-24
+pr: 137
 depends: [sleep-and-wake]
 specs:
   - specs/skills/opsbot-core.md
@@ -50,18 +52,31 @@ operator (it never did, in either form).
 
 ## Validation
 
-- [ ] A fixture replay: the timer's `/compact` after an ended turn, then a hand-typed
+- [x] A fixture replay: the timer's `/compact` after an ended turn, then a hand-typed
       `/compact` logged with its bare row (and the compaction it causes) during sleep: the tick
       does not wake for the operator.
-- [ ] The same fixture with a real typed message after it: the tick wakes with "the operator
+- [x] The same fixture with a real typed message after it: the tick wakes with "the operator
       wrote to the session" at that message's time.
-- [ ] A bare `/context`, a mid-turn `/compact`, a meta row, an array-content compaction
+- [x] A bare `/context`, a mid-turn `/compact`, a meta row, an array-content compaction
       summary and a task-notification origin row are not the operator; a text the timer
       recorded typing is not the operator.
-- [ ] The sleep file records `typed` for the timer's `/compact` and its wake prompt.
-- [ ] Every existing test passes unchanged.
-- [ ] `bun run build`, `bun run type-check`, `bun run check` and `bun test` pass.
+- [x] The sleep file records `typed` for the timer's `/compact` and its wake prompt.
+- [x] Every existing test passes unchanged.
+- [x] `bun run build`, `bun run type-check`, `bun run check` and `bun test` pass.
 
 ## Notes
 
+- Reproduced first: with the old `lastOperatorAt`, the hand-typed-`/compact` replay wakes at the
+  next tick "for the operator", and the timer's own compaction in the same replay does not.
+- The fixtures are synthetic, shaped on rows read from real session logs (Claude Code 2.1.2xx
+  to 2.1.3xx); no log content was copied. Across the logs examined, a bare `/compact` row
+  appeared for some typed compactions in nearly every interactive session, and never in a bot
+  loop's session where the timer or the loop typed `/compact` after an ended turn.
+- #86 stays open: its first ask is met here; the `agent_prompt_stalled` false failure after a
+  compaction and saying whether a nothing-found wake slept again are not.
+- `bun test` passes on CI for the PR head; locally, on a host at load average 40, unrelated
+  tests hit the 5-second default timeout in a full run.
+
 ## Follow-ups
+
+- Issue #86: the two remaining asks.
