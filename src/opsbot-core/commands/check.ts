@@ -16,6 +16,7 @@
  *
  * A degraded input never yields "nothing new".
  */
+import { hookTimesTrailer } from "../hooktimes.js";
 import { AxiError } from "axi-sdk-js";
 import { parseArgs, setExit } from "../args.js";
 import { cliInvocation } from "../invocation.js";
@@ -180,15 +181,21 @@ export interface CoreInput {
   items: Array<Record<string, unknown> & { key: string }>;
 }
 
-export function runCheck(root: string, opts: { commit: boolean; fast?: FastCheck | null; mode?: string; core?: CoreInput[] }): CheckResult {
-  const r = sweep(root, { commit: opts.commit, peek: false, fast: opts.fast ?? null, mode: opts.mode, core: opts.core ?? [] });
+/** What `cycle begin` adds to this check's record: its begin scripts' times and what it skipped. */
+export interface CycleRecord {
+  hooks?: Record<string, number>;
+  skipped_hooks?: string[];
+}
+
+export function runCheck(root: string, opts: { commit: boolean; fast?: FastCheck | null; mode?: string; core?: CoreInput[]; record?: CycleRecord }): CheckResult {
+  const r = sweep(root, { commit: opts.commit, peek: false, fast: opts.fast ?? null, mode: opts.mode, core: opts.core ?? [], record: opts.record });
   if (!("check" in r)) throw new Error("unreachable: a check returned a peek");
   return r.check;
 }
 
 function sweep(
   root: string,
-  opts: { commit: boolean; peek: boolean; fast?: FastCheck | null; mode?: string; core?: CoreInput[] },
+  opts: { commit: boolean; peek: boolean; fast?: FastCheck | null; mode?: string; core?: CoreInput[]; record?: CycleRecord },
 ): { check: CheckResult } | { peek: PeekResult } {
   const fast = opts.peek ? null : (opts.fast ?? null);
   if (!hasHead(root)) {
@@ -361,7 +368,7 @@ function branchState(
   branch: string,
   settings: Settings,
   c: {
-    opts: { commit: boolean; mode?: string };
+    opts: { commit: boolean; mode?: string; record?: CycleRecord };
     fast: FastCheck | null;
     outcome: CheckResult["outcome"];
     inputs: InputResult[];
@@ -391,6 +398,9 @@ function branchState(
       line.since = SINCE;
     }
     if (fast) line.fast = true;
+    const hooks = opts.record?.hooks ?? {};
+    if (Object.keys(hooks).length) line.hooks = hooks;
+    if (opts.record?.skipped_hooks?.length) line.skipped_hooks = opts.record.skipped_hooks;
     return line;
   };
   const seen = seenRecords(recorded, NOW);
@@ -400,11 +410,13 @@ function branchState(
   if (!opts.commit) {
     stage(root, { cycles: [lineFor()], seen, ...(advance ? { watermark: advance } : {}) });
   } else {
-    const quiet = outcome === "nothing-new" && recorded.length === 0 && !hasStaged(readPending(root));
+    // a skipped begin script is a record of its own, never folded into a quiet run
+    const quiet = outcome === "nothing-new" && recorded.length === 0 && !hasStaged(readPending(root)) && !opts.record?.skipped_hooks?.length;
+    const hookTimes = opts.record?.hooks && Object.keys(opts.record.hooks).length ? [`Hook-Times: ${hookTimesTrailer(opts.record.hooks)}`] : [];
     const subject = outcome === "nothing-new" ? "nothing new" : outcome === "new" ? `${NEW} new` : `degraded, ${NEW} new`;
     let why: string | null = null;
     if (quiet) {
-      const w = writeQuiet(root, branch, { now: NOW, watermark: advance ?? branchWatermark(root, branch), check: kind, since: SINCE }, startMs, trailers());
+      const w = writeQuiet(root, branch, { now: NOW, watermark: advance ?? branchWatermark(root, branch), check: kind, since: SINCE, extra: hookTimes }, startMs, trailers());
       if (!w.ok) why = w.why;
     } else if (opts.mode && outcome !== "nothing-new") {
       // inside a cycle: the cycle's one commit is made at `cycle end`
