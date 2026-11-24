@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BASE_SETTINGS, cli, git, makeBot, readLines, setSettings, writeStream, type Bot } from "./helpers";
 import { validateSettings, withDefaults } from "../src/opsbot-core/settings";
@@ -74,6 +74,11 @@ describe("memory settings", () => {
     }
     mkdirSync(join(bot.root, "memory"));
     claude(`${root}/memory/`);
+    expect(cli(bot, ["settings", "validate"]).code).toBe(0);
+    // through a symbolic link to the checkout, once the directory exists
+    const link = join(bot.home, "checkout-link");
+    symlinkSync(root, link);
+    claude(`${link}/memory`);
     expect(cli(bot, ["settings", "validate"]).code).toBe(0);
     // a custom memory.dir
     setSettings(bot, { memory: { dir: "notes/mem" } });
