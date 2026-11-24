@@ -1,5 +1,7 @@
 ---
-status: in-progress
+status: done
+done: 2026-11-24
+pr: 138
 depends: [log-branch-core]
 specs:
   - specs/skills/opsbot-core.md
@@ -45,19 +47,30 @@ per-script limit setting.
 
 ## Validation
 
-- [ ] `--skip-hook` with an unknown name exits 2 naming the installed scripts, and takes no lock.
-- [ ] A cycle whose broken begin script is skipped runs its check; its output says the skip; its
+- [x] `--skip-hook` with an unknown name exits 2 naming the installed scripts, and takes no lock.
+- [x] A cycle whose broken begin script is skipped runs its check; its output says the skip; its
       record on the log branch carries `skipped_hooks` even when nothing was new; the next cycle
       without the flag runs the script again (and fails on it).
-- [ ] `--skip-hook` is repeatable.
-- [ ] Each cycle's record carries `hooks` with every begin script's time; a quiet run's commit
+- [x] `--skip-hook` is repeatable.
+- [x] Each cycle's record carries `hooks` with every begin script's time; a quiet run's commit
       carries `Hook-Times`; the failure line of a failing begin script carries the times so far.
-- [ ] A script over 60% of the limit on three cycles in a row gives one item naming it and its
+- [x] A script over 60% of the limit on three cycles in a row gives one item naming it and its
       three times; a fourth slow cycle gives no second item; a fast cycle in between ends nothing;
       after a cycle under 60%, three more slow ones give a new item.
-- [ ] Every existing test passes unchanged.
-- [ ] `bun run build`, `bun run type-check`, `bun run check` and `bun test` pass.
+- [x] Every existing test passes unchanged.
+- [x] `bun run build`, `bun run type-check`, `bun run check` and `bun test` pass.
 
 ## Notes
 
+- "A fast cycle in between ends nothing" is verified as what a fast cycle does to this code: a
+  cycle that does not time a script leaves its run as it was. The CLI test skips the script for
+  one cycle in the middle of a slow run; the unit test records an untimed cycle between slow
+  ones. No test drives a real fast cycle through a slow run.
+- Times are measured with `performance.now()`, not the CLI's clock, which tests fix.
+- With this plan all four of #119's asks are met (the first two by `log-branch-core`).
+- `bun test` passes on CI for the PR head; locally, on a host at load average 40, unrelated
+  tests hit the 5-second default timeout in a full run.
+
 ## Follow-ups
+
+None.
