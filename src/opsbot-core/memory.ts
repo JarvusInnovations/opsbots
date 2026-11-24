@@ -13,7 +13,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { git, gitPath } from "./repo.js";
 import type { Settings } from "./settings.js";
 import { readCycleLog, type LogLine } from "./state.js";
@@ -32,14 +32,22 @@ export function memoryDir(root: string, s: Settings): string | null {
 }
 
 /** A directory as Claude Code would take it: `~/` against the home directory, a relative path
- * against the repo root, no trailing slash, through symbolic links when it exists. */
+ * against the repo root, no trailing slash, through symbolic links as far as it exists (a
+ * directory not yet created resolves through its nearest existing parent). */
 export function resolveDir(root: string, p: string): string {
   const home = p === "~" || p.startsWith("~/") ? homedir() + p.slice(1) : p;
   const abs = resolve(root, home);
-  try {
-    return realpathSync(abs);
-  } catch {
-    return abs;
+  const rest: string[] = [];
+  let at = abs;
+  for (;;) {
+    try {
+      return join(realpathSync(at), ...rest);
+    } catch {
+      const up = dirname(at);
+      if (up === at) return abs;
+      rest.unshift(basename(at));
+      at = up;
+    }
   }
 }
 
