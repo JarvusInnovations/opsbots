@@ -35,7 +35,9 @@
 // wake.files, so a busy channel cannot wake the session on every line.
 // Three optional steps run on a kept event before it is recorded, in this order:
 //   - listen_to "operators" drops anyone else's event: no record, no reaction, no wake, one
-//     journal line of ids (the sender gets no signal);
+//     journal line of ids (the sender gets no signal). In a channel in listen_channels, an
+//     @mention or a reply in the bot's thread is kept from anyone, marked from_operator: false;
+//     DMs, reactions, joins and every other channel still follow listen_to;
 //   - files.save downloads the message's files through `slack-axi download` (the bot token stays
 //     in slack-axi's store) to <files.dir>/<conv>/<ts>/<safe name>, and puts each path on the item;
 //   - an intercept rule whose prefix starts the text hands the message to a command (argv, no
@@ -59,7 +61,7 @@
 //     "events_file": "~/.cache/<bot>/slack-events.jsonl",
 //     "receipt_emoji": "eyes", "ack_emoji": "gear", "ack_timeout_minutes": 30, "wake_grace_seconds": 20,
 //     "team": "<team id, when slack-axi holds more than one workspace>",
-//     "listen_to": "anyone" | "operators",
+//     "listen_to": "anyone" | "operators", "listen_channels": ["C..."],
 //     "intercept": [{ "prefix": "+ ", "command": ["bin/capture"], "kinds": ["dm"], "timeout_seconds": 30 }],
 //     "intercept_emoji": "white_check_mark", "intercept_failed_emoji": "warning",
 //     "files": { "save": false, "dir": ".scratch/slack-files", "max_bytes": 26214400,
@@ -135,6 +137,23 @@ export function watchList(raw) {
   return { channels, problems };
 }
 
+/**
+ * The usable listen_channels (C… or G… ids, each once) and one problem line per entry that is
+ * not one. Pure.
+ */
+export function listenChannels(raw) {
+  const channels = [], problems = [];
+  if (raw === undefined || raw === null) return { channels, problems };
+  if (!Array.isArray(raw)) return { channels, problems: ["listen_channels must be a list of channel ids (C... or G...)"] };
+  for (const c of raw) {
+    if (typeof c !== "string" || !CHANNEL_ID.test(c)) problems.push(`not a channel id (C... or G...), never a DM: ${typeof c === "string" ? c : JSON.stringify(c)}`);
+    else if (channels.includes(c)) problems.push(`listed twice: ${c}`);
+    else channels.push(c);
+  }
+  if (raw.length === 0) problems.push("listen_channels is an empty list");
+  return { channels, problems };
+}
+
 /** watch_wake_seconds: a whole number 0 or more, else null (the caller uses 60 and status says differs). Pure. */
 export const watchWakeSeconds = (v) => (v === undefined ? 60 : typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null);
 
@@ -166,6 +185,7 @@ export function settings(cfg) {
     wakeGraceSeconds: graceSeconds(s.wake_grace_seconds) ?? 20,
     team: s.team || "",
     listenTo: s.listen_to === "operators" ? "operators" : "anyone",
+    listenChannels: listenChannels(s.listen_channels).channels,
     intercept: s.intercept,
     interceptEmoji: s.intercept_emoji || "white_check_mark",
     interceptFailedEmoji: s.intercept_failed_emoji || "warning",
@@ -321,7 +341,7 @@ export function droppedPeer(event, ids = {}) {
  * a join, a thread_broadcast); when classify() keeps it and listen_to hears it (it is recorded as
  * addressed, once); and when it @mentions the bot and a person or operator listen_to hears sent
  * it (its app_mention is recorded as addressed, whichever arrives first). `opts` is classify()'s
- * ids plus `watch`, and `listenTo` for heard(). Pure.
+ * ids plus `watch`, and `listenTo` and `listenChannels` for heard(). Pure.
  */
 export function watchItem(event, opts = {}) {
   const { botUser = "", watch = [] } = opts;
@@ -407,18 +427,26 @@ export function listenKind(item) {
 }
 
 /**
- * Whether listen_to keeps a kept item. With "operators", only an author in `operators`, or any
- * event in escalate_dm (the bot's own are never items, so anyone else there is the operator).
- * A team_join is never an operator's. Pure.
+ * Why listen_to keeps a kept item, or null when it drops it: "anyone" (listen_to is not
+ * "operators"), "peer" (the peer list is a second, explicit allow-list), "operator" (an author
+ * in `operators`), "escalate_dm" (any event there: the bot's own are never items, so anyone else
+ * there is the operator), or "channel" (an @mention of the bot, or a kept reply in its thread, in
+ * a channel of `listenChannels`, from anyone). A team_join is never an operator's, and a
+ * reaction is never kept by a channel. Pure.
  */
-export function heard(item, { listenTo = "anyone", operators = [], escalateDm = "" } = {}) {
-  if (listenTo !== "operators") return true;
-  if (!item || item.event === "team_join") return false;
-  // The peer list is a second, explicit allow-list.
-  if (item.from_peer) return true;
-  if (item.from && operators.includes(item.from)) return true;
-  return Boolean(escalateDm) && item.conv === escalateDm;
+export function heardWhy(item, { listenTo = "anyone", operators = [], escalateDm = "", listenChannels = [] } = {}) {
+  if (listenTo !== "operators") return "anyone";
+  if (!item || item.event === "team_join") return null;
+  if (item.from_peer) return "peer";
+  if (item.from && operators.includes(item.from)) return "operator";
+  if (escalateDm && item.conv === escalateDm) return "escalate_dm";
+  const addressed = item.event === "app_mention" || (item.event === "message" && item.kind === "group");
+  if (addressed && !item.reaction && listenChannels.includes(item.conv)) return "channel";
+  return null;
 }
+
+/** Whether listen_to (widened by listen_channels) keeps a kept item. Pure. */
+export const heard = (item, opts = {}) => heardWhy(item, opts) !== null;
 
 /** The journal line for an event listen_to dropped: ids and the kind, never the text. Pure. */
 export const droppedNonOperator = (item) => ["dropped non-operator", item.conv || "-", item.from || "-", listenKind(item)].join(" ");
@@ -592,6 +620,12 @@ export function checkRows(cfg, root) {
     else if (raw.listen_to === "operators") rows.push(`ok listen_to operators: ${[s.operators.length ? s.operators.join(", ") : "", s.escalateDm ? `anyone in ${s.escalateDm}` : ""].filter(Boolean).join(", and ")}`);
     else rows.push("ok listen_to anyone");
   }
+  if (raw.listen_channels !== undefined) {
+    const { channels, problems } = listenChannels(raw.listen_channels);
+    if (problems.length) rows.push(`differs listen_channels ${problems.join("; ")}`);
+    else if (s.listenTo === "operators") rows.push(`ok listen_channels ${channels.length} channel${channels.length === 1 ? "" : "s"}: ${channels.join(", ")}; anyone's @mention or reply in the bot's thread there is heard, marked from_operator: false`);
+    else rows.push(`ok listen_channels ${channels.length} channel${channels.length === 1 ? "" : "s"}: ${channels.join(", ")}; listen_to is anyone, so it changes nothing`);
+  }
   if (raw.wake_grace_seconds !== undefined) {
     if (graceSeconds(raw.wake_grace_seconds) === null) rows.push(`differs wake_grace_seconds ${JSON.stringify(raw.wake_grace_seconds)} is not a whole number of seconds, 0 or more; the listener uses 20`);
     else rows.push(`ok wake_grace_seconds ${raw.wake_grace_seconds === 0 ? "0: nudges at once" : `${raw.wake_grace_seconds}: nudges only if the monitor has not started a cycle by then`}`);
@@ -601,7 +635,9 @@ export function checkRows(cfg, root) {
     for (const r of rules) {
       try { accessSync(r.argv[0], constants.X_OK); if (!statSync(r.argv[0]).isFile()) throw new Error(); } catch { problems.push(`rule ${r.n}: command is not an executable file: ${r.argv[0]}`); }
     }
-    const who = s.listenTo === "operators" ? "only operators can trigger them" : "anyone who can message the bot can trigger them";
+    const who = s.listenTo !== "operators" ? "anyone who can message the bot can trigger them"
+      : s.listenChannels.length ? "only operators can trigger them, and anyone in listen_channels a mention or reply rule"
+      : "only operators can trigger them";
     if (problems.length) rows.push(`differs intercept ${problems.join("; ")}`);
     else rows.push(`ok intercept ${rules.length} rule${rules.length === 1 ? "" : "s"}; ${who}`);
   }
@@ -670,6 +706,7 @@ function main() {
   const rawSlack = (cfg.streams && cfg.streams.slack) || {};
   for (const p of peerList(rawSlack.peers, { botUser: s.botUser, botId: s.botId, operators: s.operators }).problems) log("!", "peers", p, "(never heard)");
   for (const p of watchList(rawSlack.watch).problems) log("!", "watch", p, "(never watched)");
+  for (const p of listenChannels(rawSlack.listen_channels).problems) log("!", "listen_channels", p, "(not listened to)");
   if (watchWakeSeconds(rawSlack.watch_wake_seconds) === null) log("!", `streams.slack.watch_wake_seconds ${JSON.stringify(rawSlack.watch_wake_seconds)} is not a whole number 0 or more; using 60`);
   mkdirSync(dirname(s.eventsFile), { recursive: true });
   // Created on start, so the reader can tell "no events yet" from "the listener never ran".
@@ -835,7 +872,7 @@ function main() {
     }
     const inMyThread = (c, t) => rootIsMine(readRoots(), c, t) || threadIsMine(readEvents(), c, t);
     const item = classify(event, { ...ids(), inMyThread });
-    const watched = s.watch.length ? watchItem(event, { ...ids(), inMyThread, watch: s.watch, listenTo: s.listenTo }) : null;
+    const watched = s.watch.length ? watchItem(event, { ...ids(), inMyThread, watch: s.watch, listenTo: s.listenTo, listenChannels: s.listenChannels }) : null;
     if (watched) {
       // Not addressed, or addressed by someone listen_to drops: read, never answered.
       if (item) log(droppedNonOperator(item));
@@ -849,7 +886,10 @@ function main() {
     }
     // A peer's @mention can arrive twice (app_mention and the channel message): record it once.
     if (item.from_peer && keyRecorded(readEvents(), item.key)) { log("peer message already recorded", item.key); return; }
-    if (!heard(item, s)) { log(droppedNonOperator(item)); return; }
+    const why = heardWhy(item, s);
+    if (!why) { log(droppedNonOperator(item)); return; }
+    // Heard only because of the channel: not the operator's word, and the item says so.
+    if (why === "channel") item.from_operator = false;
     if (item.files && s.files.save) await saveFiles(item);
     const hit = matchIntercept(item, rules, s.botUser);
     if (hit) {
@@ -864,7 +904,7 @@ function main() {
       await run(axi, ["react", item.conv, item.ts, `:${s.interceptFailedEmoji}:`, ...teamArgs]);
     }
     appendFileSync(s.eventsFile, JSON.stringify({ ...item, recorded_at: new Date().toISOString() }) + "\n");
-    log("recorded", item.event, item.kind, item.conv || "", item.from || "", ...(item.from_peer ? [`peer ${item.from_peer}`] : []));
+    log("recorded", item.event, item.kind, item.conv || "", item.from || "", ...(item.from_peer ? [`peer ${item.from_peer}`] : []), ...(why === "channel" ? ["heard in listen_channels"] : []));
     const message = item.event === "app_mention" || item.event === "message";
     if (message) {
       await run(axi, ["react", item.conv, item.ts, `:${item.from_peer ? s.peerReceiptEmoji : s.receiptEmoji}:`, ...teamArgs]);
