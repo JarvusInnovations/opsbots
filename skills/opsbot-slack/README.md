@@ -78,7 +78,8 @@ follows in a thread.
 
 - It reads direct messages sent to it, and group DMs it is part of.
 - It reads a channel only after someone adds it there (`/invite @<bot>`). In a channel it
-  hears @mentions of itself, and reactions on its own messages.
+  hears @mentions of itself, and reactions on its own messages. In a channel you list in `watch` it
+  reads every message (below).
 - Once it has been mentioned in a thread, or has started the thread with a post of its own,
   replies in that thread reach it without another mention. A thread it only answered in still
   needs a mention. It remembers its own posts for 90 days.
@@ -124,6 +125,22 @@ two of your bots should work together in a shared channel, list each as the othe
 - Invite each bot to the shared channel. `opsbot-slack status` says if it is not there.
 - A bot that posts through an incoming webhook has no user id: list it by its `bot_id` alone.
   Everything posted through that webhook then counts as that peer.
+
+## Channels the bot follows (optional)
+
+A bot that keeps track of a few project channels can read everything posted there, not only
+what is addressed to it. List the channel ids in `streams.slack.watch`:
+
+- Every message there reaches the bot as it is posted: top-level posts, replies in any thread
+  however old, and posts by other bots and integrations. Edits and deletes do not; the bot sees a
+  message as it was first posted.
+- The bot does not react to these messages, so no one in the channel sees a sign. It reads them;
+  it answers only what is addressed to it, as before.
+- A busy channel wakes the bot at most once a minute (`watch_wake_seconds`, default 60). A DM or
+  @mention still wakes it at once.
+- Invite the bot to each channel. Slack sends nothing from a channel it is not in, and
+  `opsbot-slack status` names each one it is missing from.
+- Files posted there are listed, never saved.
 
 ## Screening what the bot posts (optional)
 

@@ -137,7 +137,7 @@ a fast cycle. An entry already there as a plain path works, with a full check at
 Optional keys under streams.slack: receipt_emoji, ack_emoji, ack_timeout_minutes, wake_grace_seconds,
 lookback_minutes, bot_name, team, sender_lookup, operators, screen, listen_to, intercept,
 intercept_emoji, intercept_failed_emoji, files, peers, peer_receipt_emoji, peer_turns,
-peer_posts_per_hour (see the skill's SKILL.md).
+peer_posts_per_hour, watch, watch_wake_seconds (see the skill's SKILL.md).
 
 The Slack app manifest: $TEMPLATES/manifest.yaml
 Copy it into the repo (for example slack/manifest.yaml), fill in the placeholders, and
@@ -247,7 +247,7 @@ cmd_status() {
     esac
   fi
 
-  # listen_to, intercept and files, each only when it is set: the listener checks its own settings
+  # listen_to, intercept, files, peers and watch, each only when it is set: the listener checks its own settings
   local line state piece detail
   while IFS= read -r line; do
     [ -n "$line" ] || continue
@@ -267,6 +267,21 @@ cmd_status() {
       "missing "*) row missing peer-channels "${pc#missing }" "slack-axi audience <channel> must answer; check the slack-axi login and the bot's channels:read and groups:read scopes" ;;
       *) row missing peer-channels "could not check: $(printf '%s\n' "$pc" | head -1)" ;;
     esac
+  fi
+
+  # watch: the bot must be in each watched channel, or Slack delivers nothing from it
+  if [ -n "$(cfg streams.slack.watch)" ] && [ "$(cfg streams.slack.watch)" != "[]" ]; then
+    local wl wstate wrest wch wdetail
+    while IFS= read -r wl; do
+      [ -n "$wl" ] || continue
+      wstate=${wl%% *}; wrest=${wl#* }
+      case "$wstate" in
+        ok) row ok watch-channels "$wrest" ;;
+        differs) wch=${wrest%% *}; wdetail=${wrest#* }; row differs watch-channel "$wch $wdetail" "invite the bot to $wch (/invite in that channel), or drop it from streams.slack.watch" ;;
+        missing) wch=${wrest%% *}; wdetail=${wrest#* }; row missing watch-channel "$wch $wdetail" "slack-axi audience $wch must answer; check the slack-axi login and the bot's channels:read and groups:read scopes" ;;
+        *) row missing watch-channel "could not check: $wl" ;;
+      esac
+    done < <(OPSBOT_ROOT="$ROOT" OPSBOT_CONFIG="$CONFIG" node "$SKILL/scripts/slack-post.mjs" watch-check 2>&1)
   fi
 
   # the listener's unit, as opsbot-core infra install names it

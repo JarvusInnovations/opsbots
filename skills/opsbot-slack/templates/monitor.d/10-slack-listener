@@ -27,6 +27,12 @@
 // in. Its item carries from_peer, gets peer_receipt_emoji (default robot_face), passes
 // listen_to and is never intercepted. Every other peer message is dropped with a journal line.
 // The post command, not this, stops a run of bot turns (peer_turns, peer_posts_per_hour).
+// A channel in streams.slack.watch is read whole: every message there that is not kept above (by
+// anyone but the bot: a person, another app, a peer outside its rules, a non-operator listen_to
+// drops) is one line in slack-watch.jsonl beside the events file, kind "watch". No reaction, no
+// intercept, no file save. It wakes the loop at most once per watch_wake_seconds (60): one line
+// with no key on the events file, then the usual wake backstop. The watch file is never in
+// wake.files, so a busy channel cannot wake the session on every line.
 // Three optional steps run on a kept event before it is recorded, in this order:
 //   - listen_to "operators" drops anyone else's event: no record, no reaction, no wake, one
 //     journal line of ids (the sender gets no signal);
@@ -60,7 +66,8 @@
 //                "types": ["image/*", "application/pdf", "text/*"] },
 //     "peers": [{ "name": "<label>", "user": "<peer bot's user id>", "bot_id": "<B...>", "channels": ["C..."] }],
 //       (user, bot_id, or both; bot_id alone names a peer that posts with no user, as a webhook)
-//     "peer_receipt_emoji": "robot_face", "peer_turns": 6, "peer_posts_per_hour": 20
+//     "peer_receipt_emoji": "robot_face", "peer_turns": 6, "peer_posts_per_hour": 20,
+//     "watch": ["C..."], "watch_wake_seconds": 60
 //   } }
 import { execFile, spawn } from "node:child_process";
 import { accessSync, appendFileSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -111,6 +118,29 @@ export function peerList(raw, { botUser = "", botId = "", operators = [] } = {})
   return { peers, problems };
 }
 
+/**
+ * The usable watched channels (C… or G… ids, each once) and one problem line per entry that is
+ * not one. Pure.
+ */
+export function watchList(raw) {
+  const channels = [], problems = [];
+  if (raw === undefined || raw === null) return { channels, problems };
+  if (!Array.isArray(raw)) return { channels, problems: ["watch must be a list of channel ids (C... or G...)"] };
+  for (const c of raw) {
+    if (typeof c !== "string" || !CHANNEL_ID.test(c)) problems.push(`not a channel id (C... or G...), never a DM: ${typeof c === "string" ? c : JSON.stringify(c)}`);
+    else if (channels.includes(c)) problems.push(`listed twice: ${c}`);
+    else channels.push(c);
+  }
+  if (raw.length === 0) problems.push("watch is an empty list");
+  return { channels, problems };
+}
+
+/** watch_wake_seconds: a whole number 0 or more, else null (the caller uses 60 and status says differs). Pure. */
+export const watchWakeSeconds = (v) => (v === undefined ? 60 : typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null);
+
+/** How long the watch file keeps a line, by recorded_at. */
+export const WATCH_KEEP_DAYS = 14;
+
 /** A positive whole number, else the default. Pure. */
 const positiveInt = (v, d) => (Number.isInteger(Number(v)) && Number(v) > 0 && v !== null && v !== "" && typeof v !== "boolean" ? Number(v) : d);
 
@@ -123,6 +153,9 @@ export function settings(cfg) {
     tokenFile: expandHome(s.app_token_file || `~/.config/${cfg.name}/slack-app-token`),
     eventsFile,
     ownThreadsFile: join(dirname(eventsFile), "slack-own-threads.jsonl"),
+    watchFile: join(dirname(eventsFile), "slack-watch.jsonl"),
+    watch: watchList(s.watch).channels,
+    watchWakeSeconds: watchWakeSeconds(s.watch_wake_seconds) ?? 60,
     botUser: s.bot_user || "",
     botId: s.bot_id || "",
     operators: Array.isArray(s.operators) ? s.operators.map(String) : [],
@@ -279,6 +312,60 @@ export function droppedPeer(event, ids = {}) {
   const peer = peerOf(event, ids.peers, ids.botIds);
   const conv = event.channel || (event.item && event.item.channel) || "-";
   return ["dropped peer", conv, peer.name, why].join(" ");
+}
+
+/**
+ * The line to record in the watch file for a message in a watched channel, or null. Null when the
+ * event is not a `message` in a channel of `watch`; when the bot wrote it; when its subtype is
+ * not a post (anything but none, `file_share`, or another app's `bot_message`: an edit, a delete,
+ * a join, a thread_broadcast); when classify() keeps it and listen_to hears it (it is recorded as
+ * addressed, once); and when it @mentions the bot and a person or operator listen_to hears sent
+ * it (its app_mention is recorded as addressed, whichever arrives first). `opts` is classify()'s
+ * ids plus `watch`, and `listenTo` for heard(). Pure.
+ */
+export function watchItem(event, opts = {}) {
+  const { botUser = "", watch = [] } = opts;
+  if (!event || typeof event !== "object" || event.type !== "message") return null;
+  const conv = String(event.channel || "");
+  if (!watch.includes(conv) || !event.ts) return null;
+  const who = sender(event, opts);
+  if (who === "self") return null;
+  if (!plainMessage(event) && event.subtype !== "bot_message") return null;
+  const addressed = classify(event, opts);
+  if (addressed && heard(addressed, opts)) return null;
+  const mentions = Boolean(botUser) && String(event.text || "").includes(`<@${botUser}>`);
+  if (mentions && (who === "person" || who === "operator") && heard({ event: "app_mention", conv, from: event.user }, opts)) return null;
+  const peer = who === "peer" ? peerOf(event, opts.peers, opts.botIds) : null;
+  const user = typeof event.user === "string" ? event.user : "";
+  const item = { kind: "watch", conv, from: user || event.bot_id || (peer && (peer.user || peer.botId)) || "", text: event.text || "", ts: event.ts, thread_ts: event.thread_ts || null };
+  const files = fileMeta(event);
+  return {
+    key: `slack:${conv}:${event.ts}:msg`, at: tsToIso(event.ts), event: "message", ...item,
+    ...(files ? { files } : {}),
+    ...(peer ? { from_peer: peer.name } : {}),
+    ...(who === "bot" && event.bot_id ? { from_bot: event.bot_id } : {}),
+  };
+}
+
+/** The journal line for a recorded watch line: ids, never the text. Pure. */
+export const watchedLine = (item) => ["watched", item.conv, item.from || "-", ...(item.from_peer ? [`peer ${item.from_peer}`] : []), ...(item.from_bot ? [`bot ${item.from_bot}`] : [])].join(" ");
+
+/**
+ * The watch file without lines recorded more than `days` before `nowMs`, and without unparseable
+ * lines. Pure.
+ */
+export function pruneWatch(lines, nowMs, days = WATCH_KEEP_DAYS) {
+  const cutoff = nowMs - days * 86400000;
+  return lines.split("\n").filter((line) => {
+    if (!line) return false;
+    try { const r = JSON.parse(line); return Date.parse(r.recorded_at || r.at) >= cutoff; } catch { return false; }
+  }).map((l) => l + "\n").join("");
+}
+
+/** The line a watch wake appends to the events file: no key, so the reader skips it. Pure. */
+export function watchWakeLine(n, convs, nowMs) {
+  const at = new Date(nowMs).toISOString();
+  return { watch_wake: n, convs: [...convs], note: `${n} new message${n === 1 ? "" : "s"} in watched channels; the check reads them from the watch file`, at, recorded_at: at };
 }
 
 /** Whether `lines` (the events file) already hold this key. */
@@ -527,6 +614,14 @@ export function checkRows(cfg, root) {
     if (problems.length) rows.push(`differs peers ${problems.join("; ")}`);
     else if (peers.length) rows.push(`ok peers ${peers.map((p) => `${p.name} (${p.user || p.botId}) in ${p.channels.join(", ")}`).join("; ")}; at most ${s.peerTurns} turns between bots, ${s.peerPostsPerHour} posts to peers an hour a channel`);
   }
+  if (raw.watch !== undefined || raw.watch_wake_seconds !== undefined) {
+    const { channels, problems } = watchList(raw.watch);
+    if (raw.watch === undefined) problems.push("watch_wake_seconds is set but watch is not");
+    if (watchWakeSeconds(raw.watch_wake_seconds) === null) problems.push(`watch_wake_seconds ${JSON.stringify(raw.watch_wake_seconds)} is not a whole number of seconds, 0 or more; the listener uses 60`);
+    const wake = s.watchWakeSeconds === 0 ? "a wake on every message" : `at most one wake per ${s.watchWakeSeconds} s`;
+    if (problems.length) rows.push(`differs watch ${problems.join("; ")}`);
+    else rows.push(`ok watch ${channels.length} channel${channels.length === 1 ? "" : "s"}: ${channels.join(", ")}; every message recorded to slack-watch.jsonl, ${wake}`);
+  }
   if (raw.files !== undefined) {
     const f = raw.files;
     const problems = [];
@@ -574,9 +669,12 @@ function main() {
   for (const p of ruleProblems) log("!", "intercept", p, "(this rule never matches)");
   const rawSlack = (cfg.streams && cfg.streams.slack) || {};
   for (const p of peerList(rawSlack.peers, { botUser: s.botUser, botId: s.botId, operators: s.operators }).problems) log("!", "peers", p, "(never heard)");
+  for (const p of watchList(rawSlack.watch).problems) log("!", "watch", p, "(never watched)");
+  if (watchWakeSeconds(rawSlack.watch_wake_seconds) === null) log("!", `streams.slack.watch_wake_seconds ${JSON.stringify(rawSlack.watch_wake_seconds)} is not a whole number 0 or more; using 60`);
   mkdirSync(dirname(s.eventsFile), { recursive: true });
   // Created on start, so the reader can tell "no events yet" from "the listener never ran".
   closeSync(openSync(s.eventsFile, "a"));
+  if (s.watch.length) closeSync(openSync(s.watchFile, "a"));
 
   const firstError = (out) => {
     const lines = String(out || "").trim().split("\n");
@@ -664,6 +762,53 @@ function main() {
 
   const waker = makeBackstop({ core, root, graceS: s.wakeGraceSeconds, tickMs: process.env.OPSBOT_SLACK_TICK_MS ? tick : 0, log });
 
+  // The watch file: pruned to WATCH_KEEP_DAYS on start and at most hourly after an append.
+  let prunedAt = 0;
+  function pruneWatchFile() {
+    prunedAt = Date.now();
+    let all;
+    try { all = readFileSync(s.watchFile, "utf8"); } catch { return; }
+    const kept = pruneWatch(all, Date.now());
+    if (kept === all) return;
+    const tmpFile = `${s.watchFile}.tmp`;
+    writeFileSync(tmpFile, kept);
+    renameSync(tmpFile, s.watchFile);
+    log("watch file pruned to", kept.split("\n").length - 1, "lines");
+  }
+  if (s.watch.length) { try { pruneWatchFile(); } catch (e) { log("!", "watch file:", e.message); } }
+
+  // The watch wake: the first watched message wakes at once; the rest wait out the window and
+  // share one wake at its end. One line on the events file (no key: the reader skips it), so the
+  // session's own monitor wakes, then the core's backstop for the newest watched key.
+  const watchWakeMs = s.watchWakeSeconds * 1000;
+  let lastWatchWake = -Infinity, watchTimer = null;
+  let pendingWatch = { n: 0, key: "", convs: new Set() };
+  function fireWatchWake() {
+    watchTimer = null;
+    const p = pendingWatch;
+    pendingWatch = { n: 0, key: "", convs: new Set() };
+    if (!p.n) return;
+    lastWatchWake = Date.now();
+    try { appendFileSync(s.eventsFile, JSON.stringify(watchWakeLine(p.n, p.convs, lastWatchWake)) + "\n"); } catch (e) { log("!", "events file:", e.message); }
+    log("watch wake:", p.n, "in", [...p.convs].join(", "));
+    waker.add(p.key, `slack watch: ${p.n} new in ${[...p.convs].join(", ")}`);
+  }
+  function wakeForWatch(item) {
+    pendingWatch.n++;
+    pendingWatch.key = item.key;
+    pendingWatch.convs.add(item.conv);
+    if (watchTimer) return;
+    const due = lastWatchWake + watchWakeMs - Date.now();
+    if (due <= 0) fireWatchWake();
+    else watchTimer = setTimeout(fireWatchWake, due);
+  }
+  function recordWatch(item) {
+    appendFileSync(s.watchFile, JSON.stringify({ ...item, recorded_at: new Date().toISOString() }) + "\n");
+    log(watchedLine(item));
+    if (Date.now() - prunedAt > 3600000) { try { pruneWatchFile(); } catch (e) { log("!", "watch file:", e.message); } }
+    wakeForWatch(item);
+  }
+
   async function ackWhenSeen(conv, ts, key) {
     const until = Date.now() + s.ackTimeoutMs;
     while (Date.now() < until) {
@@ -690,6 +835,13 @@ function main() {
     }
     const inMyThread = (c, t) => rootIsMine(readRoots(), c, t) || threadIsMine(readEvents(), c, t);
     const item = classify(event, { ...ids(), inMyThread });
+    const watched = s.watch.length ? watchItem(event, { ...ids(), inMyThread, watch: s.watch, listenTo: s.listenTo }) : null;
+    if (watched) {
+      // Not addressed, or addressed by someone listen_to drops: read, never answered.
+      if (item) log(droppedNonOperator(item));
+      try { recordWatch(watched); } catch (e) { log("!", "watch file:", e.message); }
+      return;
+    }
     if (!item) {
       const dropped = droppedPeer(event, { ...ids(), inMyThread }) || droppedAppPost(event, ids());
       if (dropped) log(dropped);
