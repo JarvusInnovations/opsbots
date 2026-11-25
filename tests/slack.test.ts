@@ -1903,7 +1903,8 @@ describe("channels where anyone is heard (listen_channels)", () => {
       const elsewhere = { type: "app_mention", channel: CHAN, user: ANN, text: `<@${BOT}> here too`, ts: at(4) };
       const owner = { type: "app_mention", channel: LCH, user: OPS, text: `<@${BOT}> from me`, ts: at(5) };
       const r = runListener({ listen_to: "operators", operators: [OPS], listen_channels: [LCH] }, [mention, reply, dm, elsewhere, owner], {
-        tickMs: 50,
+        // A loaded runner needs room for the read reaction after the last event.
+        tickMs: 50, settleMs: 5000,
         // Already reported, so the read reaction follows the receipt.
         setup: (repo) => { mkdirSync(join(repo, "logs/intake"), { recursive: true }); writeFileSync(join(repo, "logs/intake/seen"), `slack:${LCH}:${at(1)}:msg\n`); },
       });
