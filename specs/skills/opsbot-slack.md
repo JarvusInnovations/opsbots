@@ -36,6 +36,7 @@ Outside the repo, on the bot's user:
 | `~/.config/<bot>/slack-app-token` | the app-level token (`xapp-`, `connections:write`), mode 600 |
 | slack-axi's own store | the bot token (`xoxb-`), set by `slack-axi auth login` |
 | `~/.cache/<bot>/slack-events.jsonl` | the events file: the listener appends, the reader reads, the session's monitor wakes on it |
+| `slack-watch.jsonl`, beside the events file | written only when `watch` is set: one line per message in a watched channel ([Watched channels](#watched-channels)), read by the reader; never in `wake.files`, so a busy channel does not wake the session on every line; lines recorded more than 14 days ago are dropped |
 | `slack-own-threads.jsonl`, beside the events file | the bot's own top-level channel posts, remembered as thread roots: one `{conv, ts, recorded_at}` line each, written and read by the listener only, never items, never in `wake.files` |
 | `slack-classes.json`, beside the events file | the post command's cache: `{team, convs: {<conv>: {class, why, at}}, identity?: {token, user, name, team, at}, threads?: {<conv>:<ts>: {at, senders}}}`; `identity.token` is the first 16 hex characters of the SHA-256 of the token, never the token; `threads` holds who wrote each message of a thread with a peer in it ([Peer bots](#peer-bots)), never the text; a failed lookup is never cached; never in `wake.files` |
 
@@ -76,6 +77,8 @@ In the repo:
 | `peer_receipt_emoji` | the listener's reaction on arrival of a peer's message | `robot_face` |
 | `peer_turns` | the most messages in a row between bots, with no person between, before the post command refuses another | `6` |
 | `peer_posts_per_hour` | the most posts this bot makes to peers in one channel in an hour | `20` |
+| `watch` | channel and private channel ids (`C…`, `G…`) where the listener records every message, by anyone, as a `watch` item to read ([Watched channels](#watched-channels)) | none |
+| `watch_wake_seconds` | at most one wake per this many seconds for messages that are only watched; `0` wakes on each. Addressed messages always wake at once | `60` |
 
 `OPSBOT_SLACK_AXI` in the environment names another slack-axi binary for every piece.
 
@@ -99,7 +102,8 @@ the app subscribes to channel messages), a `reaction_added` on the bot's own mes
 
 A reply that @mentions the bot is left to its `app_mention` event. A thread the bot only
 replied in, with no mention and not rooted on its own post, does not count, so a busy thread it
-answered once stays quiet. The bot's own messages, by `bot_user` or by its own `bot_id`, are
+answered once stays quiet. In a channel listed in `watch`, every other message is recorded too,
+as a `watch` item ([Watched channels](#watched-channels)). The bot's own messages, by `bot_user` or by its own `bot_id`, are
 never items. A message carrying any other `bot_id` is dropped unless an operator wrote it
 ([Posts through an app](#posts-through-an-app)) or a peer wrote it where the bot hears that
 peer ([Peer bots](#peer-bots)). Its own top-level post in a
@@ -138,7 +142,8 @@ is missing, readable by others, or not `xapp-`.
 less `lookback_minutes`, by `recorded_at`:
 `{key, at, conv, kind, from, text, ts, thread_ts?, reply?, event, reaction?, files?,
 intercept?, from_peer?, peer_note?, gate_word_void?, from_slack?, from_note?, thread?, …lookup}`.
-`kind` is `dm` or `group`. `files`, `intercept` and `from_peer` are the recorded line's, as the
+`kind` is `dm` or `group`, or `watch` for a line from the watch file
+([Watched channels](#watched-channels)). `files`, `intercept` and `from_peer` are the recorded line's, as the
 listener wrote them; a peer's item also carries `peer_note` and `gate_word_void`
 ([Peer bots](#peer-bots)). `reply` is
 `<conv> --reply <thread_ts or ts>`, the arguments `opsbot-slack post` takes before the text.
@@ -157,8 +162,9 @@ message is empty, slack-axi is not in bot mode, or the draft or send fails.
 `reactions:write`, `users:read`, `files:read`, each commented with why. Bot events:
 `app_mention`, `message.im`, `message.channels`, `message.groups`, `message.mpim`,
 `reaction_added`, `team_join`. The three channel message events are what let a reply in a
-thread reach the bot without a new @mention; the listener keeps only replies in a thread that
-began with a mention or that the bot started, and drops every other channel message
+thread reach the bot without a new @mention, and what deliver a watched channel's messages; the
+listener keeps only replies in a thread that began with a mention or that the bot started,
+records every message in a channel listed in `watch`, and drops every other channel message
 unrecorded. Listed as options in a
 comment, off by default: `users:read.email`, `files:write`, `channels:join`,
 `chat:write.public`.
@@ -188,7 +194,8 @@ is theirs, and the message also carries the app's `bot_id`. The listener sorts e
    nor an operator is never the bot's, whatever its `bot_id`.
 6. **Another bot**: any other `bot_id`: another bot, an integration, a workflow, an app posting
    as someone who is not an operator. Dropped, with one journal line,
-   `dropped app post <conv> <user> <bot_id>`, never the text.
+   `dropped app post <conv> <user> <bot_id>`, never the text. In a watched channel it is recorded
+   as a `watch` item instead ([Watched channels](#watched-channels)).
 
 A `bot_message` subtype is never an item. Slack sends it for a classic integration's post, and
 its reference says such a message "has no associated user", so it cannot be an operator's.
@@ -323,6 +330,114 @@ own, with no `name` or a name used twice, neither `user` nor `bot_id`, or an emp
 start and never hears it, and `opsbot-slack status` shows `differs` with the fix. `peer_turns` and
 `peer_posts_per_hour` must be positive whole numbers; otherwise the defaults apply and status
 says so.
+
+## Watched channels
+
+A bot whose job is to follow a few project channels needs every message there, not only the
+ones addressed to it. Polling with `slack-axi read` at each check is late, and it misses a reply
+posted in an older thread. `streams.slack.watch` lists the channels to follow:
+
+```json
+"watch": ["C0PROJ0001", "G0PROJ0002"],
+"watch_wake_seconds": 60
+```
+
+**What is recorded.** For a channel in `watch`, the listener records every `message` event, by
+anyone, as it arrives, including a reply in any thread however old. Each is one line in the
+watch file, `slack-watch.jsonl` beside the events file:
+`{key, at, event: "message", kind: "watch", conv, from, text, ts, thread_ts, files?, from_peer?,
+from_bot?, recorded_at}`. The key is the usual `slack:<conv>:<ts>:msg`.
+
+- `from` is the sender's user id; for a post with no user (an integration's `bot_message`) it is
+  the post's bot id, and `from_bot` carries the bot id on any post by another app.
+- The bot's own messages are never recorded, by `bot_user` or by its own bot id.
+- The subtypes follow the rule for addressed messages: a person's message (no subtype) or one
+  with files (`file_share`) is recorded; so is `bot_message` from any app but the bot itself.
+  Every other subtype is not: a join or leave, a topic change, an edit (`message_changed`), a
+  delete (`message_deleted`), and a reply also sent to the channel (`thread_broadcast`). An
+  edited message is therefore recorded once, as first posted; the edit is not.
+- `files` is the message's file metadata. Files of a watched-only message are never saved,
+  whatever `files.save` says: a busy channel would fill the disk.
+- A reaction, a `team_join`, or an `app_mention` event is never a `watch` line. A watched
+  message that @mentions the bot arrives twice, as `app_mention` and as `message`; only the
+  `message` event can become a `watch` line.
+
+**Watching is reading, not being addressed.** A watched-only message:
+
+- passes `listen_to: "operators"`. That setting decides whom the bot answers; watching a channel
+  is the operator's choice to read everything posted there;
+- is never intercepted;
+- gets no reaction at all, neither `receipt_emoji` nor `ack_emoji`: no one in the channel spoke
+  to the bot, so it promises no one an answer;
+- is never part of a thread the bot is in: `watch` lines are in their own file, so they never make
+  a thread "mine" for the reply rule.
+
+**Addressed first.** A message in a watched channel that the listener keeps today (an
+@mention, a reply in a thread the bot is in, a peer's message under the peer rules), from
+someone `listen_to` keeps, is recorded once, in the events file, exactly as before: receipt,
+wake, intercept, ack. It is not also a `watch` line. For a `message` event that @mentions the bot,
+the listener decides from the event alone, so the order the two events arrive in does not
+matter: when the sender is a person or an operator whom `listen_to` keeps, the `app_mention`
+records it and the `message` is not recorded; otherwise the `message` is a `watch` line.
+A message `listen_to` drops as addressed (a non-operator's @mention under `operators`) is
+still recorded as `watch`, with no reaction; the journal gets the usual
+`dropped non-operator` line and a `watched` line.
+
+**Peers and other bots.** The peer rules are unchanged: a peer's message is heard as addressed
+only in its own channels, on a mention or in the bot's thread. A peer's message in a watched
+channel that the peer rules do not keep (a channel that is not one of its own, or a post with no
+mention and not in the bot's thread) is recorded as `watch`, with `from_peer`, so the reader marks
+it `peer_note` and `gate_word_void` like any peer item. Another bot's or an integration's post in
+a watched channel is recorded as `watch` with `from_bot`, where it was dropped before. The
+intercept never runs on either, and the loop guard in the post command is unchanged. A watched
+item asks for no answer, so it starts no run between bots.
+
+**The wake.** A watched-only message wakes the loop, but at most once per
+`watch_wake_seconds` (60): the first one wakes at once; those in the next 60 seconds wait, and
+one wake covers them all when the 60 seconds are up. A wake is one line appended to the events
+file, `{watch_wake: <n>, convs, note, at, recorded_at}`, with no `key`, so the reader skips it,
+and then the usual `wake backstop` for the newest watched key. The session's own monitor wakes
+on that line, and `cycle end` sees it as an arrival, as with any line; a busy channel therefore
+costs at most one wake a minute. `0` wakes on every watched message. An addressed message wakes
+at once as before, whatever the watch wake is doing. A sleeping bot is woken like any other wake.
+
+**The reader** reads the watch file after the events file, with the same window. A watched
+item is:
+
+```json
+{"key": "slack:C0PROJ0001:1794400500.000700:msg", "at": "…", "conv": "C0PROJ0001",
+ "kind": "watch", "from": "U0ANN00001", "text": "the vendor moved the date",
+ "ts": "1794400500.000700", "thread_ts": "1794390000.000100",
+ "reply": "C0PROJ0001 --reply 1794390000.000100", "event": "message",
+ "permalink": "https://…", "watch_note": "…",
+ "from_slack": {"name": "…", "display_name": "…", "kind": "member"},
+ "thread": {"n": 14, "parent": "…", "last_mine": "…", "full": "slack-axi thread C0PROJ0001 1794390000.000100"}}
+```
+
+- `watch_note` says what it is: a message in a channel the bot watches, not one addressed to
+  it. Read it; it asks for no answer. Answer it only when the bot's own protocol says this kind
+  of message needs one, and then at `reply` through `opsbot-slack post`, as for any item.
+- `reply`, `from_slack` or `from_note`, `thread`, `files`, the sender hook, and the peer marks are
+  the same as for any item. A post whose `from` is a bot id is not looked up.
+- `permalink` comes from one `slack-axi cite <conv> <ts…>` call per watched channel per check;
+  when that fails, the item has no `permalink`, and the input does not fail for it.
+- A key already in the seen file (`OPSBOT_SEEN`, else `logs/intake/seen`) is skipped before any
+  lookup: the window is at least `lookback_minutes`, and a busy channel would otherwise cost a
+  thread read and a permalink for every message in it at every check.
+- With `watch` set and no watch file, the reader fails the input (exit 1, after printing every
+  item): the listener creates the file on start, so the listener has not run since `watch` was
+  set.
+
+**Not a member, nothing heard.** Slack delivers a channel's messages only when the bot is a
+member. `opsbot-slack status` shows one `watch` row, `ok` with the channel count or `differs`
+when `watch` is not a list of `C…`/`G…` ids or `watch_wake_seconds` is not a whole number 0 or
+more, and one `watch-channel` row per watched channel the bot is not a member of (`differs`,
+with the invite as the fix) or whose membership could not be read (`missing`), from
+`slack-axi audience`'s `is_member`. When the bot is in every one, a single `ok watch-channels`
+row says so.
+
+The app needs nothing new: `message.channels` and `message.groups`, and their history scopes,
+are already in the manifest.
 
 ## The intercept
 
@@ -592,7 +707,7 @@ another way (slack-axi directly, the API) goes around both: the bot's allow rule
 | Command | Does | Exit |
 | --- | --- | --- |
 | `install [--dry-run] [--force]` | copies the three scripts into `opsbot.d/`, mode 755; a matching file is left, a differing one is left unless `--force`; prints each file written or left, then the `streams.slack` block and the `wake.files` entry to merge, and the manifest's path. Never writes `opsbot.json` | 0 · 2 |
-| `status` | one row each with `ok`, `missing` or `differs` and the fix: the app-level token file (present, mode 600, `xapp-`), slack-axi signed in in bot mode, slack-axi 1.6.0 or later with the `audience` command (`missing` with the upgrade command otherwise), each of the three scripts present, matching its template and executable, `bot_user` and `escalate_dm` set, the events file in `wake.files`, the unit `opsbot-<bot>-monitor-10-slack-listener.service` active; with `bot_user` set, the posting identity (`auth.test`'s user id and name; `ok` only when it is `bot_user`, else `differs`, or `missing` when no token resolves or `auth.test` fails); with `screen` set, the command executable inside the repo and every policy file present; with `listen_to` set, its value usable (`operators` needs `operators` or `escalate_dm`); with `intercept` set, every rule usable, and who can trigger them; with `files` set, the directory and limits; with `peers` set, every peer usable (one row naming each peer and its channels, or `differs` with what is wrong), and the bot's membership in each listed channel from `slack-axi audience`'s `is_member` (`differs` for a channel it is not in, with the invite as the fix; `missing` when it could not be read) | 0 all ok · 1 something to fix · 2 |
+| `status` | one row each with `ok`, `missing` or `differs` and the fix: the app-level token file (present, mode 600, `xapp-`), slack-axi signed in in bot mode, slack-axi 1.6.0 or later with the `audience` command (`missing` with the upgrade command otherwise), each of the three scripts present, matching its template and executable, `bot_user` and `escalate_dm` set, the events file in `wake.files`, the unit `opsbot-<bot>-monitor-10-slack-listener.service` active; with `bot_user` set, the posting identity (`auth.test`'s user id and name; `ok` only when it is `bot_user`, else `differs`, or `missing` when no token resolves or `auth.test` fails); with `screen` set, the command executable inside the repo and every policy file present; with `listen_to` set, its value usable (`operators` needs `operators` or `escalate_dm`); with `intercept` set, every rule usable, and who can trigger them; with `files` set, the directory and limits; with `peers` set, every peer usable (one row naming each peer and its channels, or `differs` with what is wrong), and the bot's membership in each listed channel from `slack-axi audience`'s `is_member` (`differs` for a channel it is not in, with the invite as the fix; `missing` when it could not be read); with `watch` set, the list and `watch_wake_seconds` usable, and the bot's membership in each watched channel, one row per channel it is not in ([Watched channels](#watched-channels)) | 0 all ok · 1 something to fix · 2 |
 | `post <conv> [--reply <ts>] [--dry-run] [<markdown> \| -]` | [Posting](#posting-opsbot-slack-post) | 0 · 1 · 2 · 3 · 4 · 5 · 6 |
 | `classify <conv>` | the destination class alone, `{conv, class, why, cached}` | 0 · 2 |
 
@@ -634,6 +749,10 @@ Exit 2 is an unknown command or flag, or no `opsbot.json` at the repo root.
 - A peer's word is never the operator's: it passes `listen_to`, but never counts as a gate word,
   never triggers an intercept, and never authorises anything. Why: a peer is another session
   that can be confused or injected; its message is data with a sender, like any other.
+- A watched-only message gets no reaction, wakes at most once per `watch_wake_seconds`, and
+  lives in its own file. Why: no one in the channel spoke to the bot, so a receipt would promise
+  an answer; a busy channel that woke the session on every line would keep it from its work; and
+  a watched line in the events file would make every thread look like the bot's.
 - With `listen_to: "operators"` a dropped event gets no reaction at all. Why: a receipt tells
   the sender a session heard them; for a bot that answers one person, that is a promise to
   someone it will never answer. The journal line keeps the drop diagnosable.
