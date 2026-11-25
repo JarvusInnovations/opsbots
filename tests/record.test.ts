@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { REPO, cli, git, makeBot, makeExecutable, readLines, setSettings, writeStream, type Bot } from "./helpers";
 import { WAKE_BUDGET } from "../src/opsbot-core/commands/coldstart";
 import { filterClauses, recordProblems } from "../src/opsbot-core/record";
+import { referenceProblems, validateSettings, withDefaults } from "../src/opsbot-core/settings";
 
 setDefaultTimeout(30000);
 
@@ -117,6 +118,50 @@ describe("the pack sections", () => {
       expect(m).toBeGreaterThan(r);
       bot.cleanup();
     }
+  });
+
+  test("16-references.md carries the spec's text verbatim under a one-line comment header", () => {
+    const text = readFileSync(join(PACK, "16-references.md"), "utf8");
+    const [header, ...rest] = text.split("\n");
+    expect(header).toMatch(/^<!-- .* -->$/);
+    expect(rest.join("\n")).toBe(fromSpec("16-references.md"));
+  });
+
+  test("the references section sorts after the record section and before the mode sections, and rides every pack", () => {
+    const files = readdirSync(PACK).filter((f) => f.endsWith(".md")).sort();
+    const at = (f: string) => files.indexOf(f);
+    expect(at("16-references.md")).toBe(at("14-record.md") + 1);
+    for (const mode of files.filter((f) => /-mode-/.test(f))) expect(at(mode)).toBeGreaterThan(at("16-references.md"));
+    for (const settings of [{ loop: { prompt: "p", mode: "dispatcher" } }, { loop: { prompt: "p", mode: "strategist" } }, { memory: false }]) {
+      bot = makeBot();
+      setSettings(bot, settings);
+      const out = cli(bot, ["cold-start"], { now: T0 }).out;
+      const r = out.indexOf("What must outlive a compaction goes in a record (the kit's");
+      const l = out.indexOf("Every issue and pull request is a link (the kit's");
+      const m = out.indexOf("Your loop mode:");
+      expect(r).toBeGreaterThan(0);
+      expect(l).toBeGreaterThan(r);
+      expect(m).toBeGreaterThan(l);
+      expect(out).not.toContain("Your tags:");
+      bot.cleanup();
+    }
+  });
+
+  test("references.repos lists the bot's tags under the section, in the order written, only when set", () => {
+    bot = makeBot();
+    setSettings(bot, { references: { repos: { "//": "the bot's tags", OPS: "example-org/ops", WEB2: "example-org/website" } } });
+    const out = cli(bot, ["cold-start"], { now: T0 }).out;
+    const sec = out.indexOf("Every issue and pull request is a link (the kit's");
+    const tags = out.indexOf("Your tags:\n\n| Tag | Repository |\n| --- | --- |\n| `OPS` | `example-org/ops` |\n| `WEB2` | `example-org/website` |");
+    const next = out.indexOf("═══", sec + 1);
+    expect(sec).toBeGreaterThan(0);
+    expect(tags).toBeGreaterThan(sec);
+    expect(tags).toBeLessThan(next);
+    expect(out.match(/Your tags:/g)?.length).toBe(1);
+    bot.cleanup();
+    bot = makeBot();
+    setSettings(bot, { references: { repos: {} } });
+    expect(cli(bot, ["cold-start"], { now: T0 }).out).not.toContain("Your tags:");
   });
 
   test("no pack rule tells the bot to end a turn with anything but one status line", () => {
@@ -365,4 +410,39 @@ describe("the sheet templates", () => {
     expect(st).toMatch(/promises,cycle-end,status=open due<=2026-03-02,1,""/);
     expect(existsSync(join(bot.root, "records", "work", "w0.toml"))).toBe(true);
   }, 120_000);
+});
+
+describe("references.repos", () => {
+  const base = { name: "x", mark: "m", loop: { prompt: "p" }, runtime: { agent: "x" } };
+  const problems = (references: unknown) => validateSettings({ ...base, references });
+
+  test("a valid object passes, with a // comment, and is read in the order written", () => {
+    const references = { "//": "tags", repos: { "//": "c", OPS: "example-org/ops", A1: "example.org/site_2" } };
+    expect(problems(references)).toEqual([]);
+    expect(problems({})).toEqual([]);
+    expect(problems({ repos: {} })).toEqual([]);
+    expect(Object.entries(withDefaults({ ...base, references }).references.repos)).toEqual([["OPS", "example-org/ops"], ["A1", "example.org/site_2"]]);
+    expect(withDefaults(base).references.repos).toEqual({});
+  });
+
+  test("it refuses a non-object, an unknown key, a repos that is not an object, a bad tag, a bad repository and a repository named twice", () => {
+    expect(problems("OPS")).toEqual(["references must be an object ({repos})"]);
+    expect(problems({ tags: {} }).join(" ")).toContain("unknown key references.tags");
+    expect(problems({ repos: ["example-org/ops"] }).join(" ")).toContain("references.repos must be an object");
+    for (const tag of ["ops", "Ops", "1OPS", "OPS-2", "OP S", ""]) {
+      expect(referenceProblems({ repos: { [tag]: "example-org/ops" } }).join(" ")).toContain("must be capital letters and digits, starting with a letter");
+    }
+    for (const repo of ["ops", "example-org/ops/extra", "https://github.com/example-org/ops", "", 7]) {
+      expect(referenceProblems({ repos: { OPS: repo } }).join(" ")).toContain("must be a repository as owner/repo");
+    }
+    expect(referenceProblems({ repos: { OPS: "example-org/ops", OPS2: "Example-Org/Ops" } }).join(" ")).toContain("one repository has one tag");
+  });
+
+  test("settings validate names the problem", () => {
+    bot = makeBot();
+    setSettings(bot, { references: { repos: { ops: "example-org/ops" } } });
+    const r = cli(bot, ["settings", "validate"]);
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("references.repos tag");
+  });
 });

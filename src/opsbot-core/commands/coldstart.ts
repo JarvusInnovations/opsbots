@@ -198,10 +198,18 @@ function logSummary(root: string, now: number): string[] {
   return out;
 }
 
+/** The bot's repository tags under the references section: a line and a table, or nothing. */
+export function referenceTags(repos: Record<string, string> = {}): string {
+  const tags = Object.entries(repos);
+  if (tags.length === 0) return "";
+  return ["Your tags:", "", "| Tag | Repository |", "| --- | --- |", ...tags.map(([t, r]) => `| \`${t}\` | \`${r}\` |`)].join("\n");
+}
+
 /** The kit's own pack sections: references/pack/*.md next to the running skill, lexical
  * order, each whole, titled by its first H1 (else its file name), leading HTML comment
- * dropped. `OPSBOT_PACK_DIR` overrides the directory (tests, a bot that ships its own). */
-export function kitSections(mode?: string, opts: { memory?: boolean; routines?: boolean } = {}): { title: string; body: string }[] {
+ * dropped. `OPSBOT_PACK_DIR` overrides the directory (tests, a bot that ships its own).
+ * `NN-references.md` gets the bot's tags (`references.repos`) appended when it has any. */
+export function kitSections(mode?: string, opts: { memory?: boolean; routines?: boolean; repos?: Record<string, string> } = {}): { title: string; body: string }[] {
   const dir = process.env.OPSBOT_PACK_DIR || join(skillDir(), "references", "pack");
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
@@ -218,7 +226,10 @@ export function kitSections(mode?: string, opts: { memory?: boolean; routines?: 
       const m = text.match(/^#\s+(.+)$/m);
       const title = m ? m[1]!.trim() : f.replace(/^\d+[-_]/, "").replace(/\.md$/, "");
       if (m) text = text.replace(m[0], "").replace(/^\n+/, "");
-      return { title, body: text.replace(/\n+$/, "") };
+      let body = text.replace(/\n+$/, "");
+      const tags = /^\d+[-_]references\.md$/.test(f) ? referenceTags(opts.repos) : "";
+      if (tags) body = `${body}\n\n${tags}`;
+      return { title, body };
     });
 }
 
@@ -242,7 +253,7 @@ export function buildPack(root: string, s: Settings, settingsText: string | null
   } catch {
     routines = null;
   }
-  const kit = kitSections(s.loop.mode, { memory: s.memory !== null, routines: (routines?.files ?? 0) > 0 }).map((k, i) => `═══ 1.${i + 1} ${k.title} (the kit's; updates with the skill)\n${k.body}`);
+  const kit = kitSections(s.loop.mode, { memory: s.memory !== null, routines: (routines?.files ?? 0) > 0, repos: s.references.repos }).map((k, i) => `═══ 1.${i + 1} ${k.title} (the kit's; updates with the skill)\n${k.body}`);
   if (transcript) {
     const body = sessionLog ?? sessionLogSection(transcript);
     if (body) kit.push(`═══ 1.${kit.length + 1} Before this start\n${capSection(body, SESSION_LOG_CAP)}`);
