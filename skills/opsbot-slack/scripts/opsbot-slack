@@ -135,8 +135,8 @@ Merge into opsbot.json yourself (this command never writes it), then commit:
 a fast cycle. An entry already there as a plain path works, with a full check at every wake.)
 
 Optional keys under streams.slack: receipt_emoji, ack_emoji, ack_timeout_minutes, wake_grace_seconds,
-lookback_minutes, bot_name, team, sender_lookup, operators, screen, listen_to, intercept,
-intercept_emoji, intercept_failed_emoji, files, peers, peer_receipt_emoji, peer_turns,
+lookback_minutes, bot_name, team, sender_lookup, operators, screen, listen_to, listen_channels,
+intercept, intercept_emoji, intercept_failed_emoji, files, peers, peer_receipt_emoji, peer_turns,
 peer_posts_per_hour, watch, watch_wake_seconds (see the skill's SKILL.md).
 
 The Slack app manifest: $TEMPLATES/manifest.yaml
@@ -247,7 +247,7 @@ cmd_status() {
     esac
   fi
 
-  # listen_to, intercept, files, peers and watch, each only when it is set: the listener checks its own settings
+  # listen_to, listen_channels, intercept, files, peers and watch, each only when it is set: the listener checks its own settings
   local line state piece detail
   while IFS= read -r line; do
     [ -n "$line" ] || continue
