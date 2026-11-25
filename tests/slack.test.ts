@@ -1555,3 +1555,456 @@ describe("peer bots", () => {
     expect(items[1]).not.toHaveProperty("gate_word_void");
   });
 });
+
+describe("watched channels (watch)", () => {
+  // Invented ids throughout. WCH is watched; CHAN is not.
+  const WCH = "C0WATCH001";
+  const WPRIV = "G0WATCH002";
+  const OPS = "U0OPS00001";
+  const OWN_BOT = "B0BOT00001";
+  const PEER = "U0PEER0001";
+  const PEER_BOT = "B0PEER0001";
+  const PCHAN = "C0PEERCH01";
+  const PEERS = [{ name: "deskbot", user: PEER, botId: PEER_BOT, channels: [PCHAN] }];
+  const RAW_PEERS = [{ name: "deskbot", user: PEER, bot_id: PEER_BOT, channels: [PCHAN] }];
+  const OLD_ROOT = "1790000000.000100"; // weeks before the reply
+  const post = (extra: Record<string, unknown> = {}) => ({ type: "message", channel_type: "channel", channel: WCH, user: ANN, text: "the vendor moved the date", ts: "1794400500.000700", ...extra });
+  const opts = (extra: Record<string, unknown> = {}) => ({ botUser: BOT, botIds: [OWN_BOT], operators: [OPS], peers: PEERS, watch: [WCH, WPRIV], ...extra });
+  const watchItem = (event: unknown, extra: Record<string, unknown> = {}) => call("watchItem", [event, opts(extra)]) as Record<string, unknown> | null;
+
+  test("every message in a watched channel is a watch line: a top-level post, a reply in an old thread, a private channel, files", () => {
+    expect(watchItem(post())).toEqual({
+      key: `slack:${WCH}:1794400500.000700:msg`, at: new Date(Math.round(parseFloat("1794400500.000700") * 1000)).toISOString(), event: "message",
+      kind: "watch", conv: WCH, from: ANN, text: "the vendor moved the date", ts: "1794400500.000700", thread_ts: null,
+    });
+    expect(watchItem(post({ ts: "1794400600.000800", thread_ts: OLD_ROOT }))).toMatchObject({ kind: "watch", thread_ts: OLD_ROOT, key: `slack:${WCH}:1794400600.000800:msg` });
+    expect(watchItem(post({ channel: WPRIV, channel_type: "group" }))).toMatchObject({ kind: "watch", conv: WPRIV });
+    const withFile = watchItem(post({ subtype: "file_share", files: [{ id: "F0FILE0001", name: "plan.pdf", mimetype: "application/pdf", size: 10 }] }));
+    expect(withFile).toMatchObject({ kind: "watch", files: [{ id: "F0FILE0001", name: "plan.pdf", mimetype: "application/pdf", size: 10 }] });
+  });
+
+  test("not a watch line: another channel, the bot's own posts, edits, deletes, joins, thread_broadcast, reactions, app_mention", () => {
+    const got = [
+      post({ channel: CHAN }),
+      post({ user: BOT, bot_id: OWN_BOT }),
+      post({ user: undefined, subtype: "bot_message", bot_id: OWN_BOT }),
+      post({ subtype: "message_changed", message: { text: "edited" } }),
+      post({ subtype: "message_deleted" }),
+      post({ subtype: "channel_join" }),
+      post({ subtype: "thread_broadcast", thread_ts: OLD_ROOT }),
+      { type: "reaction_added", user: ANN, reaction: "eyes", item_user: ANN, item: { type: "message", channel: WCH, ts: "1794400500.000700" } },
+      { type: "app_mention", channel: WCH, user: ANN, text: `<@${BOT}> hi`, ts: "1794400500.000700" },
+    ].map((e) => watchItem(e));
+    expect(got).toEqual([null, null, null, null, null, null, null, null, null]);
+    // Without a watch list nothing is watched.
+    expect(watchItem(post(), { watch: [] })).toBeNull();
+  });
+
+  test("another app's post and a peer outside its rules are watched, marked; a peer kept by its rules is not", () => {
+    expect(watchItem(post({ user: undefined, subtype: "bot_message", bot_id: "B0CI000001", text: "build 42 passed" }))).toMatchObject({ kind: "watch", from: "B0CI000001", from_bot: "B0CI000001" });
+    expect(watchItem(post({ bot_id: "B0ASSIST09", user: "U0SOMEONE1" }))).toMatchObject({ from: "U0SOMEONE1", from_bot: "B0ASSIST09" });
+    // A peer in a watched channel that is not its own: watched, with from_peer.
+    const peerHere = watchItem(post({ user: PEER, bot_id: PEER_BOT, text: `<@${BOT}> the export is ready` }));
+    expect(peerHere).toMatchObject({ kind: "watch", from: PEER, from_peer: "deskbot" });
+    expect(peerHere).not.toHaveProperty("from_bot");
+    // Its own channel, watched too: a mention is addressed (the peer rules keep it); a plain post is watched.
+    const own = { watch: [PCHAN] };
+    expect(watchItem(post({ channel: PCHAN, user: PEER, bot_id: PEER_BOT, text: `<@${BOT}> the export is ready` }), own)).toBeNull();
+    expect(watchItem(post({ channel: PCHAN, user: PEER, bot_id: PEER_BOT, text: "the export is ready" }), own)).toMatchObject({ kind: "watch", from_peer: "deskbot" });
+  });
+
+  test("addressed first: a reply in the bot's thread and an @mention heard by listen_to are not watch lines", () => {
+    expect(watchItem(post({ thread_ts: OLD_ROOT, parent_user_id: BOT }))).toBeNull();
+    expect(watchItem(post({ text: `<@${BOT}> can you look?` }))).toBeNull();
+    expect(watchItem(post({ user: OPS, text: `<@${BOT}> can you look?` }), { listenTo: "operators" })).toBeNull();
+  });
+
+  test("listen_to operators: a non-operator's @mention or reply is recorded as watch instead; watching is reading", () => {
+    const lt = { listenTo: "operators" };
+    expect(watchItem(post({ text: `<@${BOT}> can you look?` }), lt)).toMatchObject({ kind: "watch", from: ANN });
+    expect(watchItem(post({ thread_ts: OLD_ROOT, parent_user_id: BOT }), lt)).toMatchObject({ kind: "watch", thread_ts: OLD_ROOT });
+    expect(watchItem(post(), lt)).toMatchObject({ kind: "watch" });
+  });
+
+  test("a watch line never makes a thread the bot's", () => {
+    const line = JSON.stringify(watchItem(post({ ts: OLD_ROOT })));
+    expect(call("threadIsMine", [line + "\n", WCH, OLD_ROOT])).toBe(false);
+  });
+
+  test("settings, the status row, the wake line and the prune", () => {
+    expect(call("settings", [{ name: "examplebot" }])).toMatchObject({ watch: [], watchWakeSeconds: 60 });
+    const s = call("settings", [{ name: "examplebot", streams: { slack: { events_file: "/x/ev.jsonl", watch: [WCH, "D0DM000009"], watch_wake_seconds: 0 } } }]) as Record<string, unknown>;
+    expect(s).toMatchObject({ watch: [WCH], watchWakeSeconds: 0, watchFile: "/x/slack-watch.jsonl" });
+    expect(call("settings", [{ name: "examplebot", streams: { slack: { watch_wake_seconds: -5 } } }])).toMatchObject({ watchWakeSeconds: 60 });
+    const rows = (slack: Record<string, unknown>) => call("checkRows", [{ name: "examplebot", streams: { slack: { bot_user: BOT, ...slack } } }, "/srv/examplebot"]) as string[];
+    expect(rows({})).toEqual([]);
+    expect(rows({ watch: [WCH, WPRIV] })).toEqual([`ok watch 2 channels: ${WCH}, ${WPRIV}; every message recorded to slack-watch.jsonl, at most one wake per 60 s`]);
+    expect(rows({ watch: [WCH], watch_wake_seconds: 0 })).toEqual([`ok watch 1 channel: ${WCH}; every message recorded to slack-watch.jsonl, a wake on every message`]);
+    expect(rows({ watch: "C0WATCH001" })).toEqual(["differs watch watch must be a list of channel ids (C... or G...)"]);
+    expect(rows({ watch: [WCH, WCH, DM, 7], watch_wake_seconds: 1.5 })).toEqual([
+      `differs watch listed twice: ${WCH}; not a channel id (C... or G...), never a DM: ${DM}; not a channel id (C... or G...), never a DM: 7; watch_wake_seconds 1.5 is not a whole number of seconds, 0 or more; the listener uses 60`,
+    ]);
+    expect(rows({ watch: [] })).toEqual(["differs watch watch is an empty list"]);
+    expect(call("watchWakeLine", [2, [WCH], 1794400000000])).toEqual({
+      watch_wake: 2, convs: [WCH], note: "2 new messages in watched channels; the check reads them from the watch file",
+      at: new Date(1794400000000).toISOString(), recorded_at: new Date(1794400000000).toISOString(),
+    });
+    const now = Date.parse("2026-11-25T12:00:00Z");
+    const lines = [
+      JSON.stringify({ key: "a", recorded_at: "2026-11-01T00:00:00Z" }),
+      JSON.stringify({ key: "b", recorded_at: "2026-11-20T00:00:00Z" }),
+      "not json",
+      JSON.stringify({ key: "c", recorded_at: "2026-11-25T11:00:00Z" }),
+    ].join("\n") + "\n";
+    expect(call("pruneWatch", [lines, now])).toBe([JSON.stringify({ key: "b", recorded_at: "2026-11-20T00:00:00Z" }), JSON.stringify({ key: "c", recorded_at: "2026-11-25T11:00:00Z" })].join("\n") + "\n");
+  });
+
+  describe("the running listener", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const at = (n: number) => `${now}.00${String(100 + n)}0`;
+    const watched = (n: number, extra: Record<string, unknown> = {}) => post({ ts: at(n), text: `watched ${n}`, ...extra });
+    const watchLines = (r: ReturnType<typeof runListener>) => r.read("slack-watch.jsonl").map((l) => JSON.parse(l));
+
+    test("watched messages go to the watch file with no reaction; an addressed one in the same channel is recorded as before", () => {
+      const mention = { type: "app_mention", channel: WCH, user: ANN, text: `<@${BOT}> can you look?`, ts: at(2) };
+      const r = runListener({ watch: [WCH] }, [watched(1), mention, { ...post(), ts: at(2), text: mention.text }, watched(3, { thread_ts: OLD_ROOT })]);
+      expect(r.code).toBe(0);
+      expect(watchLines(r).map((l) => [l.key, l.kind, l.thread_ts])).toEqual([
+        [`slack:${WCH}:${at(1)}:msg`, "watch", null],
+        [`slack:${WCH}:${at(3)}:msg`, "watch", OLD_ROOT],
+      ]);
+      expect(r.recorded.filter((l) => l.key).map((l) => [l.key, l.event])).toEqual([[`slack:${WCH}:${at(2)}:msg`, "app_mention"]]);
+      expect(r.axi).toEqual([`react ${WCH} ${at(2)} :eyes:`]);
+      expect(r.out).toContain(`watched ${WCH} ${ANN}`);
+      expect(r.out).not.toContain("watched 1");
+    });
+
+    test("the @mention's message event first, then the app_mention: still recorded once, as addressed", () => {
+      const text = `<@${BOT}> can you look?`;
+      const r = runListener({ watch: [WCH] }, [{ ...post(), ts: at(1), text }, { type: "app_mention", channel: WCH, user: ANN, text, ts: at(1) }]);
+      expect(watchLines(r)).toEqual([]);
+      expect(r.recorded.filter((l) => l.key)).toHaveLength(1);
+    });
+
+    test("listen_to operators: a non-operator's @mention is recorded as watch, with no reaction, and the drop is logged", () => {
+      const text = `<@${BOT}> private words`;
+      const r = runListener({ watch: [WCH], listen_to: "operators", operators: [OPS] }, [{ type: "app_mention", channel: WCH, user: ANN, text, ts: at(1) }, { ...post(), ts: at(1), text }]);
+      expect(watchLines(r)).toEqual([expect.objectContaining({ key: `slack:${WCH}:${at(1)}:msg`, kind: "watch", from: ANN })]);
+      expect(r.recorded.filter((l) => l.key)).toEqual([]);
+      expect(r.axi).toEqual([]);
+      expect(r.out).toContain(`dropped non-operator ${WCH} ${ANN} mention`);
+      expect(r.out).not.toContain("private words");
+    });
+
+    test("the wake is debounced: a burst is one wake line and one backstop; one more at the end of the window", () => {
+      const burst = runListener({ watch: [WCH] }, [watched(1), watched(2), watched(3)], { settleMs: 800 });
+      expect(watchLines(burst)).toHaveLength(3);
+      const wakes = burst.recorded.filter((l) => l.watch_wake);
+      expect(wakes).toEqual([expect.objectContaining({ watch_wake: 1, convs: [WCH] })]);
+      expect(wakes[0]).not.toHaveProperty("key");
+      expect(burst.nudges).toHaveLength(1);
+      expect(burst.nudges[0]).toContain(`--key slack:${WCH}:${at(1)}:msg `);
+      expect(burst.nudges[0]).toContain(`--reason slack watch: 1 new in ${WCH}`);
+      // A one-second window: the first wakes at once, the next two share the trailing wake.
+      const trailing = runListener({ watch: [WCH], watch_wake_seconds: 1 }, [watched(1), watched(2), watched(3)], { settleMs: 1800 });
+      expect(trailing.recorded.filter((l) => l.watch_wake).map((l) => l.watch_wake)).toEqual([1, 2]);
+      expect(trailing.nudges).toHaveLength(2);
+      expect(trailing.nudges[1]).toContain(`--key slack:${WCH}:${at(3)}:msg `);
+      // 0: every watched message wakes.
+      const each = runListener({ watch: [WCH], watch_wake_seconds: 0 }, [watched(1), watched(2)], { settleMs: 800 });
+      expect(each.recorded.filter((l) => l.watch_wake)).toHaveLength(2);
+    });
+
+    test("an addressed message wakes at once even inside the watch window", () => {
+      const dm = { ...DM_TOP, ts: at(2) };
+      const r = runListener({ watch: [WCH] }, [watched(1), dm], { settleMs: 800 });
+      expect(r.nudges).toHaveLength(2);
+      expect(r.nudges[1]).toContain(`--key slack:${DM}:${at(2)}:msg `);
+    });
+
+    test("another app's post and a peer outside its channels are watched; the bot's own post is only a root", () => {
+      const r = runListener({ watch: [WCH], peers: RAW_PEERS, bot_id: OWN_BOT }, [
+        watched(1, { user: undefined, subtype: "bot_message", bot_id: "B0CI000001" }),
+        watched(2, { user: PEER, bot_id: PEER_BOT, text: `<@${BOT}> the export is ready` }),
+        watched(3, { user: BOT, bot_id: OWN_BOT }),
+      ]);
+      expect(watchLines(r).map((l) => [l.from, l.from_bot ?? null, l.from_peer ?? null])).toEqual([
+        ["B0CI000001", "B0CI000001", null],
+        [PEER, null, "deskbot"],
+      ]);
+      expect(r.read("slack-own-threads.jsonl")).toHaveLength(1);
+      expect(r.axi).toEqual([]);
+    });
+
+    test("files of a watched message are listed, never saved", () => {
+      const r = runListener({ watch: [WCH], files: { save: true } }, [watched(1, { subtype: "file_share", files: [{ id: "F0FILE0001", name: "a.png", mimetype: "image/png", size: 10 }] })]);
+      expect(watchLines(r)[0].files).toEqual([{ id: "F0FILE0001", name: "a.png", mimetype: "image/png", size: 10 }]);
+      expect(r.axi.filter((l) => l.startsWith("download"))).toEqual([]);
+    });
+
+    test("the watch file is created on start and pruned of lines older than 14 days", () => {
+      const r = runListener({ watch: [WCH] }, [], {
+        settleMs: 100,
+        setup: (_repo, dir) => writeFileSync(join(dir, "slack-watch.jsonl"), [
+          JSON.stringify({ key: "old", recorded_at: new Date(Date.now() - 20 * 86400000).toISOString() }),
+          JSON.stringify({ key: "new", recorded_at: new Date().toISOString() }),
+        ].join("\n") + "\n"),
+      });
+      expect(watchLines(r).map((l) => l.key)).toEqual(["new"]);
+      expect(r.out).toContain("watch file pruned to 1 lines");
+      const fresh = runListener({ watch: [WCH] }, [], { settleMs: 100 });
+      expect(existsSync(join(fresh.dir, "slack-watch.jsonl"))).toBe(true);
+      const off = runListener({}, [], { settleMs: 100 });
+      expect(existsSync(join(off.dir, "slack-watch.jsonl"))).toBe(false);
+    });
+
+    test("a bad watch list is said at start", () => {
+      const r = runListener({ watch: [DM] }, [], { settleMs: 100 });
+      expect(r.out).toContain(`watch not a channel id (C... or G...), never a DM: ${DM} (never watched)`);
+    });
+  });
+
+  describe("the reader", () => {
+    function watchReader(slack: Record<string, unknown> = {}, opts: { noWatchFile?: boolean; seen?: string[]; citeFails?: boolean } = {}) {
+      const t = readerSetup({ watch: [WCH], ...slack });
+      const recorded = "2026-11-10T14:00:00.000Z";
+      const lines = [
+        watchItem(post()),
+        watchItem(post({ ts: "1794400600.000800", thread_ts: OLD_ROOT, text: "an answer in an old thread" })),
+        watchItem(post({ ts: "1794400700.000900", user: undefined, subtype: "bot_message", bot_id: "B0CI000001", text: "build 42 passed" })),
+        watchItem(post({ ts: "1794400800.001000", user: PEER, bot_id: PEER_BOT, text: "ready" }), { peers: PEERS }),
+        { ...watchItem(post({ ts: "1700000000.000001" })), recorded_at: "2023-11-14T22:13:20.000Z" },
+      ].map((l) => JSON.stringify({ recorded_at: recorded, ...l }));
+      if (!opts.noWatchFile) writeFileSync(join(t.dir, "slack-watch.jsonl"), lines.join("\n") + "\n");
+      // The wake line on the events file has no key and is never an item.
+      const ev = join(t.dir, "slack-events.jsonl");
+      writeFileSync(ev, readFileSync(ev, "utf8") + JSON.stringify({ watch_wake: 3, convs: [WCH], note: "x", at: recorded, recorded_at: recorded }) + "\n");
+      if (opts.seen) { mkdirSync(join(t.root, "logs/intake"), { recursive: true }); writeFileSync(join(t.root, "logs/intake/seen"), opts.seen.join("\n") + "\n"); }
+      const axi = join(t.dir, "axi");
+      if (opts.citeFails) writeFileSync(join(axi, "fail-cite"), "");
+      else writeFileSync(join(axi, "cite"), `workspace: Example (T0EXAMPLE1)\nchannel: "#proj (${WCH})"\n${table("citations", [
+        { ts: "1794400500000700", permalink: `https://example.invalid/archives/${WCH}/p1794400500000700` },
+        { ts: "1794400600000800", permalink: `https://example.invalid/archives/${WCH}/p1794400600000800?thread_ts=${OLD_ROOT}` },
+        { ts: "1794400700000900", permalink: "(not found in this channel)" },
+      ])}\n`);
+      writeFileSync(join(axi, `thread-${OLD_ROOT}`), `channel: "#proj (${WCH})"\nreplies: 1\n${table("messages", [
+        { time: "2026-10-01 09:00", author: "Ann Example", text: "the schedule", ts: "1790000000000100", permalink: "" },
+        { time: "2026-11-10 09:05", author: "Ann Example", text: "↳ an answer in an old thread", ts: "1794400600000800", permalink: "" },
+      ])}\n`);
+      return t;
+    }
+
+    test("watched items come after the addressed ones, kind watch, with reply, note, permalink, sender and thread", () => {
+      const t = watchReader();
+      const r = t.run();
+      expect(r.code).toBe(0);
+      expect(r.items.filter((i) => i.kind !== "watch")).toHaveLength(5);
+      const w = r.items.filter((i) => i.kind === "watch");
+      expect(w.map((i) => i.key)).toEqual([
+        `slack:${WCH}:1794400500.000700:msg`, `slack:${WCH}:1794400600.000800:msg`, `slack:${WCH}:1794400700.000900:msg`, `slack:${WCH}:1794400800.001000:msg`,
+      ]);
+      expect(r.items.slice(0, 5).every((i) => i.kind !== "watch")).toBe(true);
+      expect(w[0]).toEqual({
+        key: `slack:${WCH}:1794400500.000700:msg`, at: new Date(Math.round(parseFloat("1794400500.000700") * 1000)).toISOString(), conv: WCH, kind: "watch",
+        from: ANN, text: "the vendor moved the date", ts: "1794400500.000700", reply: `${WCH} --reply 1794400500.000700`, event: "message",
+        permalink: `https://example.invalid/archives/${WCH}/p1794400500000700`, watch_note: expect.stringContaining("asks for no answer"),
+        from_slack: { name: "Ann Example", display_name: "ann", kind: "member" },
+      });
+      expect(w[1]).toMatchObject({ thread_ts: OLD_ROOT, reply: `${WCH} --reply ${OLD_ROOT}`, thread: { n: 2, parent: "Ann Example: the schedule", full: `slack-axi thread ${WCH} ${OLD_ROOT}` } });
+      expect(w[1].permalink).toContain("thread_ts=");
+      // Another app's post: no permalink when cite found none, no user lookup for a bot id.
+      expect(w[2]).toMatchObject({ from: "B0CI000001", from_bot: "B0CI000001" });
+      expect(w[2]).not.toHaveProperty("permalink");
+      expect(w[2]).not.toHaveProperty("from_note");
+      expect(w[3]).toMatchObject({ from_peer: "deskbot", gate_word_void: "from a peer bot" });
+      expect(calls(t.dir).filter((c) => c.startsWith("cite "))).toEqual([`cite ${WCH} 1794400500.000700 1794400600.000800 1794400700.000900 1794400800.001000`]);
+      expect(calls(t.dir)).not.toContain("user B0CI000001");
+    });
+
+    test("a watched key already seen is skipped before any lookup", () => {
+      const t = watchReader({}, { seen: [`slack:${WCH}:1794400500.000700:msg`, `slack:${WCH}:1794400600.000800:msg`, `slack:${WCH}:1794400700.000900:msg`, `slack:${WCH}:1794400800.001000:msg`] });
+      const r = t.run();
+      expect(r.items.filter((i) => i.kind === "watch")).toEqual([]);
+      expect(calls(t.dir).filter((c) => c.startsWith("cite ") || c.includes(OLD_ROOT))).toEqual([]);
+    });
+
+    test("a failing cite leaves out the permalinks and does not fail the input", () => {
+      const r = watchReader({}, { citeFails: true }).run();
+      expect(r.code).toBe(0);
+      for (const i of r.items.filter((i) => i.kind === "watch")) expect(i).not.toHaveProperty("permalink");
+    });
+
+    test("watch set and no watch file: every item is printed, and the input fails with the reason", () => {
+      const r = watchReader({}, { noWatchFile: true }).run();
+      expect(r.code).toBe(1);
+      expect(r.items).toHaveLength(5);
+      expect(r.err).toContain("no watch file");
+    });
+  });
+});
+
+describe("channels where anyone is heard (listen_channels)", () => {
+  // Invented ids throughout. LCH is listed; CHAN is not.
+  const LCH = "C0LISTEN01";
+  const LPRIV = "G0LISTEN02";
+  const OPS = "U0OPS00001";
+  const OPS_DM = "D0OPSDM001";
+  const PEER = "U0PEER0001";
+  const PEER_BOT = "B0PEER0001";
+  const PEERS = [{ name: "deskbot", user: PEER, botId: PEER_BOT, channels: [CHAN] }];
+  const ids = { botUser: BOT, operators: [OPS], escalateDm: OPS_DM, listenTo: "operators", listenChannels: [LCH, LPRIV] };
+  const mentionIn = (conv: string, from = ANN) => classify([{ ...MENTION, channel: conv, user: from }])[0]!;
+  const replyIn = (conv: string, from = ANN) => {
+    const root = mentionIn(conv, OPS);
+    return classify([{ ...THREAD_REPLY, channel: conv, user: from }], BOT, JSON.stringify(root) + "\n")[0]!;
+  };
+
+  test("the list: channel ids once each; a DM id, a repeat, a non-list or an empty list is a problem", () => {
+    expect(call("listenChannels", [[LCH, LPRIV]])).toEqual({ channels: [LCH, LPRIV], problems: [] });
+    expect(call("listenChannels", [undefined])).toEqual({ channels: [], problems: [] });
+    expect(call("listenChannels", [[LCH, DM, LCH, 7]])).toEqual({
+      channels: [LCH],
+      problems: [`not a channel id (C... or G...), never a DM: ${DM}`, `listed twice: ${LCH}`, "not a channel id (C... or G...), never a DM: 7"],
+    });
+    expect((call("listenChannels", [LCH]) as { problems: string[] }).problems).toEqual(["listen_channels must be a list of channel ids (C... or G...)"]);
+    expect((call("listenChannels", [[]]) as { problems: string[] }).problems).toEqual(["listen_channels is an empty list"]);
+    expect(call("settings", [{ name: "examplebot", streams: { slack: { listen_channels: [LCH, DM] } } }])).toMatchObject({ listenChannels: [LCH] });
+    expect(call("settings", [{ name: "examplebot" }])).toMatchObject({ listenChannels: [] });
+  });
+
+  test("operators: anyone's @mention and reply in the bot's thread in a listed channel are heard, because of the channel", () => {
+    for (const it of [mentionIn(LCH), replyIn(LCH), mentionIn(LPRIV), replyIn(LPRIV)]) {
+      expect(call("heardWhy", [it, ids])).toBe("channel");
+      expect(call("heard", [it, ids])).toBe(true);
+    }
+  });
+
+  test("everything else still follows listen_to: a DM, a reaction, a team_join, another channel", () => {
+    const dm = classify([{ ...DM_TOP, user: ANN }])[0];
+    const reaction = classify([{ ...REACTION, user: ANN, item: { ...REACTION.item, channel: LCH } }])[0];
+    const join_ = classify([{ type: "team_join", user: { id: "U0NEW00001" }, event_ts: "1794400400.000600" }])[0];
+    for (const it of [dm, reaction, join_, mentionIn(CHAN), replyIn(CHAN)]) expect(call("heardWhy", [it, ids])).toBeNull();
+  });
+
+  test("an operator in a listed channel is heard as the operator; with anyone the list changes nothing; a peer is a peer", () => {
+    expect(call("heardWhy", [mentionIn(LCH, OPS), ids])).toBe("operator");
+    expect(call("heardWhy", [classify([{ ...DM_TOP, channel: OPS_DM }])[0], ids])).toBe("escalate_dm");
+    for (const it of [mentionIn(LCH), mentionIn(CHAN)]) expect(call("heardWhy", [it, { ...ids, listenTo: "anyone" }])).toBe("anyone");
+    const peerMention = call("classify", [{ ...MENTION, channel: CHAN, user: PEER }, { botUser: BOT, peers: PEERS }]) as Record<string, unknown>;
+    expect(peerMention).toMatchObject({ from_peer: "deskbot" });
+    expect(call("heardWhy", [peerMention, { ...ids, listenChannels: [CHAN] }])).toBe("peer");
+    // A peer outside its own channels is not heard because a channel is listed.
+    expect(call("classify", [{ ...MENTION, channel: LCH, user: PEER }, { botUser: BOT, peers: PEERS }])).toBeNull();
+    // Another app's post is not a person's: still dropped.
+    expect(call("classify", [{ ...MENTION, channel: LCH, user: "U0APP00001", bot_id: "B0APP00001" }, { botUser: BOT, operators: [OPS] }])).toBeNull();
+  });
+
+  test("a channel in both lists: an addressed message from anyone is not a watch line; the rest is", () => {
+    const post = (extra: Record<string, unknown> = {}) => ({ type: "message", channel_type: "channel", channel: LCH, user: ANN, text: "the vendor moved the date", ts: "1794400500.000700", ...extra });
+    const both = { ...ids, watch: [LCH] };
+    expect(call("watchItem", [post({ text: `<@${BOT}> can you look?` }), both])).toBeNull();
+    expect(call("watchItem", [post({ thread_ts: "1790000000.000100", parent_user_id: BOT }), both])).toBeNull();
+    expect(call("watchItem", [post(), both])).toMatchObject({ kind: "watch", from: ANN });
+    // Without listen_channels the same @mention is only watched, as before.
+    expect(call("watchItem", [post({ text: `<@${BOT}> can you look?` }), { ...both, listenChannels: [] }])).toMatchObject({ kind: "watch" });
+  });
+
+  describe("the running listener", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const at = (n: number) => `${now}.00${String(100 + n)}0`;
+
+    test("operators + listen_channels: a teammate is recorded, receipted, woken and marked; their DM and other channels are dropped", () => {
+      const mention = { type: "app_mention", channel: LCH, user: ANN, text: `<@${BOT}> can you look?`, ts: at(1) };
+      const reply = { type: "message", channel_type: "channel", channel: LCH, user: ANN, text: "and the second part", ts: at(2), thread_ts: at(1) };
+      const dm = { ...DM_TOP, text: "private words", ts: at(3) };
+      const elsewhere = { type: "app_mention", channel: CHAN, user: ANN, text: `<@${BOT}> here too`, ts: at(4) };
+      const owner = { type: "app_mention", channel: LCH, user: OPS, text: `<@${BOT}> from me`, ts: at(5) };
+      const r = runListener({ listen_to: "operators", operators: [OPS], listen_channels: [LCH] }, [mention, reply, dm, elsewhere, owner], {
+        // A loaded runner needs room for the read reaction after the last event.
+        tickMs: 50, settleMs: 5000,
+        // Already reported (the stand-in core answers `log seen` from branch-seen), so the read
+        // reaction follows the receipt.
+        setup: (_repo, dir) => writeFileSync(join(dir, "branch-seen"), `slack:${LCH}:${at(1)}:msg\n`),
+      });
+      expect(r.code).toBe(0);
+      expect(r.recorded.map((l) => [l.key, l.event, l.from_operator])).toEqual([
+        [`slack:${LCH}:${at(1)}:msg`, "app_mention", false],
+        [`slack:${LCH}:${at(2)}:msg`, "message", false],
+        [`slack:${LCH}:${at(5)}:msg`, "app_mention", undefined],
+      ]);
+      expect(r.out).toContain(`recorded app_mention group ${LCH} ${ANN} heard in listen_channels`);
+      expect(r.out).toContain(`recorded message group ${LCH} ${ANN} heard in listen_channels`);
+      expect(r.out).toMatch(new RegExp(`recorded app_mention group ${LCH} ${OPS}\\s*$`, "m"));
+      expect(r.out).toContain(`dropped non-operator ${DM} ${ANN} dm`);
+      expect(r.out).toContain(`dropped non-operator ${CHAN} ${ANN} mention`);
+      expect(r.out).not.toContain("private words");
+      expect(r.axi).toContain(`react ${LCH} ${at(1)} :eyes:`);
+      expect(r.axi).toContain(`react ${LCH} ${at(2)} :eyes:`);
+      expect(r.axi).toContain(`react ${LCH} ${at(1)} :gear:`);
+      expect(r.axi.filter((l) => l.includes(at(3)) || l.includes(at(4)))).toEqual([]);
+      expect(r.nudges.length).toBeGreaterThanOrEqual(1);
+      expect(r.nudges.join("\n")).toContain(`slack:${LCH}:${at(1)}:msg`);
+    });
+
+    test("a channel also watched: the teammate's @mention is recorded once, as addressed; an unaddressed post is a watch line", () => {
+      const text = `<@${BOT}> can you look?`;
+      const r = runListener({ listen_to: "operators", operators: [OPS], listen_channels: [LCH], watch: [LCH] }, [
+        { type: "message", channel_type: "channel", channel: LCH, user: ANN, text, ts: at(1) },
+        { type: "app_mention", channel: LCH, user: ANN, text, ts: at(1) },
+        { type: "message", channel_type: "channel", channel: LCH, user: ANN, text: "the vendor moved the date", ts: at(2) },
+      ]);
+      expect(r.recorded.filter((l) => l.key).map((l) => [l.key, l.from_operator])).toEqual([[`slack:${LCH}:${at(1)}:msg`, false]]);
+      expect(r.read("slack-watch.jsonl").map((l) => JSON.parse(l).key)).toEqual([`slack:${LCH}:${at(2)}:msg`]);
+      expect(r.axi).toEqual([`react ${LCH} ${at(1)} :eyes:`]);
+    });
+
+    test("a bad entry is said at start and the rest are used", () => {
+      const r = runListener({ listen_to: "operators", operators: [OPS], listen_channels: [DM, LCH] }, [], { settleMs: 100 });
+      expect(r.out).toContain(`listen_channels not a channel id (C... or G...), never a DM: ${DM} (not listened to)`);
+    });
+  });
+
+  test("the reader marks an item kept by the channel: from_operator false, listen_note, gate_word_void", () => {
+    const t = readerSetup({ listen_to: "operators", operators: [OPS], listen_channels: [CHAN] });
+    const ev = join(t.dir, "slack-events.jsonl");
+    const line = { ...classify([{ ...MENTION, ts: "1794400900.001100", text: `<@${BOT}> GOAHEAD please` }])[0], from_operator: false, recorded_at: "2026-11-10T14:00:00.000Z" };
+    writeFileSync(ev, readFileSync(ev, "utf8") + JSON.stringify(line) + "\n");
+    const r = t.run();
+    expect(r.code).toBe(0);
+    const marked = r.items.filter((i) => i.from_operator === false);
+    expect(marked.map((i) => i.key)).toEqual([`slack:${CHAN}:1794400900.001100:msg`]);
+    expect(marked[0]).toMatchObject({ listen_note: expect.stringContaining("not your operator"), gate_word_void: "not from an operator", reply: `${CHAN} --reply 1794400900.001100` });
+    for (const i of r.items.filter((i) => i.from_operator !== false)) {
+      expect(i).not.toHaveProperty("from_operator");
+      expect(i).not.toHaveProperty("listen_note");
+    }
+  });
+
+  describe("status", () => {
+    function statusWith(slack: Record<string, unknown>) {
+      const home = tmp();
+      const root = join(home, "bot");
+      mkdirSync(root);
+      spawnSync("git", ["init", "-q"], { cwd: root });
+      writeFileSync(join(root, "opsbot.json"), JSON.stringify({ name: "examplebot", streams: { slack } }));
+      const bin = standIn(home, { mode: "mode:\n  workspace: Example (T0EXAMPLE1)\n  mode: bot\n" });
+      const r = spawnSync("bash", [CLI, "status"], { cwd: root, encoding: "utf8", env: isolated(bin, { HOME: home }) });
+      return { out: r.stdout, code: r.status };
+    }
+
+    test("ok with the count; with anyone it says it changes nothing; a bad value is differs; unset, no row", () => {
+      expect(statusWith({ escalate_dm: DM, listen_to: "operators", operators: [OPS], listen_channels: [LCH, LPRIV] }).out)
+        .toMatch(new RegExp(`^ok\\s+listen_channels\\s+2 channels: ${LCH}, ${LPRIV}; anyone's @mention or reply in the bot's thread there is heard`, "m"));
+      expect(statusWith({ escalate_dm: DM, listen_channels: [LCH] }).out).toMatch(/^ok\s+listen_channels\s+1 channel: .*listen_to is anyone, so it changes nothing/m);
+      const bad = statusWith({ escalate_dm: DM, listen_to: "operators", operators: [OPS], listen_channels: [DM] });
+      expect(bad.out).toMatch(new RegExp(`^differs\\s+listen_channels\\s+not a channel id \\(C\\.\\.\\. or G\\.\\.\\.\\), never a DM: ${DM}`, "m"));
+      expect(bad.code).toBe(1);
+      expect(statusWith({ escalate_dm: DM }).out).not.toMatch(/^\S+\s+listen_channels\s/m);
+    });
+
+    test("the intercept row says who can trigger a rule when listen_channels is set", () => {
+      expect(statusWith({ escalate_dm: DM, listen_to: "operators", operators: [OPS], listen_channels: [LCH], intercept: [{ prefix: "+ ", command: ["/bin/true"], kinds: ["mention"] }] }).out)
+        .toMatch(/^ok\s+intercept\s+1 rule; only operators can trigger them, and anyone in listen_channels a mention or reply rule/m);
+    });
+  });
+});

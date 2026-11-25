@@ -7,6 +7,7 @@
 //   screen-check                       (for `opsbot-slack status`: one row on stdout)
 //   identity-check                     (for `opsbot-slack status`: the posting identity's row)
 //   peers-check                        (for `opsbot-slack status`: the bot's membership in the peers' channels)
+//   watch-check                        (for `opsbot-slack status`: a row per watched channel the bot is not in)
 //
 // post, in order: refuse bad usage; classify the destination from Slack's own data
 // (operator-dm, internal, external, unknown); when streams.slack.screen names a policy for that
@@ -760,8 +761,7 @@ async function cmdIdentityCheck() {
  * One status row for the bot's membership in the peers' channels, from `slack-axi audience`'s
  * is_member: `ok`, `differs` (not a member somewhere) or `missing <detail>` (could not tell).
  */
-function cmdPeersCheck() {
-  const chans = [...new Set(peers.flatMap((p) => p.channels).filter((ch) => /^[CG][A-Z0-9]{2,}$/.test(ch)))];
+function membership(chans) {
   const inside = [], outside = [], unknown = [];
   for (const ch of chans) {
     try {
@@ -775,6 +775,12 @@ function cmdPeersCheck() {
       else unknown.push(`${ch} (no is_member)`);
     } catch (e) { unknown.push(`${ch} (${e.message})`); }
   }
+  return { inside, outside, unknown };
+}
+
+function cmdPeersCheck() {
+  const chans = [...new Set(peers.flatMap((p) => p.channels).filter((ch) => /^[CG][A-Z0-9]{2,}$/.test(ch)))];
+  const { inside, outside, unknown } = membership(chans);
   const parts = [];
   if (outside.length) parts.push(`not a member of ${outside.join(", ")}`);
   if (unknown.length) parts.push(`could not tell for ${unknown.join(", ")}`);
@@ -785,10 +791,27 @@ function cmdPeersCheck() {
   process.exit(0);
 }
 
+/**
+ * The rows for the bot's membership in the watched channels, from `slack-axi audience`'s
+ * is_member: one `differs <ch> …` per channel it is not in (Slack delivers nothing from it), one
+ * `missing <ch> …` per channel it could not tell, else one `ok` row.
+ */
+function cmdWatchCheck() {
+  const chans = [...new Set((Array.isArray(slack.watch) ? slack.watch : []).filter((ch) => typeof ch === "string" && /^[CG][A-Z0-9]{2,}$/.test(ch)))];
+  if (!chans.length) { console.log("ok no channel ids to check"); process.exit(0); }
+  const { inside, outside, unknown } = membership(chans);
+  for (const ch of outside) console.log(`differs ${ch} not a member: Slack delivers nothing from it, so nothing there is watched`);
+  for (const u of unknown) console.log(`missing ${u.replace(/ \(/, " could not tell (")}`);
+  if (outside.length || unknown.length) process.exit(1);
+  console.log(`ok a member of all ${inside.length}: ${inside.join(", ")}`);
+  process.exit(0);
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
 if (cmd === "post") await cmdPost(rest);
 else if (cmd === "classify") await cmdClassify(rest);
 else if (cmd === "screen-check") cmdScreenCheck();
 else if (cmd === "identity-check") await cmdIdentityCheck();
 else if (cmd === "peers-check") cmdPeersCheck();
+else if (cmd === "watch-check") cmdWatchCheck();
 else usage(`unknown command: ${cmd ?? "(none)"}`);
