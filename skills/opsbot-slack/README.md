@@ -98,6 +98,9 @@ each off by default:
 
 - `"listen_to": "operators"` with your user id in `operators`: the bot hears only you. Anyone
   else's DM or mention is dropped without a reaction, so they cannot tell the bot is there.
+  To let your team reach it in a few project channels while DMs stay yours alone, list those
+  channel ids in `"listen_channels"`: there, anyone's @mention of the bot, or reply in its
+  thread, is heard like yours, and the bot is told the person is not you.
 - `"files": { "save": true }`: files you send it (images, PDFs and text, up to 25 MB) are saved
   under `.scratch/slack-files/` in its checkout, where the bot can open them. The `files:read`
   scope in the manifest already covers this.
