@@ -881,3 +881,34 @@ describe("the decision log is the posts/slack sheet of the log branch", () => {
     expect(posted(b)).toHaveLength(1);
   });
 });
+
+describe("status: watched channels", () => {
+  const WCH = "C0WATCH001";
+  const WOUT = "C0WATCH002";
+  const audience = {
+    ...AUDIENCE,
+    [WCH]: report({ id: WCH, name: "#proj", kind: "channel" }, [bot_, [ANN, "full", ""]]),
+    [WOUT]: report({ id: WOUT, name: "#proj-two", kind: "channel", is_member: false }, [[ANN, "full", ""]]),
+  };
+
+  test("one ok row when the bot is in every watched channel", () => {
+    const r = bot({ watch: [WCH] }, { audience }).run(["status"]);
+    expect(r.out).toMatch(new RegExp(`^ok\\s+watch\\s+1 channel: ${WCH}; every message recorded`, "m"));
+    expect(r.out).toMatch(new RegExp(`^ok\\s+watch-channels\\s+a member of all 1: ${WCH}`, "m"));
+    expect(r.out).not.toMatch(/^\S+\s+watch-channel\s/m);
+  });
+
+  test("a row per channel the bot is not in, or could not tell, with the fix", () => {
+    const r = bot({ watch: [WCH, WOUT, MISSING] }, { audience }).run(["status"]);
+    expect(r.out).toMatch(new RegExp(`^differs\\s+watch-channel\\s+${WOUT} not a member: Slack delivers nothing from it`, "m"));
+    expect(r.out).toMatch(new RegExp(`^\\s+fix: invite the bot to ${WOUT}`, "m"));
+    expect(r.out).toMatch(new RegExp(`^missing\\s+watch-channel\\s+${MISSING} could not tell`, "m"));
+    expect(r.out).not.toMatch(/^ok\s+watch-channels/m);
+    expect(r.code).toBe(1);
+  });
+
+  test("a bad list is differs; no watch means no watch rows", () => {
+    expect(bot({ watch: [DMANN] }, { audience }).run(["status"]).out).toMatch(/^differs\s+watch\s+not a channel id/m);
+    expect(bot({}, { audience }).run(["status"]).out).not.toMatch(/watch/);
+  });
+});
