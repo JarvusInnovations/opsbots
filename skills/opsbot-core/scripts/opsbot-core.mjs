@@ -20,7 +20,7 @@ var VERSION;
 var init_version = __esm({
   "src/opsbot-core/version.ts"() {
     "use strict";
-    VERSION = true ? "04b9bac" : "dev";
+    VERSION = true ? "6c3abe0" : "dev";
   }
 });
 
@@ -1937,7 +1937,7 @@ var init_reference = __esm({
           },
           {
             usage: "cold-start [--write]",
-            summary: "Print the reground pack: the rule card, the kit's sections (house style, the console and the record, delegation, what the session log says, the live wake to arm), each `wake.d/` section, then each `cold-start` recall's rows (both inside the wake budget), the last 48 hours of the cycle log (with one line when the memory review is due and a few naming the other due routines), the untrusted-memory line; the routines section rides when the bot has a routine definition. `--write` also makes sure `.scratch/` exists and is git-excluded, writes the pack to `.scratch/opsbot-core/reground.md`, sets the pending flag and records the session log's path for `cycle` and `nudge`."
+            summary: "Print the reground pack: the rule card, the kit's sections (house style, the console and the record, issue and pull request references with the bot's tags, delegation, what the session log says, the live wake to arm), each `wake.d/` section, then each `cold-start` recall's rows (both inside the wake budget), the last 48 hours of the cycle log (with one line when the memory review is due and a few naming the other due routines), the untrusted-memory line; the routines section rides when the bot has a routine definition. `--write` also makes sure `.scratch/` exists and is git-excluded, writes the pack to `.scratch/opsbot-core/reground.md`, sets the pending flag and records the session log's path for `cycle` and `nudge`."
           },
           {
             usage: "gate check",
@@ -2032,7 +2032,7 @@ var init_reference = __esm({
             summary: "Register the SessionStart (`cold-start --write`) and PreToolUse (`gate check`) hooks; project scope by default."
           },
           { usage: "hooks list [--point P]", summary: "Every script that will run at each lifecycle point, in order, with its source." },
-          { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets `autoMemoryEnabled`, or an `autoMemoryDirectory` other than `memory.dir` (the same directory, relative or absolute, is accepted, so a session `start` did not launch shares the bot's memory); any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails; and a log branch (`log.branch`, default `opsbot/log`) that names the branch checked out, or no `gitsheets-axi` 2.15.0 or later to write it; `log.ledgers` or `log.state` that is not names with lists of field names; and, naming `log migrate`, every setting only the old log files needed (the list of files each cycle committed, `routines.runs_dir`, and `repo_sync` `pull-on-clean` or `never-pull`)." }
+          { usage: "settings validate [--head]", summary: "Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets `autoMemoryEnabled`, or an `autoMemoryDirectory` other than `memory.dir` (the same directory, relative or absolute, is accepted, so a session `start` did not launch shares the bot's memory); any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails; and a log branch (`log.branch`, default `opsbot/log`) that names the branch checked out, or no `gitsheets-axi` 2.15.0 or later to write it; `log.ledgers` or `log.state` that is not names with lists of field names; and, naming `log migrate`, every setting only the old log files needed (the list of files each cycle committed, `routines.runs_dir`, and `repo_sync` `pull-on-clean` or `never-pull`); and a `references.repos` tag that is not capital letters and digits, a repository that is not `owner/repo`, or a repository named twice." }
         ]
       }
     ];
@@ -3278,7 +3278,8 @@ function validateSettings(raw) {
     "routines",
     "check",
     "record",
-    "log"
+    "log",
+    "references"
   ]);
   str2(raw, "name", "", true, NAME_RE, "must be lowercase letters, digits and dashes, starting with a letter");
   str2(raw, "mark", "", true);
@@ -3424,6 +3425,7 @@ function validateSettings(raw) {
       }
     }
   }
+  if (raw.references !== void 0) problems.push(...referenceProblems(raw.references));
   const sleep = obj(raw, "sleep", "", false);
   if (sleep) {
     allow(sleep, "sleep.", ["after_minutes", "probe_minutes", "max_minutes", "compact"]);
@@ -3436,6 +3438,36 @@ function validateSettings(raw) {
     }
   }
   return problems;
+}
+function referenceProblems(v) {
+  if (!isObj2(v)) return ["references must be an object ({repos})"];
+  const problems = [];
+  for (const k of keysOf(v)) if (k !== "repos") problems.push(`unknown key references.${k}`);
+  const repos = v.repos;
+  if (repos === void 0) return problems;
+  if (!isObj2(repos)) return [...problems, 'references.repos must be an object of tag to repository ({"OPS": "owner/repo"})'];
+  const byRepo = /* @__PURE__ */ new Map();
+  for (const tag2 of keysOf(repos)) {
+    const repo = repos[tag2];
+    if (!REFERENCE_TAG.test(tag2)) problems.push(`references.repos tag ${JSON.stringify(tag2)} must be capital letters and digits, starting with a letter`);
+    if (typeof repo !== "string" || !REFERENCE_REPO.test(repo)) {
+      problems.push(`references.repos.${tag2} must be a repository as owner/repo (got ${JSON.stringify(repo)})`);
+      continue;
+    }
+    const other = byRepo.get(repo.toLowerCase());
+    if (other !== void 0) problems.push(`references.repos names ${repo} twice (${other} and ${tag2}): one repository has one tag`);
+    else byRepo.set(repo.toLowerCase(), tag2);
+  }
+  return problems;
+}
+function referenceRepos(v) {
+  if (!isObj2(v) || !isObj2(v.repos)) return {};
+  const out = {};
+  for (const tag2 of keysOf(v.repos)) {
+    const repo = v.repos[tag2];
+    if (REFERENCE_TAG.test(tag2) && typeof repo === "string" && REFERENCE_REPO.test(repo)) out[tag2] = repo;
+  }
+  return out;
 }
 function memoryDirProblems(v) {
   return repoDirProblems(v, "memory.dir");
@@ -3537,7 +3569,8 @@ function withDefaults(raw) {
       branch: isObj2(raw.log) && typeof raw.log.branch === "string" && raw.log.branch ? raw.log.branch : DEFAULT_LOG_BRANCH,
       ledgers: logNames(isObj2(raw.log) ? raw.log.ledgers : void 0),
       state: logNames(isObj2(raw.log) ? raw.log.state : void 0)
-    }
+    },
+    references: { repos: referenceRepos(raw.references) }
   };
 }
 function logNames(v) {
@@ -3585,7 +3618,7 @@ function trySettings(root) {
   const p = join5(root, SETTINGS_FILE);
   return existsSync6(p) ? tryText(readFileSync4(p, "utf8")) : null;
 }
-var SETTINGS_FILE, LOOP_MODES, MODE_AUTOCOMPACT, LOOP_SCHEDULES, MODE_MODEL, DEFAULT_MEMORY, DEFAULT_ROUTINES, DEFAULT_CHECK, DEFAULT_SLEEP, LOG_NAME_RE, LEDGER_RESERVED, DEFAULT_CADENCE, DEFAULT_LIVENESS, MONITOR_NUDGE_MINUTES, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR, LOG_BRANCH_RE;
+var SETTINGS_FILE, LOOP_MODES, MODE_AUTOCOMPACT, LOOP_SCHEDULES, MODE_MODEL, DEFAULT_MEMORY, DEFAULT_ROUTINES, DEFAULT_CHECK, DEFAULT_SLEEP, LOG_NAME_RE, LEDGER_RESERVED, DEFAULT_CADENCE, DEFAULT_LIVENESS, MONITOR_NUDGE_MINUTES, NAME_RE, AGENT_RE, HM_RE, CADENCE_SECONDS, LIVENESS_KEYS, ONE_HOUR, LOG_BRANCH_RE, REFERENCE_TAG, REFERENCE_REPO;
 var init_settings = __esm({
   "src/opsbot-core/settings.ts"() {
     "use strict";
@@ -3630,6 +3663,8 @@ var init_settings = __esm({
     LIVENESS_KEYS = Object.keys(DEFAULT_LIVENESS);
     ONE_HOUR = 3600;
     LOG_BRANCH_RE = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*\.lock(?:\/|$))[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/;
+    REFERENCE_TAG = /^[A-Z][A-Z0-9]*$/;
+    REFERENCE_REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
   }
 });
 
@@ -10935,6 +10970,11 @@ function logSummary(root, now) {
   }
   return out;
 }
+function referenceTags(repos = {}) {
+  const tags = Object.entries(repos);
+  if (tags.length === 0) return "";
+  return ["Your tags:", "", "| Tag | Repository |", "| --- | --- |", ...tags.map(([t, r]) => `| \`${t}\` | \`${r}\` |`)].join("\n");
+}
 function kitSections(mode, opts = {}) {
   const dir = process.env.OPSBOT_PACK_DIR || join20(skillDir(), "references", "pack");
   if (!existsSync15(dir)) return [];
@@ -10946,7 +10986,12 @@ function kitSections(mode, opts = {}) {
     const m = text.match(/^#\s+(.+)$/m);
     const title = m ? m[1].trim() : f.replace(/^\d+[-_]/, "").replace(/\.md$/, "");
     if (m) text = text.replace(m[0], "").replace(/^\n+/, "");
-    return { title, body: text.replace(/\n+$/, "") };
+    let body = text.replace(/\n+$/, "");
+    const tags = /^\d+[-_]references\.md$/.test(f) ? referenceTags(opts.repos) : "";
+    if (tags) body = `${body}
+
+${tags}`;
+    return { title, body };
   });
 }
 function buildPack(root, s, settingsText, transcript, sessionLog) {
@@ -10967,7 +11012,7 @@ ${text.replace(/\n+$/, "")}`;
   } catch {
     routines = null;
   }
-  const kit = kitSections(s.loop.mode, { memory: s.memory !== null, routines: (routines?.files ?? 0) > 0 }).map((k, i) => `\u2550\u2550\u2550 1.${i + 1} ${k.title} (the kit's; updates with the skill)
+  const kit = kitSections(s.loop.mode, { memory: s.memory !== null, routines: (routines?.files ?? 0) > 0, repos: s.references.repos }).map((k, i) => `\u2550\u2550\u2550 1.${i + 1} ${k.title} (the kit's; updates with the skill)
 ${k.body}`);
   if (transcript) {
     const body = sessionLog ?? sessionLogSection(transcript);

@@ -52,5 +52,9 @@
   "routines": {
     "//": "Optional; defaults shown. dir holds the routine definitions (one markdown file per routine: the schedule in TOML frontmatter, the instructions in the body), read at HEAD and changed only through review, like the rule card; each run is a record of the log branch's routines sheet, written by `routines done`. A bot without these directories has no routines of its own; the memory review is built in while memory is on. Copy templates/routines/weekly-backup-check.md to start one.",
     "dir": "routines"
+  },
+  "references": {
+    "//": "Optional. The short tags the bot writes issue and pull request references with: OPS#123 for an issue, OPS PR#45 for a pull request, always linked. Tags are capital letters and digits; each value is owner/repo, one tag per repository. The cold-start pack lists them under its references section. A repository with no tag is written owner/repo#123.",
+    "repos": { "OPS": "example-org/ops" }
   }
 }
