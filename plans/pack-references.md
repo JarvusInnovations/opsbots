@@ -1,5 +1,7 @@
 ---
-status: planned
+status: done
+done: 2026-11-25
+pr: 144
 depends: [opsbot-core, console-and-record]
 specs:
   - specs/skills/opsbot-core.md
