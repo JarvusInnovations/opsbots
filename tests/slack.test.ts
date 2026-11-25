@@ -1922,8 +1922,9 @@ describe("channels where anyone is heard (listen_channels)", () => {
       const r = runListener({ listen_to: "operators", operators: [OPS], listen_channels: [LCH] }, [mention, reply, dm, elsewhere, owner], {
         // A loaded runner needs room for the read reaction after the last event.
         tickMs: 50, settleMs: 5000,
-        // Already reported, so the read reaction follows the receipt.
-        setup: (repo) => { mkdirSync(join(repo, "logs/intake"), { recursive: true }); writeFileSync(join(repo, "logs/intake/seen"), `slack:${LCH}:${at(1)}:msg\n`); },
+        // Already reported (the stand-in core answers `log seen` from branch-seen), so the read
+        // reaction follows the receipt.
+        setup: (_repo, dir) => writeFileSync(join(dir, "branch-seen"), `slack:${LCH}:${at(1)}:msg\n`),
       });
       expect(r.code).toBe(0);
       expect(r.recorded.map((l) => [l.key, l.event, l.from_operator])).toEqual([
