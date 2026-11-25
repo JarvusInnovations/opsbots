@@ -51,24 +51,45 @@ Out: saving a watched message's files; reactions and edits in watched channels; 
 
 ## Validation
 
-- [ ] Every message in a watched channel, by a person, another app or a peer outside its
+- [x] Every message in a watched channel, by a person, another app or a peer outside its
       channel, a top-level post or a reply in an old thread, is a `watch` line with key
       `slack:<conv>:<ts>:msg`; the bot's own, edits, deletes and joins are not.
-- [ ] A message also addressed to the bot is recorded once, as addressed, in either order of
+- [x] A message also addressed to the bot is recorded once, as addressed, in either order of
       `app_mention` and `message`; a non-operator's @mention under `listen_to: "operators"` is
       recorded as `watch`.
-- [ ] A watched-only message gets no reaction; an addressed one still gets the receipt.
-- [ ] The wake is debounced: a burst of watched messages runs one backstop and appends one
+- [x] A watched-only message gets no reaction; an addressed one still gets the receipt.
+- [x] The wake is debounced: a burst of watched messages runs one backstop and appends one
       wake line, then one more after the window; `watch_wake_seconds: 0` wakes on each.
-- [ ] A watched line never makes a thread the bot's.
-- [ ] The reader prints `kind: "watch"`, `reply`, `watch_note`, sender and thread context, a
+- [x] A watched line never makes a thread the bot's.
+- [x] The reader prints `kind: "watch"`, `reply`, `watch_note`, sender and thread context, a
       permalink from `slack-axi cite`, skips seen keys, and fails the input when `watch` is set
       and the watch file is missing.
-- [ ] `status` shows the `watch` row (ok or differs) and a `watch-channel` row per channel the
+- [x] `status` shows the `watch` row (ok or differs) and a `watch-channel` row per channel the
       bot is not in.
-- [ ] `bun run type-check`, `bun test` and `bun run check` pass, apart from failures that
+- [x] `bun run type-check`, `bun test` and `bun run check` pass, apart from failures that
       exist on the base branch too.
 
 ## Notes
 
+- Watched lines live in their own file, not the events file. Two reasons: a line in a
+  `wake.files` file wakes the session at once (the monitor, and `cycle end`'s arrival check), so
+  debouncing needs the lines elsewhere; and a watched line in the events file would make every
+  thread look like the bot's to `threadIsMine`.
+- The debounce is leading and trailing: the first watched message wakes at once, later ones in
+  the window share one wake at its end, so none waits for the next timed cycle.
+- Another app's post in a watched channel is recorded (`from_bot`), where the listener dropped
+  it before. A watched item asks for no answer, so it starts no run between bots; the peer rules
+  and the loop guard are unchanged.
+- The reader skips watched keys already in the seen file before any lookup. Without that, a busy
+  channel would cost a thread read and a permalink for every message in the window at every
+  check.
+- Not verified without a live Slack connection: that Socket Mode delivers `message` events for
+  every post in a channel the bot is in (the manifest already subscribes to `message.channels`
+  and `message.groups`); the order of `app_mention` and `message` for one @mention (the code
+  does not depend on it); and the output of `slack-axi cite` against a real workspace (tested
+  with a stand-in in the format slack-axi 1.6.0's source prints).
+
 ## Follow-ups
+
+- Tracked as: confirm on the first bot that sets `watch` that a busy channel gives at most one
+  wake per window in the journal, and that permalinks resolve.
