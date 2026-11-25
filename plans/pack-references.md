@@ -43,15 +43,29 @@ anything but a GitHub-style `owner/repo`.
 
 ## Validation
 
-- [ ] `16-references.md` carries the spec's text verbatim under a one-line comment header.
-- [ ] It sorts after `14-record.md` and before every mode section, and rides the pack for
+- [x] `16-references.md` carries the spec's text verbatim under a one-line comment header.
+- [x] It sorts after `14-record.md` and before every mode section, and rides the pack for
       either mode and with memory off.
-- [ ] The tags table appears under the section only when `references.repos` has a tag.
-- [ ] `settings validate` refuses an unknown key under `references`, a `repos` that is not an
+- [x] The tags table appears under the section only when `references.repos` has a tag.
+- [x] `settings validate` refuses an unknown key under `references`, a `repos` that is not an
       object, a lowercase or punctuated tag, a value that is not `owner/repo`, and a repository
       named twice; it accepts a valid object and a `//` comment.
-- [ ] `bun run type-check`, the relevant tests and `bun run check` pass.
+- [x] `bun run type-check`, the relevant tests and `bun run check` pass.
 
 ## Notes
+
+- The section text says how a link is written in Slack (`<url|TAG#123>`) and in Markdown
+  (`[TAG#123](url)`), since the bare tag text is easy to send unlinked by mistake.
+- A tag must start with a letter (`OPS`, `WEB2`), not only be capitals and digits: `123#45`
+  would read as a number. One repository has one tag, so the bot never has two ways to write the
+  same link; the check ignores case when comparing repositories.
+- The tags table is added by `cold-start`, not written into the pack file, so the file stays the
+  spec's text verbatim and a bot's tags never land in the kit.
+- `tests/coldstart.test.ts` numbered Delegation as kit section 1.4; it is now 1.5, after this
+  section.
+- On this loaded machine six tests in the core suites timed out at bun's 5 s default in a batch
+  run (`start --continue`, `cold-start --write and gate check`, `cycle begin` stopped outage,
+  `cycle end` pins the watermark, `log tail`, `--version` fast path); each passes run alone with
+  a longer timeout, and none touches this change.
 
 ## Follow-ups
