@@ -175,6 +175,12 @@ See *Routines* below.
 `record` (optional) is `{recall: [...]}`: the recalls that put a record sheet's rows back in
 front of the session. See *The console, and the record* below.
 
+`references` (optional) is `{repos: {"TAG": "owner/repo", ...}}`: the short tags the bot writes
+issue and pull request references with (`OPS#123`, `OPS PR#45`). A tag is capital letters and
+digits starting with a letter, a repository is `owner/repo`, and one repository has one tag;
+`settings validate` refuses anything else. When it is set, the cold-start pack lists the tags
+under `16-references.md`.
+
 ## State it keeps
 
 | Path | What |
@@ -211,7 +217,9 @@ nudge to reach it.
 after the rule card, whole, at every start, resume, clear and compaction: the house
 writing style (`10-writing.md`: tone, shape, Slack mrkdwn, email, records, logs), that the
 terminal is a log and not a channel (`12-console.md`), that what must outlive a compaction
-goes in a sheet with a recall (`14-record.md`), the
+goes in a sheet with a recall (`14-record.md`), that every issue and pull request a person reads
+about is a link in the form `TAG#123` or `TAG PR#123` (`16-references.md`, followed by the bot's
+tags from `references.repos` when it has any), the
 delegation rubric (`20-delegation.md`: which model class earns which work, and what the
 loop keeps for itself), how to read the digest (`30-digest.md`), where scratch files go
 (`40-scratch.md`), how routines work (`45-routines.md`, only when the bot has a routine
@@ -357,7 +365,7 @@ record.** They live apart.
 ### Cold start
 
 - `scripts/opsbot-core start [--continue] [--dry-run] [-- <extra claude args>]` — Launch the bot's Claude Code session with the flags opsbot.json implies: permission mode (default auto), model, autocompact window, autocompact forced on, auto memory in the repo (`autoMemoryDirectory` set to `memory.dir` as an absolute path, created when missing; off with `memory: false`), and `loop.prompt` as the first message. `--continue` resumes the last session in this checkout. A bot's `bin/start` shim calls this.
-- `scripts/opsbot-core cold-start [--write]` — Print the reground pack: the rule card, the kit's sections (house style, the console and the record, delegation, what the session log says, the live wake to arm), each `wake.d/` section, then each `cold-start` recall's rows (both inside the wake budget), the last 48 hours of the cycle log (with one line when the memory review is due and a few naming the other due routines), the untrusted-memory line; the routines section rides when the bot has a routine definition. `--write` also makes sure `.scratch/` exists and is git-excluded, writes the pack to `.scratch/opsbot-core/reground.md`, sets the pending flag and records the session log's path for `cycle` and `nudge`.
+- `scripts/opsbot-core cold-start [--write]` — Print the reground pack: the rule card, the kit's sections (house style, the console and the record, issue and pull request references with the bot's tags, delegation, what the session log says, the live wake to arm), each `wake.d/` section, then each `cold-start` recall's rows (both inside the wake budget), the last 48 hours of the cycle log (with one line when the memory review is due and a few naming the other due routines), the untrusted-memory line; the routines section rides when the bot has a routine definition. `--write` also makes sure `.scratch/` exists and is git-excluded, writes the pack to `.scratch/opsbot-core/reground.md`, sets the pending flag and records the session log's path for `cycle` and `nudge`.
 - `scripts/opsbot-core gate check` — PreToolUse body: exit 0 when nothing is pending or this call reads the pack whole; otherwise deny (exit 2).
 
 ### State
@@ -395,6 +403,6 @@ record.** They live apart.
 
 - `scripts/opsbot-core hook install|uninstall|status [--scope project|global] [--dir PATH]` — Register the SessionStart (`cold-start --write`) and PreToolUse (`gate check`) hooks; project scope by default.
 - `scripts/opsbot-core hooks list [--point P]` — Every script that will run at each lifecycle point, in order, with its source.
-- `scripts/opsbot-core settings validate [--head]` — Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets `autoMemoryEnabled`, or an `autoMemoryDirectory` other than `memory.dir` (the same directory, relative or absolute, is accepted, so a session `start` did not launch shares the bot's memory); any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails.
+- `scripts/opsbot-core settings validate [--head]` — Refuse an `opsbot.json` with an unknown key, a missing required key, a cadence over the cap, or a `memory.dir` or `routines` directory outside the repo; a `.claude/settings.json` that sets `autoMemoryEnabled`, or an `autoMemoryDirectory` other than `memory.dir` (the same directory, relative or absolute, is accepted, so a session `start` did not launch shares the bot's memory); any invalid routine definition; and a `record.recall` entry with an unknown key, an `at` other than `cold-start`, `cycle-end` or `item`, a filter that is not gitsheets-axi clauses, a sheet missing from `.gitsheets/`, or a query that fails; and a `references.repos` tag that is not capital letters and digits, a repository that is not `owner/repo`, or a repository named twice.
 
 <!-- END GENERATED: command-reference -->

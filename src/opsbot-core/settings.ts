@@ -155,6 +155,9 @@ export interface Settings {
   routines: Routines;
   /** The recalls that put record rows back in front of the session; empty when none. */
   record: { recall: Recall[] };
+  /** The short tags the bot writes issue and pull request references with, tag to
+   * `owner/repo`, in the order written; empty when unset. */
+  references: { repos: Record<string, string> };
 }
 
 /** The kit's defaults (specs/architecture.md, Next wake; specs/skills/opsbot-core.md). */
@@ -261,6 +264,7 @@ export function validateSettings(raw: unknown): string[] {
     "routines",
     "check",
     "record",
+    "references",
   ]);
   str(raw, "name", "", true, NAME_RE, "must be lowercase letters, digits and dashes, starting with a letter");
   str(raw, "mark", "", true);
@@ -389,6 +393,7 @@ export function validateSettings(raw: unknown): string[] {
     }
   }
   if (raw.record !== undefined) problems.push(...recordProblems(raw.record));
+  if (raw.references !== undefined) problems.push(...referenceProblems(raw.references));
   const sleep = obj(raw, "sleep", "", false);
   if (sleep) {
     allow(sleep, "sleep.", ["after_minutes", "probe_minutes", "max_minutes", "compact"]);
@@ -402,6 +407,49 @@ export function validateSettings(raw: unknown): string[] {
     }
   }
   return problems;
+}
+
+/** A repository tag: capital letters and digits, starting with a letter (`OPS`, `WEB2`). */
+export const REFERENCE_TAG = /^[A-Z][A-Z0-9]*$/;
+/** A repository: `owner/repo`. */
+export const REFERENCE_REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+/**
+ * `references`: an object with only `repos`, an object of tag to `owner/repo`. A tag is capital
+ * letters and digits starting with a letter; one repository has one tag
+ * (specs/skills/opsbot-core.md, Issue and pull request references).
+ */
+export function referenceProblems(v: unknown): string[] {
+  if (!isObj(v)) return ["references must be an object ({repos})"];
+  const problems: string[] = [];
+  for (const k of keysOf(v)) if (k !== "repos") problems.push(`unknown key references.${k}`);
+  const repos = v.repos;
+  if (repos === undefined) return problems;
+  if (!isObj(repos)) return [...problems, 'references.repos must be an object of tag to repository ({"OPS": "owner/repo"})'];
+  const byRepo = new Map<string, string>();
+  for (const tag of keysOf(repos)) {
+    const repo = repos[tag];
+    if (!REFERENCE_TAG.test(tag)) problems.push(`references.repos tag ${JSON.stringify(tag)} must be capital letters and digits, starting with a letter`);
+    if (typeof repo !== "string" || !REFERENCE_REPO.test(repo)) {
+      problems.push(`references.repos.${tag} must be a repository as owner/repo (got ${JSON.stringify(repo)})`);
+      continue;
+    }
+    const other = byRepo.get(repo.toLowerCase());
+    if (other !== undefined) problems.push(`references.repos names ${repo} twice (${other} and ${tag}): one repository has one tag`);
+    else byRepo.set(repo.toLowerCase(), tag);
+  }
+  return problems;
+}
+
+/** The valid tags of `references.repos`, in the order written; invalid ones are dropped. */
+export function referenceRepos(v: unknown): Record<string, string> {
+  if (!isObj(v) || !isObj(v.repos)) return {};
+  const out: Record<string, string> = {};
+  for (const tag of keysOf(v.repos)) {
+    const repo = v.repos[tag];
+    if (REFERENCE_TAG.test(tag) && typeof repo === "string" && REFERENCE_REPO.test(repo)) out[tag] = repo;
+  }
+  return out;
 }
 
 /**
@@ -542,6 +590,7 @@ export function withDefaults(raw: Json): Settings {
       runs_dir: cleanDir(isObj(raw.routines) ? raw.routines.runs_dir : undefined, DEFAULT_ROUTINES.runs_dir),
     },
     record: { recall: recallEntries(raw.record) },
+    references: { repos: referenceRepos(raw.references) },
   };
 }
 

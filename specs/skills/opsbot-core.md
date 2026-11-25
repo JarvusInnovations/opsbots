@@ -63,6 +63,7 @@ The bot's own files the skill reads and writes:
 | `commit_paths` | optional; repo-relative files the check's commit and the `cycle end` commit also take when they exist and have changes (a baseline an adapter updates, an append-only log a helper script writes between cycles); a listed file that does not exist is skipped |
 | `memory` | optional; `{dir, review_days}`, defaults `memory` and `7`, or `false`. `dir` is the repo-relative directory the session's auto memory lives in; `start` passes it to Claude Code as an absolute path. `review_days` is how long after the last review the next one is due. `false` turns auto memory off for the bot. There is no value that leaves memory at Claude Code's default location outside the repo; see *Auto memory* below |
 | `routines` | optional; `{dir, runs_dir}`, defaults `routines` and `records/routine-runs`: where the routine definitions and the run records live, both repo-relative. A bot with neither directory has no routines of its own and behaves as it did without the setting; see *Routines* below |
+| `references` | optional; `{repos}`: `repos` is an object of tag to repository (`"OPS": "example-org/ops"`), the short tags the bot writes issue and pull request references with; listed in the cold-start pack under the references section when set; see *Issue and pull request references* below |
 | `wake.files` | optional; the files a `monitor.d/` listener appends one line per event to. The core prints, in the cold-start pack and at every `cycle begin` and `cycle end`, the state of each (armed until when, or not armed) and the exact bounded `Monitor` call that arms it; see *The live wake* below. With `loop.schedule: "monitor"` all of them share the one schedule monitor |
 
 `settings validate` refuses a file with an unknown key, a missing required key, or a
@@ -82,7 +83,9 @@ both paths named (the value as written and as resolved, and `memory.dir` resolve
 `memory` must be `false` or an object; `memory.dir` must be a non-empty
 repo-relative path with no `..` segment, not absolute, not the repo itself, and not under
 `.git/`, `.claude/` or `.scratch/`; `memory.review_days` a positive whole number.
-`routines.dir` and `routines.runs_dir` follow the same rule as `memory.dir`. `settings
+`routines.dir` and `routines.runs_dir` follow the same rule as `memory.dir`. `references` must be an object with only `repos`; `repos` an object
+whose keys are capital letters and digits starting with a letter and whose values are `owner/repo`,
+no repository named twice. `settings
 validate` also validates every routine definition in `routines.dir` (in the working tree, or at
 `HEAD` with `--head`) and names each problem, as `routines validate` does.
 
@@ -111,7 +114,7 @@ it tells its operator once. Outside a session (`CLAUDECODE` unset) nothing is ch
 | `wake wait --until <epoch seconds>` | the schedule monitor's poller, run by the session's one `Monitor` call and by nothing else: polls every 2 seconds from the line counts the last check recorded; prints the new lines of any wake file, each prefixed with the file's basename and cut to 300 characters, at most 20, and exits 0; or prints `cycle due` and exits 0 when the time passes. Without a recorded count for a file it starts at that file's end. A time more than 1 800 seconds ahead is refused | 0 · 2 |
 | `next-delay` | reads the log and the cadence table; prints `<seconds> <reason>`. With `loop.schedule: "monitor"` no delay passes 1 740 seconds (29 minutes: the delay plus the monitor's one-minute margin stays inside the harness's 30-minute limit), and a capped reason says so: `night (capped at 29 min: a monitor's limit)` | 0 |
 | `start [--continue] [--dry-run] [-- <extra>]` | launches `claude` with the flags `opsbot.json` implies: permission mode, model, autocompact window, and one `--settings` object holding `autoCompactEnabled: true` and the auto memory keys (`autoMemoryEnabled: true` and `autoMemoryDirectory: <absolute root>/<memory.dir>`, the directory created first when missing; or, with `memory: false`, `autoMemoryEnabled: false` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` in its `env` and the process environment), and `loop.prompt` as the first message; `--continue` resumes the session that last ran a cycle here, by id (`--resume <id>`, recorded at every `cycle begin` in `.git/opsbot-loop-session`), and by `loop.session_name` when none is recorded; it never takes the directory's most recent session (a person's session opened in the bot's checkout would be that, and get the loop). Every start passes `--name <loop.session_name>`; the bot's `bin/start` shim is two lines calling this | exit code of `claude` |
-| `cold-start [--write] [--transcript <jsonl>]` | prints the pack: the rule card; the kit's own sections (`references/pack/*.md` shipped with the skill, in order, whole: house writing style, the console and the record, delegation rubric); then, when the SessionStart hook payload on stdin names a `transcript_path` (or `--transcript` does), a "Before this start" section read from the bot's own session log since its last compaction through `agent-recall-axi` (bundled; the kit's own text reader is the fallback when the library cannot read the log): the operator's messages verbatim (the highest-authority record of intent; the loop prompt excluded, since the nudge and the bot's wakeups type it), newest kept whole within their share and the rest counted with the exact command that prints them; the last tool calls with their status as data; and the bot's last statements flagged as its own claims, each layer with its own share so one long message cannot crowd out the others, capped at 4 000 bytes; then every script in `wake.d/` in order (each prints one section); then the 48 h log summary (with one more line when the memory review is due, and a few lines naming the other due routines) and the untrusted-memory line, which names the memory files too; `--write` first makes sure `.scratch/` exists and is excluded, then writes the pack file and sets pending there | 0 |
+| `cold-start [--write] [--transcript <jsonl>]` | prints the pack: the rule card; the kit's own sections (`references/pack/*.md` shipped with the skill, in order, whole: house writing style, the console and the record, issue and pull request references with the bot's tags from `references.repos` when set, delegation rubric); then, when the SessionStart hook payload on stdin names a `transcript_path` (or `--transcript` does), a "Before this start" section read from the bot's own session log since its last compaction through `agent-recall-axi` (bundled; the kit's own text reader is the fallback when the library cannot read the log): the operator's messages verbatim (the highest-authority record of intent; the loop prompt excluded, since the nudge and the bot's wakeups type it), newest kept whole within their share and the rest counted with the exact command that prints them; the last tool calls with their status as data; and the bot's last statements flagged as its own claims, each layer with its own share so one long message cannot crowd out the others, capped at 4 000 bytes; then every script in `wake.d/` in order (each prints one section); then the 48 h log summary (with one more line when the memory review is due, and a few lines naming the other due routines) and the untrusted-memory line, which names the memory files too; `--write` first makes sure `.scratch/` exists and is excluded, then writes the pack file and sets pending there | 0 |
 | `gate check` | the PreToolUse body: exit 0 when nothing is pending or the pending pack was read whole; otherwise prints the deny reason and exits 2 | 0 · 2 |
 | `lock status|release` | shows or releases the lock (release refuses another live process's lock without `--abandon`) | 0 · 1 |
 | `outage record <kind> [--note] [--started] [--ended]` / `outage end [--ended]` / `outage list` | `failed-turn · refused · plan-limit · session-ended · stopped`; times default to now; end closes the open one | 0 |
@@ -273,6 +276,44 @@ holds two starting points a bot may copy, `work` (what it is in the middle of: `
 `status`, `next`, `waiting_on`, `updated`) and `promises` (`to`, `what`, `due`, `status`,
 `settled_by`), each with its recall entry in a comment.
 
+## Issue and pull request references
+
+A third kit section rides every cold-start pack, after the record section and ahead of the mode
+section. A person reading about an issue or a pull request must be one click from it, and must be
+able to tell which repository it is in without asking.
+
+**`references/pack/16-references.md`**, verbatim:
+
+> # Every issue and pull request is a link
+>
+> Never mention an issue or a pull request to a person without linking it: in a chat post,
+> a page, an email, or a record a person reads.
+>
+> - **One format.** A short tag for the repository, then the number: `TAG#123` for an
+>   issue, `TAG PR#123` for a pull request. That text is the link text, and the link goes to
+>   the issue or pull request itself (in Slack `<url|TAG#123>`, in Markdown
+>   `[TAG#123](url)`).
+> - **Never a bare number, and never a bare URL** in place of the tag form. `#123` or a
+>   pasted URL leaves the reader to work out what it is and where it lives.
+> - **Your tags** are set in `opsbot.json` (`references.repos`) and listed below when there
+>   are any. A repository with no tag is written `owner/repo#123` or `owner/repo PR#123`,
+>   still linked.
+> - **Where a link cannot be made**, as in a commit subject or this terminal, the same text
+>   without the link is enough.
+
+**The tags.** `opsbot.json` may carry `references.repos`, an object of tag to repository:
+
+```json
+"references": { "repos": { "OPS": "example-org/ops", "SITE": "example-org/website" } }
+```
+
+A tag is capital letters and digits, starting with a letter; a repository is `owner/repo`; one
+repository has one tag, so the bot never has two ways to write the same link. When the object has
+a tag, `cold-start` prints, right after the section's text and inside the same section, a line
+`Your tags:` and a table `| Tag | Repository |`, one row per tag in the order written. When
+`references` is unset or `repos` is empty, nothing is added. The file in `references/pack/` stays
+the spec's text; the table is the bot's.
+
 ## Rules the commands enforce
 
 - The watermark moves only forward, only from the clock, only to a time at or before
@@ -288,7 +329,7 @@ holds two starting points a bot may copy, `work` (what it is in the middle of: `
 - `commit_paths` are added to the explicit `--only` list of the check's commit and the `cycle end` commit, never anything else. `settings validate` refuses a non-array, an empty or non-string entry, an absolute path, a `..` segment, and a path under `.git/` or `.claude/`.
 - `cycle end` refuses a future time, a backwards move, or no check since the lock.
 - The cold-start pack's `wake.d/` sections share a budget of their own (6 000 bytes) and are truncated with "… N more lines". The rule card, the kit's sections and the session-log section are whole and outside it: a long rule card never takes room from what the bot owes. Keeping the rule card short is the bot's job; the kit does not cut it.
-- House rules that must be in front of every session (how to write, when to delegate, how to read the digest, where scratch files go, what memory is for) ship inside the skill as `references/pack/*.md` and ride the pack, so they are updated by `npx skills update` and never copied into a bot's CLAUDE.md. `OPSBOT_PACK_DIR` overrides the directory. A section named `NN-memory.md` rides only while auto memory is on.
+- House rules that must be in front of every session (how to write, how to cite an issue or a pull request, when to delegate, how to read the digest, where scratch files go, what memory is for) ship inside the skill as `references/pack/*.md` and ride the pack, so they are updated by `npx skills update` and never copied into a bot's CLAUDE.md. `OPSBOT_PACK_DIR` overrides the directory. A section named `NN-memory.md` rides only while auto memory is on.
 - The digest is read whole, never filtered, and a stream item's `reply` field (the channel skill computes it: the thread when the message is threaded, else the message itself) is where the answer goes. Why: a bot that trimmed its digest to the text answered two questions in a third thread; the columns are the addresses.
 - The gate denies every tool while the pending flag is set and the pack has not been
   read whole; a read with an offset or limit does not clear it.
