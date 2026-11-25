@@ -1,5 +1,7 @@
 ---
-status: planned
+status: done
+done: 2026-11-25
+pr: 143
 depends: [opsbot-slack, slack-watch]
 specs:
   - specs/skills/opsbot-slack.md
